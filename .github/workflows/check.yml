@@ -7,13 +7,80 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: documentation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docs:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    name: docs (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux-x64
+          - runner: macos-15
+            platform: macos-arm64
+          - runner: windows-latest
+            platform: windows-x64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: make check
+      - uses: ./.github/actions/check-docs
+
+  docs-arm64:
+    name: docs (${{ matrix.platform }})
+    # Custom runners are available to same-repository changes only.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest-arm64-s
+            platform: linux-arm64
+          - runner: windows-latest-arm64-s
+            platform: windows-arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/check-docs
+
+  signing-controls:
+    # The interactive signing test uses Python's Unix-only pty module.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: make test-release-tag-controls
+
+  workflow-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install and run actionlint
+        run: |
+          archive=actionlint_1.7.12_linux_amd64.tar.gz
+          mkdir -p "${RUNNER_TEMP}/actionlint"
+          cd "${RUNNER_TEMP}/actionlint"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --retry 3 --output "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v1.7.12/$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check
+          tar -xzf "$archive" actionlint
+          cd "$GITHUB_WORKSPACE"
+          "${RUNNER_TEMP}/actionlint/actionlint" -color

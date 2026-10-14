@@ -1,0 +1,17 @@
+name: Documentation check
+description: Set up Python and validate documentation without changing the checkout.
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      with:
+        python-version: "3.12"
+    - name: Check documentation
+      shell: bash
+      run: make check PYTHON=python
+    - name: Check working tree
+      shell: bash
+      run: |
+        git status --porcelain
+        test -z "$(git status --porcelain)"
