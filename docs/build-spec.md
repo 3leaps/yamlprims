@@ -94,6 +94,24 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
+The working draft is now revision `1.1` (`SPEC_VERSION`), targeting a future
+`spec-v1.1`. Revision 1.0 profiles and source-span expectations remain historical
+baselines, not automatically updated conformance targets. A new profile must
+identify the revision 1.1 span, document, error-API and indentation choices before
+it is used to authorize transfer.
+
+The corpus migration requires new `yamlprims-core` r2 and `scalar-alias` span
+convention r2 revisions after `spec-v1.1` is tagged. Pin the tag's specification
+digest and the new profile/convention digests before qualification. The profile
+must capture the `1.1/E-2` document split and `1.1/E-4` strict-indentation change.
+`yamlprims-core` r2 must explicitly pin strict indentation in every parsing pass;
+candidate compatibility modes and historical lenient results stay outside that
+profile. Qualifying a migration mode does not add it to the production API.
+The existing `scalar-alias` r1 convention ends block scalars after the last
+content line break; `1.1/E-1` ends them before it. These are distinct conventions:
+retain r1 bytes and expectations, and bind new spans to r2. These required future
+revisions are not assertions that r2 artifacts have been published.
+
 No crate-name reservation is required for S0. Prefer publishing useful packages
 over empty placeholders. A first crate may expose a deliberately smaller,
 documented working surface, but must not contain parser APIs that panic, return
@@ -109,8 +127,10 @@ it need not expose development-environment details.
 
 The gate requires:
 
-1. Exact candidate, specification, corpus, profile and toolchain pins; byte/hash
-   verification of imported fixtures and generated material.
+1. Exact candidate commit, specification commit/file digest, corpus commit,
+   profile path/digest, generator revision, seed/parameters, generated hashes and
+   toolchain pins. Verify imported bytes and the exact case inventory. Never
+   substitute a moving branch or an assumed corpus/profile pin.
 2. Independent acceptance of expected values, error categories and source
    positions. An implementation's observed output is not its oracle.
 3. Smoke and available conformance runs through real generic, typed and wire
@@ -118,14 +138,35 @@ The gate requires:
    and unrun outcomes kept separate.
 4. No unresolved mismatch against the agreed transfer profile. Older expectations
    remain bound to older specification revisions; do not rewrite history.
-5. Negative controls proving the driver catches wrong values, wrong errors and
-   disabled expansion guards. Bounded resource execution where required.
+5. Negative controls proving the driver catches missing, extra and duplicate IDs,
+   wrong values, wrong error categories, wrong source offsets and disabled
+   expansion guards. A result set containing only expected policy exceptions
+   MUST fail, as MUST malformed inputs relabeled `invalid_options` instead of
+   syntax errors. Controls must fail for the intended reason, not an unrelated
+   build or setup failure. Use bounded resource execution where required.
 6. A reviewed gap inventory for coverage not yet present in the corpus. Corpus
    publication by itself does not establish candidate conformance.
 
 Q0 authorizes a controlled port, not production adoption or binding qualification.
 S0 may publish while Q0 runs. The port must not begin merely because the spec
 release is public.
+
+Run generic, typed and wire APIs independently. Compare exact integers without
+coercion through f64, and compare float values/bit patterns rather than just event
+kinds. Keep scalar truth-oracle acceptance separate from suite-event comparison.
+Hydration executes only the pinned, reviewed corpus generators; test payloads
+must not fetch scripts or contact external services. Fixture provenance, licenses
+and classification must be checked before admission.
+
+For a YAML test-suite run, record the exact suite revision, byte inventory and
+valid/malformed classification. One available baseline is `data-2022-01-17` at
+`6e6c296ae9c9d2d5c4134b4b64d01b29ac19ff6f` (402 unique cases: 308 valid,
+94 malformed). These counts describe that pin, not every suite revision and not
+a claim that yamlprims has executed it. Explicit duplicate-key policy exceptions
+remain distinct from syntax failures. Qualify both indentation settings on the
+same inventory and migration fixtures as part of qualification of the new strict profile.
+Report every suite ID whose verdict changes. Format-level syntax expectations,
+including 9C9N, remain independent of any historical lenient profile.
 
 ### M1 — Rust implementation and thin CLI
 
@@ -163,7 +204,10 @@ M1 acceptance adds:
 - Tests on MSRV and stable; bounded fuzz/Miri/mutation evidence with exact scope,
   time, skips and toolchains. Actual fuzz duration includes overhead reporting.
 - Per-category memory and latency measurements. Logical weights are not a
-  maximum RSS or allocation guarantee.
+  maximum RSS or allocation guarantee. A retained-tree model plus total peak
+  allocation does not establish separate anchor-cache or temporary-work peaks,
+  nor replace preventive-copy instrumentation. Keep the 64-byte logical node
+  charge independent of any measured struct layout.
 - Package dry-runs, extracted-package tests and downstream smoke builds. Audit
   the actual production feature/dependency graph, not a mixed comparison harness.
 
@@ -175,6 +219,9 @@ target before claiming it, especially for usize/metadata and numeric boundaries.
 CLI contract before its package release: define stdout/stderr, exit codes for
 input/usage/I/O/internal errors, stdin, multiple files, byte limits and atomic
 output behavior. Never leave partial JSON presented as a successful wire result.
+Wire `dump` and `check` use the specification's multi-document semantics. The
+plain-output representation for zero or multiple documents still needs an
+explicit CLI contract.
 
 ### M2 — native boundaries and language packages
 

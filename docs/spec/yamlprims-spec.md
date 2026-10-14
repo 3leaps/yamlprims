@@ -1,6 +1,11 @@
 # yamlprims specification
 
-**Revision 1.0** · Status: Draft · License: CC0-1.0 (specification text)
+**Revision 1.1** · Status: Unreleased draft · License: CC0-1.0 (specification text)
+
+The published baseline remains [revision 1.0](https://github.com/3leaps/yamlprims/blob/spec-v1.0/docs/spec/yamlprims-spec.md).
+This draft contains the changes and decision status listed in §16. Existing
+profiles pinned to revision 1.0 keep their original expectations; they do not
+adopt this draft implicitly.
 
 **Specification-first release.** This is a target contract. This repository does
 not yet ship the Rust library, CLI or bindings. Milestone labels describe planned
@@ -290,11 +295,41 @@ resolution.
 
 ### 5.5 Documents
 
-- `load` takes exactly one document. A second document is a
-  `MultipleDocuments` error at its start.
-- Empty or comment-only input is Null, with an empty span at end of input.
-- `load_all` is all-or-nothing: the first error ends the call and nothing
-  partial is returned.
+- `load`, `load_with`, and `load_bytes` return one document. A second document
+  is a `MultipleDocuments` error at its start. Typed string entrypoints use
+  these single-document semantics before applying §8 conversion rules.
+- `load_all`, `load_all_with`, and `load_all_bytes` return the documents actually
+  present in the stream. They are all-or-nothing: the first error ends the call
+  and nothing partial is returned. Exceeding `max_documents` is `LimitExceeded`,
+  not `MultipleDocuments`, even when that configured limit is one.
+
+| Input                               | Single-document entrypoints                        | Multi-document entrypoints                 |
+| ----------------------------------- | -------------------------------------------------- | ------------------------------------------ |
+| Empty input, including a BOM alone  | One Null document with an empty source span at EOF | Zero documents                             |
+| Only comments and blank lines       | One Null document with an empty source span at EOF | Zero documents                             |
+| Bare `...` without a document       | One Null document with an empty source span at EOF | Zero documents                             |
+| Explicit `---` with no node content | One Null document, `explicit_start = true`         | One Null document, `explicit_start = true` |
+
+For a stream with no documents, the single-document result has
+`yaml_version = None`, `explicit_start = false`, and a root with no tag or
+alias/merge provenance. Its empty span is `NodeSpan::Source` at the original
+input's EOF, **not** `Synthetic`; line and column follow §7.2.
+
+An explicit empty document instead has its root's empty source span at the
+boundary ending that document: the first byte of `...` or the following `---`,
+or EOF when neither follows. Comments and blank lines before that boundary do
+not create a node. Thus `---\n` has a Null root at byte 4, line 2, column 1;
+`---\n...\n` has its Null root at the same point, before the `...`. Document
+metadata records any YAML directive and the explicit start. This root rule is
+separate from the omitted-child placement rule in §7.2.
+
+For `---\n...\n---\n`, multi-document entrypoints with `max_documents >= 2`
+return two explicit empty documents. Both have `yaml_version = None`,
+`explicit_start = true`, and a Null root. The first root has an empty source
+span at byte 4, line 2, column 1 (the `...`); the second is at byte 12, line 4,
+column 1 (EOF). Single-document entrypoints instead report `MultipleDocuments`
+at the second `---`, byte 8, line 3, column 1.
+
 - M3: a document iterator over an **in-memory** input, fused after the first
   error.
 
@@ -362,6 +397,12 @@ and parser state), retained tree, anchor storage, and temporary adapter work
 guaranteed. Peak allocation and resident memory are measured and reported
 per category, not asserted against the weight budget.
 
+The 64-byte node charge does not change when an implementation's `Node` layout
+changes. Retained-tree estimates and a total peak measurement do not establish
+per-category peak attribution or prove that rejected expansions allocate no
+copies. Those require separate measurements and instrumentation. A hard process
+memory ceiling requires external enforcement, not a multiplier on logical weight.
+
 **Engine allocation.** The engine buffers a scalar while scanning it, before
 the adapter sees the event, so the adapter cannot cap that allocation at
 `max_scalar_bytes`. Its bound is `max_input_bytes` plus engine overhead; this
@@ -390,14 +431,28 @@ pub enum Site {
     NotSource { last_known: Option<Location> },       // Internal, InvalidOptions, OutputLimitExceeded, synthetic nodes
 }
 
+pub struct Error(Box<ErrorDetail>);   // opaque, one owning pointer
+
 #[non_exhaustive]
-pub struct Error {
+pub struct ErrorDetail {
     pub kind: ErrorKind,
     pub site: Site,
     pub related: Vec<Related>,       // e.g. first duplicate, alias use site, merge directive
     pub path: Vec<PathSegment>,
     pub message: String,             // human-readable, bounded, not a contract
     pub engine_detail: Option<String>,
+}
+impl Error {
+    pub fn new(kind: ErrorKind, site: Site, message: impl std::fmt::Display) -> Self;
+    pub fn into_detail(self) -> ErrorDetail;
+    pub fn location(&self) -> Option<Location>;
+}
+impl std::ops::Deref for Error {
+    type Target = ErrorDetail;
+    fn deref(&self) -> &ErrorDetail;
+}
+impl std::ops::DerefMut for Error {
+    fn deref_mut(&mut self) -> &mut ErrorDetail;
 }
 pub struct Related { pub role: RelatedRole, pub span: Span }
 pub enum PathSegment { Key(Box<Value>), Index(usize) }
@@ -413,6 +468,41 @@ pub enum ErrorKind {
     Custom, OutputLimitExceeded, Internal,
 }
 ```
+
+**Ownership and construction.** `Error` is a boxed, pointer-sized owning handle;
+this is not a C ABI layout promise and does not imply that every
+`Result<T, Error>` is pointer-sized. `ErrorDetail` owns the diagnostic fields and
+may have additional private bookkeeping. `Error` implements `Debug`, `Display`,
+`std::error::Error`, and `serde::de::Error`.
+
+`Error::new` initializes empty `related` and `path` vectors and no
+`engine_detail`. It formats the message into a UTF-8-safe buffer bounded by §6,
+truncating with `…` when necessary; it MUST NOT first allocate an unbounded
+formatted message. The supplied kind and site are retained. `location()` returns
+`Some(location)` only for `Site::Source`, never `last_known` as the offending
+location.
+
+Custom deserializers construct errors through
+`<Error as serde::de::Error>::custom(message)` and the other Serde error trait
+constructors. Before attribution, these use
+`Site::NotSource { last_known: None }`; yamlprims attaches the current node's
+provenance and path when propagating them through its deserializer. They use the
+same bounded formatting rule. The related/path/engine-detail allocation limits
+and error-kind payload completeness remain M1 freeze items in
+[the design review](../design-review.md).
+
+**Migration from revision 1.0's field-bearing `Error`.** Borrowed field access
+continues through `Deref`, and explicit mutation through `DerefMut` is supported.
+Struct patterns such as `Error { kind, .. }` no longer compile. Moving a non-Copy
+field through dereferencing also fails: use `&error.kind` to borrow and
+`error.into_detail().kind` to take ownership. Likewise, move the message using
+`error.into_detail().message`, not `error.message`. Matching without moving a
+payload may still compile; that does not make all field moves valid.
+
+Caller mutation can invalidate diagnostic bounds. Encoders MUST enforce the
+applicable diagnostic and output bounds again rather than trusting mutable
+fields, and MUST revalidate the wire `kind`/`detail` pairing (§11.1).
+Caller-owned allocations are outside the crate's allocation guarantee.
 
 **Site depends on provenance, not on kind alone.** An input-attributable
 error on parsed input MUST use `Site::Source`. An error on a synthetic node
@@ -459,8 +549,39 @@ part of measured parse cost.
 | Invalid UTF-8                    | `byte_offset` = length of the valid prefix; line and column over the valid prefix; `invalid_len` = length of the invalid sequence, or None when truncated at end                                                                                                                                                                                   |
 | Typed conversion error (§8)      | span of the node being converted, with `path` to it                                                                                                                                                                                                                                                                                                |
 
+**Block scalar ends.** A literal or folded scalar ends at the exclusive end of
+its last source content line containing a byte other than ASCII space or tab,
+before the line break. Trailing spaces and tabs on that line remain inside the
+span. Kept blank lines, trailing breaks and the next line's indentation are
+outside it. If there is no such content line, the end is the end of the line
+containing the scalar's start. LF, CRLF and lone CR are breaks as defined above;
+Unicode content MUST NOT be trimmed as if it were ASCII whitespace.
+
+This changes neither the scalar's start convention nor its decoded value.
+Chomping can preserve line breaks in a value that its source span excludes.
+For `k: |+\n  é  \n\n`, the scalar's byte span is `[8, 12)` and its value is
+`"é  \n\n"`. For `k: >-\n  a\n  b\n`, the span is `[8, 13)` and the value is
+`"a b"`. A source slice is not a reconstruction of a decoded scalar.
+
+**Omitted children.** When an omitted node's engine marker directly follows
+line breaks, its empty span is placed before those breaks, at the end of the
+line on which it is omitted. It MUST NOT move before the end of its preceding
+sibling, the end of its key (for a mapping value), or its collection's start.
+This includes empty explicit keys and values, and applies to a retained tag's
+empty inner node as well as its wrapper when they share the empty span. It
+does not move alias-copy definition spans. For `? a\n? b\n`, the omitted values
+are at byte offsets 3 and 7 respectively. Empty document roots use §5.5 instead.
+
+**Containment.** Every parsed child's span MUST lie inside its parent's span.
+The exception is the link at an alias-copy or merged-entry insertion boundary,
+where the inserted root keeps its definition span. That exception does not
+disable containment checks inside the copied subtree: its descendants still
+fit their definition parents. Bounds and UTF-8 coordinate validity apply even
+at an insertion boundary.
+
 Spans are data spans. Lexical spans for source editing are out of scope; no
-backward scan for indicators is performed.
+backward scan for indicators is performed. The line-boundary normalization above
+does not change the sequence-start conventions.
 
 The sequence rules above are explicit exceptions to a uniform content-token
 start convention. They follow the selected engine's event markers; changing
@@ -540,16 +661,48 @@ rejected. `3.4028235677973362e38` is accepted. Negative values are symmetric.
 
 ## 9. Engine configuration
 
-| Engine option                                   | Value                                                                                                       |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| features                                        | `std`, `error_messages` (comments off)                                                                      |
-| `strict_indentation`                            | `false` (engine default); both settings are in the conformance matrix, and changing it is a contract change |
-| flow and block nesting limits                   | `max_depth`                                                                                                 |
-| simple-key lookahead                            | 1024 (engine default; the YAML simple-key rule)                                                             |
-| directive bytes / reserved directive parameters | 1024 / 16 (engine defaults)                                                                                 |
+| Engine option                                   | Value                                                                                    |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| features                                        | `std`, `error_messages` (comments off)                                                   |
+| `strict_indentation`                            | `true` in this draft; required in every parsing pass, including any syntax-only pre-pass |
+| flow and block nesting limits                   | `max_depth`                                                                              |
+| simple-key lookahead                            | 1024 (engine default; the YAML simple-key rule)                                          |
+| directive bytes / reserved directive parameters | 1024 / 16 (engine defaults)                                                              |
 
 Changing the engine or its pinned version requires requalification against
 the conformance suites (§13).
+
+Revision 1.0 pinned `strict_indentation = false`. Revision 1.1 requires strict
+indentation as an accepted contract change under
+[ADR-0003](../decisions/ADR-0003-strict-indentation.md), not as an unannounced
+engine default update. There is no public compatibility toggle in `Options`.
+The initial public API is intentionally strict-only. Lenient modes used by
+qualification or migration tooling are outside this public contract; adding one
+to the public API requires an established consumer need and a separate decision.
+For example, this under-indented flow collection MUST be a syntax error:
+
+```yaml
+---
+flow: [a,
+b,
+c]
+```
+
+This is a YAML conformance correction: the indentation requirement in
+[YAML 1.2.2 §7.4](https://yaml.org/spec/1.2.2/#74-flow-collection-styles) makes
+these flow entries invalid. The example is yaml-test-suite
+[9C9N, “Wrong indented flow sequence”](https://github.com/yaml/yaml-test-suite/blob/v2022-01-17/src/9C9N.yaml),
+marked `fail: true` upstream. Its format-level expectation is a syntax failure,
+independently of yamlprims's profile. Revision 1.0's lenient acceptance must be
+recorded as a difference from format truth, not an alternative valid YAML result.
+
+Qualification compares both engine settings on the same pinned suite and
+migration inputs; only the selected strict setting defines this revision's
+profile, which MUST explicitly pin strict indentation in every parsing pass.
+Report every suite ID whose verdict changes between settings. Preserve
+revision 1.0 results as revision 1.0 results. A migration input
+accepted only by the earlier leniency is a reported compatibility difference,
+not grounds to rewrite a malformed-input expectation.
 
 ## 10. Public Rust API (M1)
 
@@ -565,18 +718,40 @@ pub fn load_with(input: &str, opts: &Options) -> Result<Document, Error>;
 pub fn load_bytes(input: &[u8], opts: &Options) -> Result<Document, Error>;
 pub fn load_all(input: &str) -> Result<Vec<Document>, Error>;
 pub fn load_all_with(input: &str, opts: &Options) -> Result<Vec<Document>, Error>;
+pub fn load_all_bytes(input: &[u8], opts: &Options) -> Result<Vec<Document>, Error>;
 pub fn from_str / from_str_with / from_node                          // §8
 pub fn encode(docs: &[Document], opts: &Options) -> Result<String, Error>;   // §11
+pub fn encode_error(error: &Error, opts: &Options) -> Result<String, Error>; // §11 error envelope
 ```
 
 Library calls perform no filesystem access, environment interpolation,
 network requests, or process-global configuration, and are safe to call
 concurrently.
 
+The byte entrypoints take explicit options; string entrypoints without `_with`
+use `Options::default()`. All byte paths use the same raw-input limit, BOM and
+UTF-8 gates. `load_all_bytes` has exactly the document semantics of `load_all_with`
+and preserves original-byte coordinates.
+
+`encode_error` borrows the error and writes one canonical error envelope. Like
+`encode`, it validates options and returns no partial JSON on failure. It MUST
+revalidate the current error kind and its associated detail against §11.1,
+including after caller mutation. If even
+the error envelope exceeds `max_output_bytes`, it returns a Rust
+`OutputLimitExceeded` error with `Site::NotSource`; it MUST NOT recursively try
+to encode that error or bypass the budget. The C ABI's fallback when an error
+envelope cannot fit remains an M2 design gate (§11.5).
+
 **CLI.** `yamlprims check FILE…` prints `file:line:col: kind: message` and
 exits 1 on any error. `yamlprims dump FILE` writes the wire format.
 `yamlprims dump --plain FILE` writes plain JSON or fails, naming the loss
 (§11.3).
+
+`check` and wire-format `dump` use multi-document semantics. An empty file is a
+successful check; dumping it emits
+`{"format":"yamlprims-value","version":1,"documents":[]}`. The plain-output
+shape for zero or multiple documents remains part of the CLI freeze gate; it
+MUST NOT silently synthesize a Null document under the single-document rules.
 
 ## 11. Wire format `yamlprims-value/1`
 
@@ -634,6 +809,16 @@ exactly these members:
 | `missing_field`, `unknown_field` | `{"field":S}`                                               |
 | `output_limit_exceeded`          | `{"configured":N}`                                          |
 | all others                       | `{}`                                                        |
+
+**Error encoding validation.** `encode_error` MUST construct and validate the
+wire `kind`/`detail` pair from the current `ErrorKind` and its associated payload.
+It MUST NOT reuse stale detail from an earlier kind. Required members must be
+present with the specified types; members belonging to another kind must not be
+emitted. If the current error cannot form a valid pair, encoding returns a Rust
+`Internal` error with `Site::NotSource { last_known: None }` and no JSON. It MUST
+NOT fabricate a missing payload, emit a malformed envelope, or recursively
+encode the rejection. A representation that makes invalid pairings unrepresentable
+can enforce these rules by construction.
 
 **`related` roles:** `first_definition` (DuplicateKey), `alias_use`,
 `merge_directive`, `anchor_definition`.
@@ -798,6 +983,26 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   have `start == end`. Fixtures include multi-byte text, a BOM, CRLF, a lone
   CR, tabs, empty values, comment-only input, end-of-input errors, and
   invalid UTF-8.
+- **Revision 1.1 locations.** Literal/folded blocks with all chomping modes,
+  blank-only blocks, trailing spaces, explicit empty keys/values, BOM and
+  LF/CRLF/lone-CR variants with multibyte text. Assert exact offsets and decoded
+  values together, plus parent containment with only the insertion-boundary
+  exceptions in §7.2. Test descendants inside alias/merge copies too.
+- **Document cardinality.** Every §5.5 row and the consecutive explicit-empty
+  document example through string and byte entrypoints,
+  with EOF coordinates for zero-document streams and boundary coordinates for
+  explicit empty documents. Check CLI empty-stream output, multiple-document
+  rejection in single-document calls, and all-or-nothing stream failure.
+- **Error API compile probes.** Borrow fields, mutate through `DerefMut`, extract
+  owned detail and non-Copy fields, construct custom Serde errors, and pass a
+  borrowed error to `encode_error`. Negative compile probes reject old struct
+  patterns and direct moves of non-Copy fields through `Deref`. Test bounded
+  constructor formatting, source attribution and undersized error-output budgets.
+  After changing an error kind, assert the exact corresponding wire detail and
+  absence of stale members; reject inconsistent kind/detail pairs wherever the
+  representation permits constructing them. Compile probes belong to the
+  candidate's Rust API tests (and yamlprims's own tests after transfer), rather
+  than corpus data.
 - **Fuzzing** with a sanitizer on `load_all`, a typed configuration target,
   and `encode`, checking: no panic; `Site::Source` for input errors; span
   bounds; counters within budget on success.
@@ -830,4 +1035,16 @@ yamlprims repository under `docs/decisions/`. The merge-key default
 
 ## 16. Errata
 
-None for revision 1.0.
+Revision 1.0 remains preserved at `spec-v1.0`. The following public errata are
+incorporated in the **unreleased revision 1.1 draft**. The strict-only decision
+in `1.1/E-4` is accepted under ADR-0003; the other proposals remain subject to
+maintainer acceptance. Qualification of a new pinned profile remains outstanding.
+Their numbering belongs to this public specification. Cross-document references use revision-qualified
+identifiers such as `1.1/E-1`.
+
+| ID  | Sections         | Change from revision 1.0                                                                                                                                                      |
+| --- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E-1 | §7.2, §13.2      | Precise block-scalar ends, omitted-child placement and parent containment; scalar values and ordinary/indentless sequence starts unchanged.                                   |
+| E-2 | §5.5, §10, §13.2 | Zero-document streams stay empty for multi-document APIs and CLI; define explicit empty-root boundaries and `load_all_bytes`.                                                 |
+| E-3 | §7.1, §10, §13.2 | Boxed `Error`/`ErrorDetail`, borrowed access, owned extraction and constructors; document both pattern and field-move migration. Add the fallible error encoder.              |
+| E-4 | §9               | Accepted strict-only API with strict indentation in all parsing passes to align flow indentation with YAML 1.2.2; profile qualification and migration checks remain required. |

@@ -22,8 +22,11 @@ environment interpolation or network access.
 
 ## Status and participation
 
-Target: specification-only repository release **spec-v1.0**, specification draft
-revision **1.0**. These version numbers do not imply a crate release or API freeze.
+Published baseline: [**spec-v1.0**](https://github.com/3leaps/yamlprims/tree/spec-v1.0).
+The working specification is **revision 1.1, an unreleased draft** covering span,
+empty-stream, error-ownership and strict-indentation changes. These version
+numbers do not imply a crate release or API freeze. Existing corpus profiles
+remain bound to their cited specification revision.
 See [the roadmap and acceptance gates](docs/build-spec.md#delivery-gates) and
 [open design items](docs/design-review.md).
 The [release procedure](docs/releases.md) covers signed specification tags and
