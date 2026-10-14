@@ -23,6 +23,14 @@ disposable keys. Run it locally with `make test-release-tag-controls`.
 
 The documentation check requires Python 3.9+ and Make; select another Python
 executable with `make check PYTHON=python`. Run `actionlint` after workflow edits.
+For release-script changes, run `make lint-shell` (Bash and ShellCheck required)
+and `make test-release-tag-controls`. CI runs ShellCheck 0.11.0 before the
+synthetic signing tests. YAML configuration uses two-space indentation, enforced by `.yamlfmt` and
+`.yamllint` and mirrored in `.goneat/assess.yaml`. Run `make fmt-yaml` to format
+configuration and `make lint-yaml` to check it (yamlfmt and yamllint required).
+These commands cover root YAML tool configuration, `.github` and `.goneat`.
+`make lint` combines documentation, shell and YAML checks;
+`make check` remains independent of shell-lint tools.
 
 Implementation contributions begin after the qualification gate described in
 the [build specification](docs/build-spec.md).
