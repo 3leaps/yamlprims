@@ -1,16 +1,12 @@
 name: Documentation checks
-
 on:
   push:
   pull_request:
-
 permissions:
   contents: read
-
 concurrency:
   group: documentation-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   docs:
     name: docs (${{ matrix.platform }})
@@ -27,15 +23,15 @@ jobs:
           - runner: windows-latest
             platform: windows-x64
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/check-docs
-
   docs-arm64:
     name: docs (${{ matrix.platform }})
     # Custom runners are available to same-repository changes only.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
@@ -47,31 +43,52 @@ jobs:
           - runner: windows-latest-arm64-s
             platform: windows-arm64
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/check-docs
-
   signing-controls:
     # The interactive signing test uses Python's Unix-only pty module.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      - name: Install ShellCheck
+        shell: bash
+        run: |
+          archive=shellcheck-v0.11.0.linux.x86_64.tar.xz
+          mkdir -p "${RUNNER_TEMP}/shellcheck"
+          cd "${RUNNER_TEMP}/shellcheck"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --retry 3 --output "$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/$archive"
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $archive" | sha256sum --check
+          tar -xJf "$archive" --strip-components=1 shellcheck-v0.11.0/shellcheck
+          echo "${RUNNER_TEMP}/shellcheck" >> "$GITHUB_PATH"
+      - name: Check release scripts
+        run: |
+          shellcheck --version
+          make lint-shell
       - run: make test-release-tag-controls
-
   workflow-lint:
     runs-on: ubuntu-latest
+    container:
+      # Digest-pinned tools include yamlfmt and yamllint.
+      # yamllint disable-line rule:line-length
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc@sha256:fe525f286458a7491958f8f3b916ef1b9befb05fa2dae2e37b0c08eb84860bae
+      options: --user 1001:1001
     timeout-minutes: 5
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      - name: Check YAML configuration
+        run: make lint-yaml
       - name: Install and run actionlint
         run: |
           archive=actionlint_1.7.12_linux_amd64.tar.gz

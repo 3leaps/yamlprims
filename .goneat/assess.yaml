@@ -1,0 +1,32 @@
+# YAML formatting and linting share the root two-space policy.
+version: 1
+lint:
+  yamllint:
+    enabled: true
+    strict: true
+    paths:
+      - ".yamlfmt"
+      - ".yamllint"
+      - ".github/**/*.yml"
+      - ".github/**/*.yaml"
+      - ".goneat/**/*.yaml"
+    ignore: []
+  github_actions:
+    actionlint:
+      enabled: true
+      paths:
+        - ".github/workflows/**/*.yml"
+        - ".github/workflows/**/*.yaml"
+      ignore: []
+  shell:
+    shfmt:
+      enabled: false
+    shellcheck:
+      enabled: true
+    paths:
+      - "scripts/**/*.sh"
+      - "tests/release/**/*.sh"
+    ignore: []
+  make:
+    checkmake:
+      enabled: false
