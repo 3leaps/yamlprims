@@ -211,10 +211,26 @@ M1 acceptance adds:
 - Package dry-runs, extracted-package tests and downstream smoke builds. Audit
   the actual production feature/dependency graph, not a mixed comparison harness.
 
-Core tests initially target Linux x86_64, macOS arm64 and Windows x86_64. This is
-a proposed qualification matrix, not a current support claim. Name every added
-platform and distinguish compilation from executed conformance. Test a 32-bit
-target before claiming it, especially for usize/metadata and numeric boundaries.
+The proposed M1 core qualification matrix uses native execution on five targets:
+
+| Platform       | Rust target                 |
+| -------------- | --------------------------- |
+| Linux x86_64   | `x86_64-unknown-linux-gnu`  |
+| Linux ARM64    | `aarch64-unknown-linux-gnu` |
+| macOS ARM64    | `aarch64-apple-darwin`      |
+| Windows x86_64 | `x86_64-pc-windows-msvc`    |
+| Windows ARM64  | `aarch64-pc-windows-msvc`   |
+
+Run the core tests on both the proposed MSRV and stable Rust for each target,
+recording exact toolchain versions and executed coverage. Report compile-only
+checks separately; cross-compilation does not establish native conformance.
+These are planned runtime qualification cells, not current support claims.
+The existing five-platform CI validates documentation only and does not satisfy
+Q0 or M1 acceptance. Runtime transfer still requires Q0 before implementation.
+
+Name and qualify any additional target separately. Test a 32-bit target before
+claiming it, especially for usize/metadata and numeric boundaries. This core
+matrix does not qualify the M2 native boundaries or language packages.
 
 CLI contract before its package release: define stdout/stderr, exit codes for
 input/usage/I/O/internal errors, stdin, multiple files, byte limits and atomic
