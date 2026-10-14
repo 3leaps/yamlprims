@@ -1,3 +1,5 @@
+PYTHON ?= python3
+
 .PHONY: help check lint fmt version test-release-tag-controls release-tag release-verify-tag release-push-tag release-verify-remote-tag
 
 help:
@@ -7,7 +9,7 @@ help:
 	@echo "make release-tag Create and verify a local signed specification tag"
 
 check:
-	python3 scripts/check-docs.py
+	$(PYTHON) scripts/check-docs.py
 
 lint: check
 
