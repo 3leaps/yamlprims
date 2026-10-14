@@ -1,0 +1,33 @@
+---
+id: ADR-0001
+title: Explicit merge policy
+status: proposed
+date: 2026-10-14
+---
+
+# ADR-0001: Explicit merge policy
+
+## Context
+
+Merge keys are an extension rather than part of YAML 1.2 Core. Implicitly applying
+them changes data, while silently discarding them can hide a configuration error.
+Quoted `<<` and explicitly string-tagged `<<` are ordinary keys.
+
+## Decision
+
+Default to `MergeKeys::Reject`. A recognized directive raises a located
+`MergeRejected`. Callers may explicitly choose `Apply` or `AsKey`.
+
+The builder recognizes merge directives before scalar resolution. Apply uses
+explicit-key precedence, then earlier-source precedence, with deterministic
+entry order. Each unshadowed merged-in entry is a charged logical copy even if
+the implementation moves storage. The normative rules are
+[specification §5.3](../spec/yamlprims-spec.md#53-merge-keys).
+
+## Consequences and acceptance
+
+Migration from a permissive library may require an explicit option. Generic,
+typed, CLI and binding paths use the same policy. Acceptance requires every
+recognition row, source shape, precedence and ordering case, plus inline/aliased
+and nested-merge accounting controls. An implementation convenience cannot alter
+the chosen default or omit logical-copy charges.
