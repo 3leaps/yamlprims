@@ -1,7 +1,9 @@
 # Specification releases
 
 The specification-only release uses `spec-v<SPEC_VERSION>`, initially
-`spec-v1.0`. It publishes the repository documentation and no crates or runtime
+`spec-v1.0`. The current `SPEC_VERSION` is `1.1`, an unreleased draft targeting
+`spec-v1.1`; the earlier tag is never moved. Specification releases publish
+repository documentation and no crates or runtime
 artifacts. The proposed first Rust packages are `yamlprims` and `yamlprims-cli`
 at `0.1.0`, after their implementation and qualification gates. Native bindings
 follow their own milestone. See [the build specification](build-spec.md).
@@ -17,7 +19,7 @@ The maintainer configures these environment variables in their signing terminal:
 
 | Variable                            | Required value                                            |
 | ----------------------------------- | --------------------------------------------------------- |
-| `YAMLPRIMS_RELEASE_TAG`             | `spec-v1.0`, matching `SPEC_VERSION`                      |
+| `YAMLPRIMS_RELEASE_TAG`             | `spec-v1.1`, matching `SPEC_VERSION`                      |
 | `YAMLPRIMS_RELEASE_COMMIT`          | Reviewed full lowercase commit SHA                        |
 | `YAMLPRIMS_GPG_HOMEDIR`             | Existing external GPG home                                |
 | `YAMLPRIMS_GPG_SIGNING_FINGERPRINT` | Full uppercase authorized primary fingerprint             |
