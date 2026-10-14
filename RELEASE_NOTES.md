@@ -1,4 +1,7 @@
-# spec-v1.1 — unreleased specification draft
+# spec-v1.1 — tagged draft specification
+
+Revision 1.1 is available at the signed `spec-v1.1` tag. No GitHub release has
+been published as of October 14, 2026. The tag contains documentation only.
 
 - `1.1/E-1`: precise block-scalar ends, omitted-child positions and span containment.
 - `1.1/E-2`: distinct single-document and empty-stream behavior, including byte APIs
