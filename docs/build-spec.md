@@ -94,14 +94,14 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
-The working draft is now revision `1.1` (`SPEC_VERSION`), targeting a future
-`spec-v1.1`. Revision 1.0 profiles and source-span expectations remain historical
+Draft specification revision `1.1` (`SPEC_VERSION`) is available at the signed
+`spec-v1.1` tag. Revision 1.0 profiles and source-span expectations remain historical
 baselines, not automatically updated conformance targets. A new profile must
 identify the revision 1.1 span, document, error-API and indentation choices before
 it is used to authorize transfer.
 
 The corpus migration requires new `yamlprims-core` r2 and `scalar-alias` span
-convention r2 revisions after `spec-v1.1` is tagged. Pin the tag's specification
+convention r2 revisions bound to `spec-v1.1`. Pin the tag's specification
 digest and the new profile/convention digests before qualification. The profile
 must capture the `1.1/E-2` document split and `1.1/E-4` strict-indentation change.
 `yamlprims-core` r2 must explicitly pin strict indentation in every parsing pass;
@@ -109,8 +109,8 @@ candidate compatibility modes and historical lenient results stay outside that
 profile. Qualifying a migration mode does not add it to the production API.
 The existing `scalar-alias` r1 convention ends block scalars after the last
 content line break; `1.1/E-1` ends them before it. These are distinct conventions:
-retain r1 bytes and expectations, and bind new spans to r2. These required future
-revisions are not assertions that r2 artifacts have been published.
+retain r1 bytes and expectations, and bind new spans to r2. These requirements
+do not assert that r2 artifacts have been published or qualified.
 
 No crate-name reservation is required for S0. Prefer publishing useful packages
 over empty placeholders. A first crate may expose a deliberately smaller,

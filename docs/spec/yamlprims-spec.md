@@ -1,8 +1,11 @@
 # yamlprims specification
 
-**Revision 1.1** · Status: Unreleased draft · License: CC0-1.0 (specification text)
+**Revision 1.1** · Status: Tagged draft · License: CC0-1.0 (specification text)
 
-The published baseline remains [revision 1.0](https://github.com/3leaps/yamlprims/blob/spec-v1.0/docs/spec/yamlprims-spec.md).
+The immutable [revision 1.1 snapshot](https://github.com/3leaps/yamlprims/blob/spec-v1.1/docs/spec/yamlprims-spec.md)
+is available alongside the earlier [revision 1.0](https://github.com/3leaps/yamlprims/blob/spec-v1.0/docs/spec/yamlprims-spec.md).
+This working copy corrects release-status wording only; the tagged snapshot retains
+its original "Unreleased draft" wording and unchanged bytes for corpus citations.
 This draft contains the changes and decision status listed in §16. Existing
 profiles pinned to revision 1.0 keep their original expectations; they do not
 adopt this draft implicitly.
@@ -1036,7 +1039,7 @@ yamlprims repository under `docs/decisions/`. The merge-key default
 ## 16. Errata
 
 Revision 1.0 remains preserved at `spec-v1.0`. The following public errata are
-incorporated in the **unreleased revision 1.1 draft**. The strict-only decision
+incorporated in the **tagged revision 1.1 draft**. The strict-only decision
 in `1.1/E-4` is accepted under ADR-0003; the other proposals remain subject to
 maintainer acceptance. Qualification of a new pinned profile remains outstanding.
 Their numbering belongs to this public specification. Cross-document references use revision-qualified

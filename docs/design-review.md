@@ -1,7 +1,7 @@
 # Open design items before implementation freeze
 
-Status: proposed. The specification is publishable as a draft while these items
-remain visible. They must not silently become implementation choices or claims
+Status: proposed. Specification revision 1.1 is tagged as a draft while these
+items remain open. They must not silently become implementation choices or claims
 of completed qualification.
 
 ## M1 contract freeze
@@ -48,8 +48,8 @@ test for each selected contract before closing its evidence gate. No new profile
 pin is asserted by this draft. In particular, the existing profile citing
 `spec-v1.0` must not be silently relabeled to cover revision 1.1.
 
-The new corpus revisions are `yamlprims-core` r2 and `scalar-alias` r2, pinned
-after `spec-v1.1` is tagged as described in the build specification. Qualify the
+The required corpus revisions are `yamlprims-core` r2 and `scalar-alias` r2,
+bound to `spec-v1.1` as described in the build specification. Qualify the
 consecutive explicit-empty document coordinates in §5.5 and the mutated error
 kind/detail validation and rejection in §11.1. The strict-indentation review must
 report every suite ID whose verdict changes, keeping format-level syntax truth
