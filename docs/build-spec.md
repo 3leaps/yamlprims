@@ -94,14 +94,14 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
-Draft specification revision `1.1` (`SPEC_VERSION`) is available at the signed
-`spec-v1.1` tag. Revision 1.0 profiles and source-span expectations remain historical
-baselines, not automatically updated conformance targets. A new profile must
-identify the revision 1.1 span, document, error-API and indentation choices before
-it is used to authorize transfer.
+The working draft is revision `1.2` (`SPEC_VERSION`), targeting `spec-v1.2`.
+Existing tags `spec-v1.0` and `spec-v1.1` and their pinned expectations remain
+immutable. Revision 1.2 adds owned type descriptions, error-encoder preflight
+and empty-block anchors; it requires a new profile citing the final specification
+commit/file digest and reviewed expectations before transfer is authorized.
 
-The corpus migration requires new `yamlprims-core` r2 and `scalar-alias` span
-convention r2 revisions bound to `spec-v1.1`. Pin the tag's specification
+The revision 1.1 corpus migration specifies `yamlprims-core` r2 and `scalar-alias`
+span convention r2 revisions citing `spec-v1.1`. Pin the tag's specification
 digest and the new profile/convention digests before qualification. The profile
 must capture the `1.1/E-2` document split and `1.1/E-4` strict-indentation change.
 `yamlprims-core` r2 must explicitly pin strict indentation in every parsing pass;
@@ -109,8 +109,17 @@ candidate compatibility modes and historical lenient results stay outside that
 profile. Qualifying a migration mode does not add it to the production API.
 The existing `scalar-alias` r1 convention ends block scalars after the last
 content line break; `1.1/E-1` ends them before it. These are distinct conventions:
-retain r1 bytes and expectations, and bind new spans to r2. These requirements
-do not assert that r2 artifacts have been published or qualified.
+retain r1 bytes and expectations, and bind new spans to r2. These migration
+requirements do not establish acceptance of any corpus artifact or oracle.
+
+Revision 1.2 does not silently rebind those r2 artifacts. Assign new immutable
+profile/convention revisions where their contracts change, with the exact
+specification and artifact digests. The corpus's indicator-based block-scalar
+event spans are not yamlprims content-based node spans, even when their end rules
+agree. Qualify the empty-block node anchors in §7.2 independently, and preserve
+prior event-span conventions. Error mutation, bounded formatting and encoder
+rejection probes belong in Rust API/consumer-operation tests; an input/value
+corpus alone cannot exercise them.
 
 No crate-name reservation is required for S0. Prefer publishing useful packages
 over empty placeholders. A first crate may expose a deliberately smaller,
@@ -131,6 +140,11 @@ The gate requires:
    profile path/digest, generator revision, seed/parameters, generated hashes and
    toolchain pins. Verify imported bytes and the exact case inventory. Never
    substitute a moving branch or an assumed corpus/profile pin.
+   Dispatch or validate the exact `(profile, revision)` and its settings, not
+   just the profile name. An unknown requested profile/revision is a failure;
+   exclusions must be explicit and counted. Historical results run under current
+   settings must be labeled as such, not claimed as qualification of the older
+   profile's configuration.
 2. Independent acceptance of expected values, error categories and source
    positions. An implementation's observed output is not its oracle.
 3. Smoke and available conformance runs through real generic, typed and wire
@@ -144,8 +158,17 @@ The gate requires:
    MUST fail, as MUST malformed inputs relabeled `invalid_options` instead of
    syntax errors. Controls must fail for the intended reason, not an unrelated
    build or setup failure. Use bounded resource execution where required.
+   Mismatches and malformed/unsupported requested expectations MUST cause a
+   nonzero process exit. Empty, missing or partially hydrated inventories MUST
+   fail. Retain wrong-value, wrong-error, empty-inventory and unknown-revision
+   probes as tests of the driver itself; a printed summary or exit zero alone
+   is not qualification evidence.
 6. A reviewed gap inventory for coverage not yet present in the corpus. Corpus
    publication by itself does not establish candidate conformance.
+   Include exact node spans and explicit-empty-document boundaries, the
+   revision 1.2 empty-block examples and encoder mutation/boundary probes.
+   Provisional expectations remain provisional after a successful comparison;
+   independent semantic acceptance is a separate requirement.
 
 Q0 authorizes a controlled port, not production adoption or binding qualification.
 S0 may publish while Q0 runs. The port must not begin merely because the spec

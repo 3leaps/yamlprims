@@ -26,6 +26,8 @@ Current tagged specification: [**spec-v1.1**](https://github.com/3leaps/yamlprim
 a draft contract covering span, empty-stream, error-ownership and strict-indentation
 changes. The earlier [spec-v1.0](https://github.com/3leaps/yamlprims/tree/spec-v1.0)
 baseline remains available. These tags do not imply a crate release or API freeze.
+The working specification is **revision 1.2, an unreleased draft** covering owned
+type descriptions, error-encoder revalidation and empty-block scalar anchors.
 Existing corpus profiles remain bound to their cited specification revision.
 GitHub release publication is separate from specification tagging; no GitHub
 release has been published as of October 14, 2026.

@@ -1,12 +1,12 @@
 # Open design items before implementation freeze
 
-Status: proposed. Specification revision 1.1 is tagged as a draft while these
-items remain open. They must not silently become implementation choices or claims
-of completed qualification.
+Status: proposed. Specification revision 1.2 is an unreleased draft; revision
+1.1 remains available at its immutable tag. These items remain open. They must
+not silently become implementation choices or claims of completed qualification.
 
 ## M1 contract freeze
 
-### Selected in the revision 1.1 draft
+### Selected in revision 1.1
 
 The strict-only decision in ADR-0003 is accepted for revision 1.1; the other
 selections remain proposals. Implementation qualification and a new immutable
@@ -19,13 +19,36 @@ profile are still required; revision 1.0 expectations stay bound to revision 1.0
 | Error ownership    | §7.1 selects boxed Error with public non-exhaustive ErrorDetail, Deref/DerefMut, owned extraction and bounded constructors; §10 specifies the fallible error encoder. | Positive borrowed/owned/custom-error compile probes, negative struct-pattern and field-move probes, pointer-sized Error assertion, bounded formatting and too-small encoder budget controls.             |
 | Strict indentation | §9 and accepted ADR-0003 require a strict-only public API and `true` in every parsing pass.                                                                           | Compare both settings on an identical pinned suite and migration inventory; malformed indentation must fail as syntax, not an unrelated error.                                                           |
 
+### Proposed for revision 1.2
+
+- **Owned descriptions (`1.2/E-1`).** `Type` uses owned `String` fields;
+  descriptive fields have a 1,024-byte UTF-8-safe bound. Compile dynamic Serde
+  descriptions and test multibyte boundaries at construction and encoding.
+- **Encoder preflight (`1.2/E-2`).** Revalidate path length, each key's logical
+  weight and collection nesting before writing; preserve structured identity
+  or reject with the specified limit and non-source site. Test changed options,
+  caller mutation, root weight at 65/66 bytes, direct bounded escaping, unchanged
+  borrowed fields and output length at/one byte below the boundary. Instrument
+  early rejection and absence of key clones or unbounded temporaries.
+- **Empty-block anchors (`1.2/E-3`).** Pin the engine-derived examples in §7.2,
+  zero-width normalization floors, values and containment. Independently test
+  BOM, line breaks, tags/anchors and sibling-versus-EOF behavior. An event-span
+  convention starting at an indicator is not an exact node-span oracle.
+
+These proposals do not close the remaining gates below. A syntax code's shape
+check is not acceptance of a closed vocabulary; a successful corpus comparison
+does not promote provisional expectations. Before Q0 closes, require a
+fail-closed driver with exact inventory/profile-revision validation and the
+negative controls in the build specification. Existing test results remain
+bound to their original source, specification and profile pins.
+
 ### Remaining open items
 
 | Item                       | Required resolution and detecting evidence                                                                                                                                                                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Error precedence           | Define `InvalidOptions` ordering, and distinguish engine safety limits from syntax errors during a syntax-only pre-pass. An over-depth event stream must not accidentally masquerade as malformed YAML or bypass a resource guard to search for a later syntax error.                                             |
 | Accounting scope           | Specify whether anchor-cache copies charge nodes, bytes or both; define wrapper depth, root depth and alias insertion depth mathematically. Cached metrics must describe the final post-merge subtree. Test nested merge-plus-anchor-plus-alias paths with one decisive limit.                                    |
-| Error storage and encoding | Complete ErrorKind payloads and bound `engine_detail`, related spans and structured paths before constructing large errors, including caller-mutated ErrorDetail. The boxed shape and Rust error-encoder budget failure are specified; diagnostic allocation and validation still need qualification.             |
+| Error storage and encoding | Complete the remaining ErrorKind payloads and bound `engine_detail`, related spans and structured paths before constructing large errors. Revision 1.2 specifies owned Type descriptions and encoder revalidation; construction-time allocation bounds and detecting evidence remain required. |
 | Public operations          | Complete the plain encoder and checked constructors/accessors needed to create Document/Tagged/Tag values without exposing invariant-bearing fields. Compile the selected Error constructors, error encoder and `load_all_bytes` API in the candidate driver; illustrative signatures alone are not API evidence. |
 | Syntax error vocabulary    | Name and test the closed `SyntaxKind` set before wire version 1 is frozen; a backend's message text is not a stable taxonomy.                                                                                                                                                                                     |
 | Wire decoding              | Specify integer range, location/order validation, duplicate JSON members, unknown fields, canonical NaN bits and whether noncanonical JSON is rejected or normalized. Byte-identical round trip applies to canonical producer output.                                                                             |
@@ -45,15 +68,21 @@ sequences. A corpus profile must bind that convention explicitly; a broad
 
 The qualification record must identify the implementing profile and detecting
 test for each selected contract before closing its evidence gate. No new profile
-pin is asserted by this draft. In particular, the existing profile citing
-`spec-v1.0` must not be silently relabeled to cover revision 1.1.
+pin is asserted by this draft. Profiles citing `spec-v1.0` or `spec-v1.1`
+must not be silently relabeled to cover revision 1.2.
 
-The required corpus revisions are `yamlprims-core` r2 and `scalar-alias` r2,
-bound to `spec-v1.1` as described in the build specification. Qualify the
+The revision 1.1 corpus migration uses `yamlprims-core` r2 and `scalar-alias` r2,
+with immutable pins as described in the build specification. Qualify the
 consecutive explicit-empty document coordinates in §5.5 and the mutated error
 kind/detail validation and rejection in §11.1. The strict-indentation review must
 report every suite ID whose verdict changes, keeping format-level syntax truth
 separate from revision 1.0's leniency differences.
+
+Revision 1.2 needs separately pinned profiles and matching operation tests.
+Error-path collection nesting is defined for encoder preflight in §11.1;
+general parser/materialized root and wrapper depth, and arbitrary synthetic-tree
+stack safety, remain distinct open items. Specification acceptance does not
+establish those runtime guarantees.
 
 ## M2 boundary freeze
 

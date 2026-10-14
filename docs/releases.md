@@ -1,8 +1,8 @@
 # Specification releases
 
 Specification tags use `spec-v<SPEC_VERSION>`. Both `spec-v1.0` and
-`spec-v1.1` exist; the current `SPEC_VERSION` is `1.1`. Revision 1.1 remains a
-draft contract with open qualification gates. No GitHub release has been published
+`spec-v1.1` exist. The current `SPEC_VERSION` is `1.2`, an unreleased draft
+targeting `spec-v1.2`. Qualification gates remain open. No GitHub release has been published
 as of October 14, 2026; publishing a release entry is separate from creating a tag.
 Existing tags are never moved. Specification tags contain repository documentation
 and no crates or runtime artifacts. The proposed first Rust packages are
