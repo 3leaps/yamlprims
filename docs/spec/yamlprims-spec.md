@@ -1,14 +1,11 @@
 # yamlprims specification
 
-**Revision 1.1** · Status: Tagged draft · License: CC0-1.0 (specification text)
+**Revision 1.2** · Status: Unreleased draft · License: CC0-1.0 (specification text)
 
-The immutable [revision 1.1 snapshot](https://github.com/3leaps/yamlprims/blob/spec-v1.1/docs/spec/yamlprims-spec.md)
-is available alongside the earlier [revision 1.0](https://github.com/3leaps/yamlprims/blob/spec-v1.0/docs/spec/yamlprims-spec.md).
-This working copy corrects release-status wording only; the tagged snapshot retains
-its original "Unreleased draft" wording and unchanged bytes for corpus citations.
+The tagged draft baseline is [revision 1.1](https://github.com/3leaps/yamlprims/blob/spec-v1.1/docs/spec/yamlprims-spec.md).
 This draft contains the changes and decision status listed in §16. Existing
-profiles pinned to revision 1.0 keep their original expectations; they do not
-adopt this draft implicitly.
+profiles pinned to revisions 1.0 and 1.1 keep their original expectations;
+they do not adopt this draft implicitly.
 
 **Specification-first release.** This is a target contract. This repository does
 not yet ship the Rust library, CLI or bindings. Milestone labels describe planned
@@ -421,6 +418,15 @@ structured error path carries full keys (§11.1); a path has at most
 `max_depth` segments, each key is bounded by `max_key_bytes`, and the whole
 error envelope is bounded by `max_output_bytes`.
 
+Type descriptions (`expected`, `found`) and field-name descriptions are each
+bounded by 1,024 UTF-8 bytes. Descriptive bounds include the `…` truncation
+marker and apply before JSON escaping; the escaped envelope must independently
+fit `max_output_bytes`. They never authorize truncating structured path keys.
+At encoding, recheck path length, each key's logical weight (including its
+64-byte root charge), and collection nesting against the supplied options,
+even for errors previously constructed under different limits. Reject oversized
+identity before writing; truncate only descriptive text while writing (§11.1).
+
 ## 7. Errors and locations
 
 ### 7.1 Types
@@ -467,7 +473,7 @@ pub enum ErrorKind {
     DuplicateKey, InvalidKey, UnknownAnchor, RecursiveAlias,
     MergeRejected, MergeSource, UnknownTag, TagKindMismatch, TagValueMismatch,
     IntegerOutOfRange, FloatOutOfRange, MultipleDocuments,
-    Type { expected: &'static str, found: &'static str }, MissingField, UnknownField,
+    Type { expected: String, found: String }, MissingField, UnknownField,
     Custom, OutputLimitExceeded, Internal,
 }
 ```
@@ -477,6 +483,14 @@ this is not a C ABI layout promise and does not imply that every
 `Result<T, Error>` is pointer-sized. `ErrorDetail` owns the diagnostic fields and
 may have additional private bookkeeping. `Error` implements `Debug`, `Display`,
 `std::error::Error`, and `serde::de::Error`.
+
+`Type` owns its `expected` and `found` descriptions; they need not have static
+lifetimes. Crate-produced descriptions, including dynamic Serde descriptions,
+are formatted directly into buffers of at most 1,024 UTF-8 bytes each, truncating
+at a character boundary with `…` included in that bound. Field-name descriptions
+use the same bound. Encoders enforce these bounds again on caller-supplied or
+mutated fields. The complete Rust payload shapes for other kinds remain a freeze
+item; their required wire members are specified in §11.1.
 
 `Error::new` initializes empty `related` and `path` vectors and no
 `engine_detail`. It formats the message into a UTF-8-safe buffer bounded by §6,
@@ -505,6 +519,9 @@ payload may still compile; that does not make all field moves valid.
 Caller mutation can invalidate diagnostic bounds. Encoders MUST enforce the
 applicable diagnostic and output bounds again rather than trusting mutable
 fields, and MUST revalidate the wire `kind`/`detail` pairing (§11.1).
+This includes the structured-identity preflight and descriptive truncation rules
+in that section. Encoding borrows the error without modifying it; successful
+truncation of its encoded descriptions does not rewrite its owned fields.
 Caller-owned allocations are outside the crate's allocation guarantee.
 
 **Site depends on provenance, not on kind alone.** An input-attributable
@@ -560,11 +577,39 @@ outside it. If there is no such content line, the end is the end of the line
 containing the scalar's start. LF, CRLF and lone CR are breaks as defined above;
 Unicode content MUST NOT be trimmed as if it were ASCII whitespace.
 
-This changes neither the scalar's start convention nor its decoded value.
+For a block scalar with a source content line, this changes neither the scalar's
+start convention nor its decoded value.
 Chomping can preserve line breaks in a value that its source span excludes.
 For `k: |+\n  é  \n\n`, the scalar's byte span is `[8, 12)` and its value is
 `"é  \n\n"`. For `k: >-\n  a\n  b\n`, the span is `[8, 13)` and the value is
 `"a b"`. A source slice is not a reconstruction of a decoded scalar.
+
+**Empty block scalar anchors.** A literal or folded scalar with no source content
+line containing a byte other than ASCII space or tab keeps the engine-derived
+start marker. If the engine span is zero-width, apply the omitted-child
+line-break normalization below to that point, retaining `start == end` and the
+same sibling/key/collection floor. Otherwise keep the start and apply the block
+scalar end rule above. Do not recover the `|` or `>` indicator by scanning
+backward. These are source anchors, not token ranges: adding a following sibling
+can move an empty scalar's anchor. The scalar remains a String with its style,
+not an omitted Null; chomping still determines its decoded value. Empty document
+roots instead follow §5.5.
+
+The following escaped input strings pin the first mapping value or sequence
+item's byte span and decoded String value. `\n` and `\r` denote actual input
+line-break bytes; the surrounding quotes are not part of the input.
+
+| Input | Byte span | Decoded value |
+| ----- | --------- | ------------- |
+| `"k: \|\n  \n  \nx: 1\n"` | `[10, 10)` | `""` |
+| `"k: \|\n\nx: 1\n"` | `[4, 4)` | `""` |
+| `"k: \|\n\n"` | `[3, 4)` | `""` |
+| `"k: \|\n"` | `[3, 4)` | `""` |
+| `"k: >-\n\nx: 1\n"` | `[5, 5)` | `""` |
+| `"k: \|+\n\n\nx: 1\n"` | `[5, 5)` | `"\n\n"` |
+| `"k: \|\r\n\r\nx: 1\r\n"` | `[4, 4)` | `""` |
+| `"k: \| # c\n\nx: 1\n"` | `[8, 8)` | `""` |
+| `"- \|\n\n- a\n"` | `[3, 3)` | `""` |
 
 **Omitted children.** When an omitted node's engine marker directly follows
 line breaks, its empty span is placed before those breaks, at the end of the
@@ -739,10 +784,13 @@ and preserves original-byte coordinates.
 `encode_error` borrows the error and writes one canonical error envelope. Like
 `encode`, it validates options and returns no partial JSON on failure. It MUST
 revalidate the current error kind and its associated detail against §11.1,
-including after caller mutation. If even
+including after caller mutation, and preflight all structured path identity
+before writing. Descriptive text is bounded while writing, without mutating the
+borrowed error. Invalid identity is rejected rather than shortened. If even
 the error envelope exceeds `max_output_bytes`, it returns a Rust
-`OutputLimitExceeded` error with `Site::NotSource`; it MUST NOT recursively try
-to encode that error or bypass the budget. The C ABI's fallback when an error
+`OutputLimitExceeded` error with `Site::NotSource { last_known: None }`;
+it MUST NOT recursively try to encode that error or bypass the budget.
+The C ABI's fallback when an error
 envelope cannot fit remains an M2 design gate (§11.5).
 
 **CLI.** `yamlprims check FILE…` prints `file:line:col: kind: message` and
@@ -822,6 +870,45 @@ emitted. If the current error cannot form a valid pair, encoding returns a Rust
 NOT fabricate a missing payload, emit a malformed envelope, or recursively
 encode the rejection. A representation that makes invalid pairings unrepresentable
 can enforce these rules by construction.
+
+Before writing any JSON, `encode_error` MUST also preflight the current path
+against the options supplied to this encoding call:
+
+- More than `max_depth` path segments is `LimitExceeded` for `max_depth`.
+- A key whose §6 logical subtree weight exceeds `max_key_bytes` is
+  `LimitExceeded` for `max_key_bytes`. Count the root, both mapping keys and
+  values, entry overheads and tag bytes/wrappers; never measure by serializing.
+- A path key's collection nesting beyond `max_depth` is `LimitExceeded` for
+  `max_depth`. For this preflight, the root starts at depth zero; descending
+  from a Sequence or Mapping to a child adds one, while a Tagged wrapper's
+  child retains its depth. Every wrapper still contributes its §6 weight.
+  The path segment count and the key's nesting are separate checks.
+- A `syntax_kind` must be an ASCII code of 1–64 bytes drawn only from lowercase
+  letters, digits and `_`. A code outside that shape is an invalid kind/detail
+  pair and is rejected as `Internal`. This shape check does not define or
+  complete the closed `SyntaxKind` vocabulary, which remains an M1 freeze item.
+
+Every such rejection has `Site::NotSource { last_known: None }`, returns no JSON
+and is not recursively encoded. Limit errors identify the violated limit and
+its configured value. Path segments and structured keys MUST NOT be dropped,
+truncated or replaced with display strings to make an error encodable.
+
+The preflight key walk MUST be iterative, visit borrowed values, charge nodes
+before scheduling them and stop at the first bound. It MUST NOT first clone,
+serialize or traverse the entire rejected subtree. Arithmetic must detect a
+weight beyond the limit without wrapping. This bounds preflight work by the
+path and key budgets, not by the size of a caller-created rejected tree.
+The general root/wrapper depth definition and stack safety of arbitrary
+hand-built trees remain explicit M1 gates in the design review.
+
+While writing, truncate `message` to 4,096 UTF-8 bytes and each `expected`,
+`found` and `field` description to 1,024 bytes, retaining a character-boundary
+prefix plus `…` within the bound when truncation is necessary. Escape directly
+into the bounded output; do not build an unbounded escaped temporary string.
+Write path keys by reference without cloning their trees. `engine_detail` is
+not in the wire grammar. Bounds on its storage and on `related` allocation
+remain separate M1 gates; the entire encoded envelope, including `related`,
+is always subject to `max_output_bytes`.
 
 **`related` roles:** `first_definition` (DuplicateKey), `alias_use`,
 `merge_directive`, `anchor_definition`.
@@ -983,7 +1070,9 @@ golden subset. Oracle acceptance is separate from specification acceptance.
 - **Locations.** Every node and error: `start ≤ end ≤ input.len()`; offsets on
   UTF-8 boundaries of the valid prefix; line and column agree with an
   independent scan; token-bearing nodes start at their token; empty nodes
-  have `start == end`. Fixtures include multi-byte text, a BOM, CRLF, a lone
+  have `start == end` when their placement rule requires a zero-width span.
+  Empty block scalars use the explicit anchor exceptions in §7.2, including
+  its nonzero EOF examples. Fixtures include multi-byte text, a BOM, CRLF, a lone
   CR, tabs, empty values, comment-only input, end-of-input errors, and
   invalid UTF-8.
 - **Revision 1.1 locations.** Literal/folded blocks with all chomping modes,
@@ -991,6 +1080,12 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   LF/CRLF/lone-CR variants with multibyte text. Assert exact offsets and decoded
   values together, plus parent containment with only the insertion-boundary
   exceptions in §7.2. Test descendants inside alias/merge copies too.
+- **Revision 1.2 empty blocks.** Pin every §7.2 empty-block example's span and
+  decoded value together, with independent line/column checks. Include literal
+  and folded styles, clip/strip/keep chomping, spaces-only lines, comments,
+  sibling versus EOF anchors, sequence items, tags/anchors, BOM and
+  LF/CRLF/lone-CR variants. Assert normalization floors and containment. Do not
+  substitute an indicator-based event-span convention for these node spans.
 - **Document cardinality.** Every §5.5 row and the consecutive explicit-empty
   document example through string and byte entrypoints,
   with EOF coordinates for zero-document streams and boundary coordinates for
@@ -1006,6 +1101,19 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   representation permits constructing them. Compile probes belong to the
   candidate's Rust API tests (and yamlprims's own tests after transfer), rather
   than corpus data.
+- **Revision 1.2 error encoding.** Mutate messages, type/field descriptions and
+  structured paths after construction; encode under tighter options and assert
+  the borrowed error is unchanged. Test path-length and key-nesting boundaries,
+  a two-byte String key at logical weight 66 (accept 66, reject 65), and a
+  structured key longer than 1,024 bytes retained in full when within its key
+  budget. Check UTF-8-safe truncation including the marker, every JSON control
+  escape, quotes/backslashes, exact encoded-length acceptance and one-byte-less
+  output rejection. Reject malformed syntax codes and kind/detail pairs.
+  Assert exact rejection kind, limit/configured payload and non-source site,
+  with no partial JSON or recursive fallback. Instrument the preflight and
+  encoding to detect traversal past the first bound, key clones and unbounded
+  escaped temporaries. Disable the root weight charge as a negative control;
+  the 65-byte rejection test must detect the mutation.
 - **Fuzzing** with a sanitizer on `load_all`, a typed configuration target,
   and `encode`, checking: no panic; `Site::Source` for input errors; span
   bounds; counters within budget on success.
@@ -1038,12 +1146,28 @@ yamlprims repository under `docs/decisions/`. The merge-key default
 
 ## 16. Errata
 
-Revision 1.0 remains preserved at `spec-v1.0`. The following public errata are
-incorporated in the **tagged revision 1.1 draft**. The strict-only decision
-in `1.1/E-4` is accepted under ADR-0003; the other proposals remain subject to
-maintainer acceptance. Qualification of a new pinned profile remains outstanding.
-Their numbering belongs to this public specification. Cross-document references use revision-qualified
-identifiers such as `1.1/E-1`.
+Tagged revisions 1.0 and 1.1 remain preserved at `spec-v1.0` and `spec-v1.1`.
+Erratum numbering belongs to this public specification and restarts per revision;
+cross-document references use revision-qualified identifiers such as `1.2/E-1`.
+Specification publication and decision acceptance do not establish implementation
+qualification.
+
+### Revision 1.2 — unreleased draft
+
+These proposed contract updates require maintainer acceptance and a separately
+pinned qualification profile. They do not rewrite revision 1.1 expectations.
+
+| ID | Sections | Change from revision 1.1 |
+| --- | -------- | ------------------------ |
+| E-1 | §6, §7.1, §11.1, §13.2 | Owned `String` type descriptions; 1,024-byte UTF-8-safe descriptive bound enforced at construction and encoding. |
+| E-2 | §6, §7.1, §10–11, §13.2 | Preflight mutable structured error identity; exact rejection kind/site, bounded descriptive encoding and non-recursive failures. |
+| E-3 | §7.2, §13.2 | Engine-derived empty-block scalar anchors, explicit zero-width normalization and pinned examples without indicator-recovery scanning. |
+
+### Revision 1.1 — tagged draft specification
+
+The following errata were incorporated in revision 1.1. The strict-only decision
+in `1.1/E-4` is accepted under ADR-0003; tagging did not accept the other
+proposed decision records or establish candidate conformance.
 
 | ID  | Sections         | Change from revision 1.0                                                                                                                                                      |
 | --- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

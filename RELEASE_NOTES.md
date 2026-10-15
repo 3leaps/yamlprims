@@ -1,4 +1,22 @@
-# spec-v1.1 — tagged draft specification
+# spec-v1.2 — unreleased specification draft
+
+- `1.2/E-1`: owned type descriptions and 1,024-byte UTF-8-safe descriptive bounds.
+- `1.2/E-2`: structured error-path preflight, precise rejection kinds/sites,
+  bounded descriptive encoding and non-recursive encoding failures.
+- `1.2/E-3`: empty-block scalar source anchors with explicit zero-width
+  normalization and pinned examples.
+
+The signed `spec-v1.1` tag and its expectations remain unchanged. Revision 1.2
+requires new immutable profile pins; no older profile implicitly adopts these
+changes. The wire grammar version remains 1. These changes refine validation,
+descriptive bounds and source anchors without adding wire members.
+
+This draft publishes no runtime or package and makes no candidate-conformance
+claim. Independent expectations and fail-closed qualification tooling remain
+required by Q0 before implementation transfer. The remaining design gates retain
+their milestone requirements.
+
+## spec-v1.1 — tagged draft specification
 
 Revision 1.1 is available at the signed `spec-v1.1` tag. No GitHub release has
 been published as of October 14, 2026. The tag contains documentation only.
@@ -19,7 +37,7 @@ The wire grammar version remains 1; source positions and
 document counts are profile-dependent semantic changes, not new JSON fields.
 
 This remains a specification-only project. Documentation validation is not runtime
-qualification, and no crate or binding is published with this draft.
+qualification, and no crate or binding is published with this specification release.
 This is an updated specification, not a claim that a candidate satisfies every
 additional revision 1.1 requirement. Decision acceptance and implementation
 qualification remain separate.
