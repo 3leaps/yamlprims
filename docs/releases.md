@@ -1,17 +1,18 @@
 # Specification releases
 
-Specification tags use `spec-v<SPEC_VERSION>`. Both `spec-v1.0` and
-`spec-v1.1` exist. The current `SPEC_VERSION` is `1.2`, an unreleased draft
-targeting `spec-v1.2`. Qualification gates remain open. No GitHub release has been published
-as of October 14, 2026; publishing a release entry is separate from creating a tag.
+Specification tags use `spec-v<SPEC_VERSION>`. Tags `spec-v1.0`, `spec-v1.1`
+and `spec-v1.2` exist. The current `SPEC_VERSION` is `1.3`, an unreleased draft
+targeting `spec-v1.3`. Qualification gates remain open. Publishing a GitHub
+release entry is separate from creating a tag.
 Existing tags are never moved. Specification tags contain repository documentation
 and no crates or runtime artifacts. The proposed first Rust packages are
 `yamlprims` and `yamlprims-cli` at `0.1.0`, after their implementation and
 qualification gates. Native bindings follow their own milestone. See [the build specification](build-spec.md).
 
-The immutable `spec-v1.1` specification retains its original "Unreleased draft"
-wording. Status corrections on `main` do not replace those tagged bytes or their
-corpus-pinned digest. Cite the tag when an exact specification snapshot is needed.
+The immutable `spec-v1.1` and `spec-v1.2` specifications retain their original
+"Unreleased draft" wording. Status corrections on `main` do not replace those
+tagged bytes or their corpus-pinned digests. Cite the tag when an exact
+specification snapshot is needed.
 
 ## Signed tags
 
@@ -20,8 +21,8 @@ identity `3 Leaps Infosec Team <infosec@3leaps.net>` and an exact signing subkey
 under the primary fingerprint in [the public anchor](../keys/expected-fingerprints.txt).
 The keyring and private signing material remain outside Git repositories.
 
-The procedure below applies to a new specification tag. Existing `spec-v1.0`
-and `spec-v1.1` tags must not be recreated; creation commands reject them.
+The procedure below applies to a new specification tag. Existing `spec-v1.0`,
+`spec-v1.1` and `spec-v1.2` tags must not be recreated; creation commands reject them.
 For the next revision, update `SPEC_VERSION` and select its matching unused tag.
 
 The maintainer configures these environment variables in their signing terminal:
@@ -58,7 +59,7 @@ publish an actual release. GitHub responses in those tests are simulated.
 
 For a new specification release, after verifying its newly created signed tag,
 create the GitHub release from that tag using `RELEASE_NOTES.md`. This procedure
-does not schedule release publication for the existing `spec-v1.0` or `spec-v1.1`
-tags. Never create a replacement or lightweight tag through the release UI.
+does not schedule release publication for existing specification tags. Never
+create a replacement or lightweight tag through the release UI.
 A ruleset matching `v*` does not cover `spec-v*`; the signing controls still apply. Version-tag rules and package-publishing CI are configured with the
 first implemented release. There is no tag-triggered package publication here.

@@ -1,10 +1,10 @@
 # yamlprims specification
 
-**Revision 1.2** · Status: Unreleased draft · License: CC0-1.0 (specification text)
+**Revision 1.3** · Status: Unreleased draft · License: CC0-1.0 (specification text)
 
-The tagged draft baseline is [revision 1.1](https://github.com/3leaps/yamlprims/blob/spec-v1.1/docs/spec/yamlprims-spec.md).
+The tagged draft baseline is [revision 1.2](https://github.com/3leaps/yamlprims/blob/spec-v1.2/docs/spec/yamlprims-spec.md).
 This draft contains the changes and decision status listed in §16. Existing
-profiles pinned to revisions 1.0 and 1.1 keep their original expectations;
+profiles pinned to revisions 1.0, 1.1 and 1.2 keep their original expectations;
 they do not adopt this draft implicitly.
 
 **Specification-first release.** This is a target contract. This repository does
@@ -41,6 +41,12 @@ exploitable-vulnerability finding. RUSTSEC-2023-0075 was fixed in
 yamlprims is library-first. Its contract is: bytes in; an owned value tree or a
 located error out; with explicitly chosen semantics and enforced resource
 limits.
+
+**Input encoding.** yamlprims interprets input as UTF-8, with an optional initial
+UTF-8 BOM. It does not detect or transcode UTF-16 or UTF-32. Invalid UTF-8 is
+reported at the first invalid original-byte position; valid UTF-8 proceeds to
+YAML syntax validation. Option validation (§6) and the raw-input-size gate still
+apply. This is a UTF-8 input surface, not support for every YAML character encoding.
 
 | Milestone                                | Contents                                                                                                               |
 | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -364,6 +370,16 @@ wrapper; it is zero for every other node. `mapping_entries` is nonzero only for
 a Mapping; its children include both keys and values. A Tagged wrapper has one
 child. Thus a retained tag is counted once, on its wrapper, not on its payload.
 
+Worked subtree weights (logical bytes, not allocator or resident-memory sizes):
+
+| Input | Weight | Charges |
+| ----- | ------ | ------- |
+| `!t x` | 133 | 64 wrapper + 4 tag bytes + 64 inner String + 1 text byte |
+| `[~, ~]` | 192 | Three nodes at 64 each |
+| `{a: b}` | 218 | Three nodes at 64 + one entry at 24 + two text bytes |
+
+For `!t x`, the tag charge sums URI `!t`, handle `!` and suffix `t`: 2 + 1 + 1.
+
 - **A retained tag is a wrapper node.** A `Tagged` node and its inner node are
   two nodes. The wrapper weighs 64 plus its tag bytes (`uri`, `handle`,
   `suffix`). This applies to scalars and collections. A collection's tag is
@@ -569,6 +585,13 @@ part of measured parse cost.
 | Invalid UTF-8                    | `byte_offset` = length of the valid prefix; line and column over the valid prefix; `invalid_len` = length of the invalid sequence, or None when truncated at end                                                                                                                                                                                   |
 | Typed conversion error (§8)      | span of the node being converted, with `path` to it                                                                                                                                                                                                                                                                                                |
 
+**Encoding examples.** With valid options and an input within `max_input_bytes`,
+the bytes `FF FE` fail UTF-8 validation at byte 0; `00 00 FE FF` fail at byte 2.
+The first two NUL bytes in the latter are valid UTF-8. BOM-less UTF-16LE bytes for
+`k: v\n` (`6B 00 3A 00 20 00 76 00 0A 00`) are valid UTF-8 containing raw NULs:
+they pass the input gate and fail YAML syntax validation at byte 1. An encoding's
+intended meaning does not change how the UTF-8 input surface interprets its bytes.
+
 **Block scalar ends.** A literal or folded scalar ends at the exclusive end of
 its last source content line containing a byte other than ASCII space or tab,
 before the line break. Trailing spaces and tabs on that line remain inside the
@@ -611,14 +634,55 @@ line-break bytes; the surrounding quotes are not part of the input.
 | `"k: \| # c\n\nx: 1\n"` | `[8, 8)` | `""` |
 | `"- \|\n\n- a\n"` | `[3, 3)` | `""` |
 
-**Omitted children.** When an omitted node's engine marker directly follows
-line breaks, its empty span is placed before those breaks, at the end of the
-line on which it is omitted. It MUST NOT move before the end of its preceding
-sibling, the end of its key (for a mapping value), or its collection's start.
-This includes empty explicit keys and values, and applies to a retained tag's
-empty inner node as well as its wrapper when they share the empty span. It
-does not move alias-copy definition spans. For `? a\n? b\n`, the omitted values
-are at byte offsets 3 and 7 respectively. Empty document roots use §5.5 instead.
+**Omitted scalar children and zero-width empty scalars.** Normalize a zero-width
+omitted or empty scalar node when its engine marker directly follows line breaks,
+or follows only ASCII-space indentation on its current line after line breaks.
+Step over that current-line indentation first, then place the empty span before
+the immediately preceding line breaks. Spaces on an earlier blank line stop this
+normalization; do not trim arbitrary whitespace. The point MUST NOT move before
+the end of its preceding sibling, the end of its key (for a mapping value), or
+its collection's start.
+
+This includes omitted scalar explicit keys and values and zero-width empty block
+scalars. A retained tag wrapper and its inner scalar move together when they
+share the empty span. A zero-width collection, including one wrapped in a retained
+tag, MUST NOT move. Alias-copy definition spans retain their existing exception;
+explicit empty-document roots use §5.5. For `? a\n? b\n`, the omitted values remain
+at byte offsets 3 and 7 respectively.
+
+Revision 1.3 adds the following exact anchors. Each quoted input is an escaped
+string as in the preceding table; `\u{feff}` denotes a three-byte UTF-8 BOM.
+The first nine empty-block rows above are unchanged. The variant rows below are
+explicit examples, not a general offset-shift formula for arbitrary YAML edits.
+
+| Input | Selected node | Byte span | Value |
+| ----- | ------------- | --------- | ----- |
+| `"\u{feff}k: \|\n\nx: 1\n"` | Value of `k` | `[7, 7)` | String `""` |
+| `"k: \|\r\rx: 1\r"` | Value of `k` | `[4, 4)` | String `""` |
+| `"k: !t \|\n\nx: 1\n"` | Value of `k`: wrapper and inner | `[7, 7)` | Tagged `!t`, inner String `""` |
+| `"k: !!str \|\n\nx: 1\n"` | Value of `k` | `[10, 10)` | String `""` |
+| `"k: &a \|\n\nx: 1\n"` | Value of `k` | `[7, 7)` | String `""` |
+| `"a: 0\nk: \|\n\nx: 1\n"` | Value of `k` | `[9, 9)` | String `""` |
+| `"p:\n  ? a\n  ? b\n"` | First omitted value under `p` | `[8, 8)` | Null |
+| `"p:\n  k: \|\n\n  x: 1\n"` | Value of `k` under `p` | `[9, 9)` | String `""` |
+| `"?\n\n :\n"` | Root mapping's key mapping | `[4, 4)` | Mapping |
+| `"?\n !m\n :\n"` | Root mapping's tagged key: wrapper and inner mapping | `[7, 7)` | Tagged `!m`, inner Mapping |
+
+**Keep chomping at EOF.** The following exact inputs pin decoded values, not
+additional source-span conventions:
+
+| Input | Decoded value of `k` |
+| ----- | ------------------- |
+| `"k: \|+\n\n   "` | `"\n"` |
+| `"k: \|+\n\n   \n"` | `"\n\n"` |
+| `"k: \|+\r\n\r\n   "` | `"\n"` |
+
+The header break is non-content. Under
+[YAML 1.2.2 §8.1.1.2](https://yaml.org/spec/1.2.2/#8112-block-chomping-indicator),
+`l-keep-empty` repeats `l-empty`, each requiring a physical break via
+`b-as-line-feed`. The unterminated spaces-only tail in these examples contributes
+no additional break. Trailing non-content whitespace can end at EOF under §6.6;
+an EOF match does not synthesize a line feed. CRLF body breaks normalize to LF.
 
 **Containment.** Every parsed child's span MUST lie inside its parent's span.
 The exception is the link at an alias-copy or merged-entry insertion boundary,
@@ -660,7 +724,7 @@ can collide inside that type's own visitor.
 | ---------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `u8`…`u128`, `i8`…`i128`     | untagged Int in range                                                                           | String (even `"8080"`), Float (even `1.0`), Bool; out of range → `IntegerOutOfRange` |
 | `f64`                        | Float; Int if exactly representable                                                             | String; Int that would round                                                         |
-| `f32`                        | Float, rounded to nearest with ties to even (NaN, ±inf, ±0 kept); Int if exactly representable  | a finite input whose rounded result is infinite → `FloatOutOfRange`                  |
+| `f32`                        | Float's binary64 Value rounded to binary32, nearest with ties to even (NaN, ±inf, ±0 kept); Int if exactly representable | a finite input whose rounded result is infinite → `FloatOutOfRange` |
 | `bool`                       | Bool                                                                                            | String (`"true"`, `"yes"`), Int                                                      |
 | `String`                     | String                                                                                          | Int, Bool, Null, Float                                                               |
 | `char`                       | a String of one Unicode scalar value                                                            | otherwise                                                                            |
@@ -673,6 +737,14 @@ can collide inside that type's own visitor.
 | `TaggedValue<T>`             | Tagged (inner value by `T` rules)                                                               | untagged                                                                             |
 | `Spanned<T>`                 | anything (by `T` rules)                                                                         | —                                                                                    |
 | `Value`, `Node`              | anything, losslessly                                                                            | —                                                                                    |
+
+**f32 conversion path.** A Float literal is first resolved to the binary64
+`Value`; conversion rounds that value to binary32 without reparsing its source
+spelling. The same conversion applies through `from_str` and `load` plus
+`from_node`. Decimal Float resolution followed by this conversion can double
+round: `1.00000005960464477539062500000000000001` yields `1.0f32`, whereas direct
+decimal-to-binary32 rounding yields the next f32 above 1.0. The separate Int-to-f32
+rule still requires exact representability.
 
 **f32 boundary.** `3.4028235e38` exceeds `f32::MAX` but rounds to it, so it is
 accepted. The overflow threshold is the midpoint `2^128 − 2^103`
@@ -1053,10 +1125,14 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   difference, not a target.
 - **Resource.** With tiny configured budgets: a large scalar with many
   aliases; a shallow anchored subtree used at maximum depth; repeated and
-  nested merges; counters at the edge of overflow; many warnings; wire output
-  expansion; cleanup on error paths. Each MUST fail with the named limit
-  before the prohibited copy, proven by copy instrumentation. Peak allocation
-  is measured per category (§6), not asserted.
+  nested merges; counters at the edge of overflow; wire output expansion;
+  cleanup on error paths. Expansion rejections MUST identify the limit and
+  precede the prohibited copy, proven by copy instrumentation. Peak allocation
+  is measured per category (§6), not asserted. Test load-limit boundaries with
+  named configured values and valid options; test `max_documents` through stream
+  APIs and `max_output_bytes` through encoders. Input-size failures belong to the
+  input gate even though the Rust kind is `LimitExceeded`. M3 warning exhaustion
+  uses its truncation marker, not a load-error pair.
 - **Equality.** Reordered composite keys; equal URIs with different handles;
   the same value at different locations; nested NaN; ±0; Int vs Float; alias
   keys; mutation after indexing. `get` and duplicate detection agree on every
@@ -1064,7 +1140,8 @@ golden subset. Oracle acceptance is separate from specification acceptance.
 - **Merge.** Every recognition row, multiple sources, nested merges,
   overlapping sources, malformed sources, and the ordering rules.
 - **Typed.** Every row of the §8 table, including tagged Null into `Option`,
-  local and global tags into enums, tuple lengths, the f32 threshold,
+  local and global tags into enums, tuple lengths, the f32 threshold and
+  binary64-to-binary32 double-rounding example through both conversion paths,
   Int→float exactness, hand-built nodes, and a caller-defined normalizing key
   type (documented as outside the guarantee).
 - **Locations.** Every node and error: `start ≤ end ≤ input.len()`; offsets on
@@ -1080,12 +1157,26 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   LF/CRLF/lone-CR variants with multibyte text. Assert exact offsets and decoded
   values together, plus parent containment with only the insertion-boundary
   exceptions in §7.2. Test descendants inside alias/merge copies too.
-- **Revision 1.2 empty blocks.** Pin every §7.2 empty-block example's span and
-  decoded value together, with independent line/column checks. Include literal
-  and folded styles, clip/strip/keep chomping, spaces-only lines, comments,
+- **Revision 1.2 empty blocks.** Pin the nine original §7.2 empty-block rows'
+  spans and decoded values together, with independent line/column checks. Include
+  literal and folded styles, clip/strip/keep chomping, spaces-only lines, comments,
   sibling versus EOF anchors, sequence items, tags/anchors, BOM and
   LF/CRLF/lone-CR variants. Assert normalization floors and containment. Do not
   substitute an indicator-based event-span convention for these node spans.
+- **Revision 1.3 anchors.** Pin the additional §7.2 rows, nested omitted values
+  and tagged/untagged zero-width collections, including BOM and LF/CRLF/lone-CR
+  variants. Assert unchanged values, every normalization floor, wrapper/inner
+  agreement and recursive containment, including inside alias/merge copies.
+  Removing only the tagged-collection exception MUST fail a detecting test.
+  Keep these new normalization expectations separate from revision 1.2 profiles.
+- **EOF keep chomping.** Assert all three exact §7.2 value examples, distinguishing
+  a physical final break from an unterminated spaces-only tail. Record the
+  grammar-derived expectation separately from observed parser or suite results.
+- **UTF-8 input surface.** Exercise §7.2's invalid-byte positions 0 and 2 and the
+  BOM-less UTF-16LE bytes that pass UTF-8 but fail YAML syntax at byte 1. Include
+  raw NUL and valid escaped `\0`, the optional UTF-8 BOM, and input-size boundaries.
+- **Worked weights.** Assert §6's 133/192/218 subtree weights independently of
+  serialization or allocator layout, with wrapper/entry charges intact.
 - **Document cardinality.** Every §5.5 row and the consecutive explicit-empty
   document example through string and byte entrypoints,
   with EOF coordinates for zero-document streams and boundary coordinates for
@@ -1146,16 +1237,35 @@ yamlprims repository under `docs/decisions/`. The merge-key default
 
 ## 16. Errata
 
-Tagged revisions 1.0 and 1.1 remain preserved at `spec-v1.0` and `spec-v1.1`.
+Tagged revisions 1.0, 1.1 and 1.2 remain preserved at `spec-v1.0`, `spec-v1.1`
+and `spec-v1.2`.
 Erratum numbering belongs to this public specification and restarts per revision;
-cross-document references use revision-qualified identifiers such as `1.2/E-1`.
+cross-document references use revision-qualified identifiers such as `1.3/E-1`.
 Specification publication and decision acceptance do not establish implementation
 qualification.
 
-### Revision 1.2 — unreleased draft
+### Revision 1.3 — unreleased draft
 
 These proposed contract updates require maintainer acceptance and a separately
-pinned qualification profile. They do not rewrite revision 1.1 expectations.
+pinned qualification profile. New nested-anchor expectations MUST NOT be bound
+to a profile claiming unchanged revision 1.2 behavior. Historical profiles keep
+their individual specification bindings.
+
+| ID | Sections | Change from revision 1.2 |
+| --- | -------- | ------------------------ |
+| E-1 | §7.2, §13.2 | Normalize zero-width omitted/empty scalars over current-line ASCII-space indentation and preceding breaks; preserve floors, move scalar tag wrappers together and retain zero-width collection anchors. |
+| E-2 | §1, §7.2, §13.2 | Clarify the UTF-8-only input surface, original-byte invalid-UTF-8 positions and syntax validation of valid UTF-8 containing raw NULs. |
+| E-3 | §8, §13.2 | Clarify binary64-Value-to-binary32 conversion through both typed paths, without reparsing Float literals; Int exactness is unchanged. |
+| E-4 | §7.2, §13.2 | Pin keep-chomping values for exact spaces-only EOF examples with and without a final physical line break. |
+
+Section 6 also adds worked logical-weight examples; the accounting formula and
+64-byte node charge are unchanged. Wire grammar version 1 is unchanged.
+
+### Revision 1.2 — tagged draft specification
+
+The following updates were incorporated in revision 1.2. Its tag and separately
+pinned expectations remain unchanged; tagging did not establish implementation
+qualification or accept proposed decision records.
 
 | ID | Sections | Change from revision 1.1 |
 | --- | -------- | ------------------------ |
