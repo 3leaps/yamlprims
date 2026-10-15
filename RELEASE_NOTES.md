@@ -1,4 +1,26 @@
-# spec-v1.2 — unreleased specification draft
+# spec-v1.3 — unreleased specification draft
+
+- `1.3/E-1`: nested zero-width scalar normalization, normalization floors,
+  paired scalar tag anchors and a zero-width collection exception.
+- `1.3/E-2`: explicit UTF-8 input scope and original-byte encoding examples.
+- `1.3/E-3`: binary64-Value-to-binary32 conversion through both typed paths,
+  preserving the separate exact-integer rule.
+- `1.3/E-4`: exact keep-chomping EOF values with and without a final line break.
+- Worked logical weights and explicit span variants with matching qualification
+  requirements.
+
+The signed `spec-v1.2` tag and earlier specification tags remain unchanged.
+New nested-anchor behavior requires a separately pinned revision 1.3 profile;
+existing profiles keep their individual specification bindings. The wire grammar
+version remains 1, and the logical-weight formula is unchanged.
+
+This draft contains documentation only. Specification acceptance, independent
+oracle review and implementation qualification remain separate gates. No runtime
+or package is published by this draft.
+
+## spec-v1.2 — tagged draft specification
+
+Revision 1.2 is available at the signed `spec-v1.2` tag.
 
 - `1.2/E-1`: owned type descriptions and 1,024-byte UTF-8-safe descriptive bounds.
 - `1.2/E-2`: structured error-path preflight, precise rejection kinds/sites,
@@ -11,7 +33,7 @@ requires new immutable profile pins; no older profile implicitly adopts these
 changes. The wire grammar version remains 1. These changes refine validation,
 descriptive bounds and source anchors without adding wire members.
 
-This draft publishes no runtime or package and makes no candidate-conformance
+This specification publishes no runtime or package and makes no candidate-conformance
 claim. Independent expectations and fail-closed qualification tooling remain
 required by Q0 before implementation transfer. The remaining design gates retain
 their milestone requirements.

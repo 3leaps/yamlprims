@@ -94,11 +94,13 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
-The working draft is revision `1.2` (`SPEC_VERSION`), targeting `spec-v1.2`.
-Existing tags `spec-v1.0` and `spec-v1.1` and their pinned expectations remain
-immutable. Revision 1.2 adds owned type descriptions, error-encoder preflight
-and empty-block anchors; it requires a new profile citing the final specification
-commit/file digest and reviewed expectations before transfer is authorized.
+The working draft is revision `1.3` (`SPEC_VERSION`), targeting `spec-v1.3`.
+Existing tags `spec-v1.0`, `spec-v1.1` and `spec-v1.2` and their pinned expectations
+remain immutable. Revision 1.3 adds nested empty-scalar normalization and the
+zero-width collection exception, and clarifies UTF-8 input scope, f32 conversion
+and exact keep-chomping EOF values. Its new anchor rules require a new profile
+citing the final specification commit/file digest and independently reviewed
+expectations before transfer is authorized.
 
 The revision 1.1 corpus migration specifies `yamlprims-core` r2 and `scalar-alias`
 span convention r2 revisions citing `spec-v1.1`. Pin the tag's specification
@@ -112,7 +114,8 @@ content line break; `1.1/E-1` ends them before it. These are distinct convention
 retain r1 bytes and expectations, and bind new spans to r2. These migration
 requirements do not establish acceptance of any corpus artifact or oracle.
 
-Revision 1.2 does not silently rebind those r2 artifacts. Assign new immutable
+Revision 1.2 adds owned type descriptions, error-encoder preflight and empty-block
+anchors. It does not silently rebind those r2 artifacts. Assign new immutable
 profile/convention revisions where their contracts change, with the exact
 specification and artifact digests. The corpus's indicator-based block-scalar
 event spans are not yamlprims content-based node spans, even when their end rules
@@ -120,6 +123,30 @@ agree. Qualify the empty-block node anchors in §7.2 independently, and preserve
 prior event-span conventions. Error mutation, bounded formatting and encoder
 rejection probes belong in Rust API/consumer-operation tests; an input/value
 corpus alone cannot exercise them.
+
+Revision 1.3 does not retroactively extend revision 1.2 profiles with nested
+normalization or the collection exception. Preserve every historical profile's
+actual binding: some r1 profiles cite revision 1.0, while `yamlprims-core` r2 and
+`yamlprims-core-limits` r1 cite revision 1.1. Profile revision numbers are not
+specification version numbers. Add 1.2 and 1.3 profiles beside historical ones;
+do not relabel recipes or treat earlier runs as coverage of a later inventory.
+
+Node-span expectations need profile-bound selectors for document roots, sequence
+items, mapping keys/values, tag wrappers/inners and nodes inside alias/merge
+copies. Event indexes do not identify those nodes. Define schema, validator and
+consumer support before adding node records. Limit-error `configured` expectations
+likewise require an explicit corpus schema extension. Under structcorpus's
+[phase convention](https://github.com/3leaps/structcorpus/blob/main/docs/decisions/DDR-0002-format-events-and-profile-expectations.md),
+input-size errors belong to `input`; the driver must map `MaxInputBytes` to that
+phase rather than the general `limit` phase and test that mapping at the boundary.
+
+Keep operation coverage distinct: ordinary load limits, stream document limits,
+encoder output limits and M3 warning truncation. Use fixed-message constructed
+errors for exact error-envelope/output-length goldens; loader prose is not a
+normative oracle. Such operations may become declarative corpus records with a
+versioned operation schema and executor. Until then, retain consumer API tests.
+Promote corpus records to `reviewed` only through independent semantic review
+with reviewer and method recorded, never as a consequence of candidate passes.
 
 No crate-name reservation is required for S0. Prefer publishing useful packages
 over empty placeholders. A first crate may expose a deliberately smaller,
@@ -166,7 +193,11 @@ The gate requires:
 6. A reviewed gap inventory for coverage not yet present in the corpus. Corpus
    publication by itself does not establish candidate conformance.
    Include exact node spans and explicit-empty-document boundaries, the
-   revision 1.2 empty-block examples and encoder mutation/boundary probes.
+   revision 1.2 empty-block examples and encoder mutation/boundary probes,
+   and revision 1.3 nested anchors, collection exceptions, encoding examples,
+   double rounding and exact keep-chomping EOF values. Pin each to its matching
+   specification revision; a driver control must detect input-size errors
+   misclassified as ordinary limit errors.
    Provisional expectations remain provisional after a successful comparison;
    independent semantic acceptance is a separate requirement.
 

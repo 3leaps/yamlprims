@@ -1,8 +1,9 @@
 # Open design items before implementation freeze
 
-Status: proposed. Specification revision 1.2 is an unreleased draft; revision
-1.1 remains available at its immutable tag. These items remain open. They must
-not silently become implementation choices or claims of completed qualification.
+Status: proposed. Specification revision 1.3 is an unreleased draft; revision
+1.2 and earlier revisions remain available at their immutable tags. These items
+remain open. They must not silently become implementation choices or claims of
+completed qualification.
 
 ## M1 contract freeze
 
@@ -19,7 +20,7 @@ profile are still required; revision 1.0 expectations stay bound to revision 1.0
 | Error ownership    | §7.1 selects boxed Error with public non-exhaustive ErrorDetail, Deref/DerefMut, owned extraction and bounded constructors; §10 specifies the fallible error encoder. | Positive borrowed/owned/custom-error compile probes, negative struct-pattern and field-move probes, pointer-sized Error assertion, bounded formatting and too-small encoder budget controls.             |
 | Strict indentation | §9 and accepted ADR-0003 require a strict-only public API and `true` in every parsing pass.                                                                           | Compare both settings on an identical pinned suite and migration inventory; malformed indentation must fail as syntax, not an unrelated error.                                                           |
 
-### Proposed for revision 1.2
+### Selected in tagged revision 1.2
 
 - **Owned descriptions (`1.2/E-1`).** `Type` uses owned `String` fields;
   descriptive fields have a 1,024-byte UTF-8-safe bound. Compile dynamic Serde
@@ -35,7 +36,29 @@ profile are still required; revision 1.0 expectations stay bound to revision 1.0
   BOM, line breaks, tags/anchors and sibling-versus-EOF behavior. An event-span
   convention starting at an indicator is not an exact node-span oracle.
 
-These proposals do not close the remaining gates below. A syntax code's shape
+### Proposed for revision 1.3
+
+- **Nested scalar anchors (`1.3/E-1`).** Normalize zero-width omitted/empty
+  scalar spans over current-line ASCII-space indentation and preceding breaks,
+  preserving every floor. Scalar tag wrappers and their inner nodes move
+  together. Zero-width collections, including tagged collections, stay in place.
+  Pin the §7.2 examples and line-break/BOM variants; test recursive containment
+  and a mutation removing only the tagged-collection guard.
+- **UTF-8 input scope (`1.3/E-2`).** No UTF-16/32 detection or transcoding. Test
+  invalid UTF-8 at bytes 0 and 2 and valid UTF-8 containing raw NUL at byte 1;
+  retain option validation and raw-size gates. This clarification does not
+  resolve the separate general error-precedence item below.
+- **f32 conversion (`1.3/E-3`).** Convert binary64 Value to binary32 through
+  both typed paths; test the explicit double-rounding example and retain the
+  separate Int exactness rule.
+- **EOF keep chomping (`1.3/E-4`).** Pin the three exact §7.2 decoded-value
+  examples, with grammar-derived expectations distinguishing a final physical
+  break from trailing spaces at EOF. Do not generalize a suite row to other
+  inputs or use parser agreement as acceptance of an expectation.
+- **Logical weights.** Pin the 133/192/218 worked examples without changing
+  the formula or asserting a physical-memory bound.
+
+These selections do not close the remaining gates below. A syntax code's shape
 check is not acceptance of a closed vocabulary; a successful corpus comparison
 does not promote provisional expectations. Before Q0 closes, require a
 fail-closed driver with exact inventory/profile-revision validation and the
@@ -68,8 +91,9 @@ sequences. A corpus profile must bind that convention explicitly; a broad
 
 The qualification record must identify the implementing profile and detecting
 test for each selected contract before closing its evidence gate. No new profile
-pin is asserted by this draft. Profiles citing `spec-v1.0` or `spec-v1.1`
-must not be silently relabeled to cover revision 1.2.
+pin is asserted by this draft. Profiles citing `spec-v1.0`, `spec-v1.1` or
+`spec-v1.2` must not be silently relabeled to cover revision 1.3. Preserve the
+1.2 anchor inventory independently from new 1.3 normalization expectations.
 
 The revision 1.1 corpus migration uses `yamlprims-core` r2 and `scalar-alias` r2,
 with immutable pins as described in the build specification. Qualify the
@@ -83,6 +107,15 @@ Error-path collection nesting is defined for encoder preflight in §11.1;
 general parser/materialized root and wrapper depth, and arbitrary synthetic-tree
 stack safety, remain distinct open items. Specification acceptance does not
 establish those runtime guarantees.
+
+Revision 1.3 additionally needs profile-bound node selectors and matching
+schema/validator/driver support, separate from event locations. Limit-error
+configured values need a schema extension; input-size errors already use the
+corpus `input` phase. Test that mapping independently from other load limits.
+Keep stream, output and M3-warning operations distinct. Fixed-message error
+operation goldens require an operation schema/executor or API tests, rather than
+freezing loader prose. Independent oracle promotion and a fail-closed run of
+the exact new inventory remain separate qualification requirements.
 
 ## M2 boundary freeze
 
