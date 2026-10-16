@@ -2,11 +2,16 @@ PYTHON ?= python3
 YAMLFMT ?= yamlfmt
 YAMLLINT ?= yamllint
 SHELLCHECK ?= shellcheck
+ACTIONLINT ?= actionlint
+GONEAT ?= goneat
 SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh)
 
-.PHONY: help check test-docs lint lint-shell lint-yaml fmt-yaml fmt version test-release-tag-controls release-tag release-verify-tag release-push-tag release-verify-remote-tag
+.PHONY: help prepush check-tooling lint-workflows check test-docs lint lint-shell lint-yaml fmt-yaml fmt version test-release-tag-controls release-tag release-verify-tag release-push-tag release-verify-remote-tag
 
 help:
+	@echo "make prepush Run full local gates (Unix, installed tools required)"
+	@echo "make check-tooling Verify the pinned goneat version"
+	@echo "make lint-workflows Run actionlint on workflows"
 	@echo "make check   Validate specification-release files and local links"
 	@echo "make test-docs Test documentation validation using temporary fixtures"
 	@echo "make lint-yaml Check YAML formatting and lint (two-space indentation)"
@@ -15,6 +20,20 @@ help:
 	@echo "make version Show the specification revision"
 	@echo "make test-release-tag-controls Test signing guards using disposable keys"
 	@echo "make release-tag Create and verify a local signed specification tag"
+
+# Recipes keep prerequisite validation ahead of every gate, even with make -j.
+prepush:
+	$(PYTHON) scripts/check-tooling.py --prepush --goneat "$(GONEAT)" \
+		--require "$(ACTIONLINT)" --require "$(YAMLFMT)" --require "$(YAMLLINT)" \
+		--require "$(SHELLCHECK)" --require bash --require git --require gpg --require "$(MAKE)"
+	$(MAKE) lint test-docs lint-workflows
+	$(MAKE) test-release-tag-controls
+
+check-tooling:
+	$(PYTHON) scripts/check-tooling.py --goneat "$(GONEAT)"
+
+lint-workflows:
+	$(ACTIONLINT)
 
 check:
 	$(PYTHON) scripts/check-docs.py
