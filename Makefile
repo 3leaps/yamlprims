@@ -1,14 +1,29 @@
+.DEFAULT_GOAL := help
 PYTHON ?= python3
 YAMLFMT ?= yamlfmt
 YAMLLINT ?= yamllint
 SHELLCHECK ?= shellcheck
 ACTIONLINT ?= actionlint
 GONEAT ?= goneat
-SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh)
+SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
+
+.PHONY: test-rust check-rust test-conformance-tools
+
+test-rust:
+	cargo test --locked --workspace -- --test-threads=1
+
+check-rust:
+	cargo fmt --all --check
+	cargo check --locked --workspace --all-targets
+
+test-conformance-tools:
+	$(PYTHON) -B -m unittest discover -s conformance -p 'test_*.py'
 
 .PHONY: help prepush check-tooling lint-workflows check test-docs lint lint-shell lint-yaml fmt-yaml fmt version test-release-tag-controls release-tag release-verify-tag release-push-tag release-verify-remote-tag
 
 help:
+	@echo "make check-rust test-rust Check and test the Rust baseline"
+	@echo "make test-conformance-tools Test qualification failure propagation"
 	@echo "make prepush Run full local gates (Unix, installed tools required)"
 	@echo "make check-tooling Verify the pinned goneat version"
 	@echo "make lint-workflows Run actionlint on workflows"
@@ -28,6 +43,7 @@ prepush:
 		--require "$(SHELLCHECK)" --require bash --require git --require gpg --require "$(MAKE)"
 	$(MAKE) lint test-docs lint-workflows
 	$(MAKE) test-release-tag-controls
+	$(MAKE) check-rust test-rust test-conformance-tools
 
 check-tooling:
 	$(PYTHON) scripts/check-tooling.py --goneat "$(GONEAT)"

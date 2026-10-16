@@ -1,0 +1,130 @@
+id	yaml	probe	options	expected
+g001	"k: true\n"	k=k	-	bool:true
+g002	"k: True\n"	k=k	-	bool:true
+g003	"k: TRUE\n"	k=k	-	bool:true
+g004	"k: tRUE\n"	k=k	-	str:"tRUE"
+g005	"k: false\n"	k=k	-	bool:false
+g006	"k: FALSE\n"	k=k	-	bool:false
+g007	"k: fALSE\n"	k=k	-	str:"fALSE"
+g008	"k: yes\n"	k=k	-	str:"yes"
+g009	"k: Yes\n"	k=k	-	str:"Yes"
+g010	"k: on\n"	k=k	-	str:"on"
+g011	"k: OFF\n"	k=k	-	str:"OFF"
+g012	"k: y\n"	k=k	-	str:"y"
+g013	"k: n\n"	k=k	-	str:"n"
+g014	"k: no\n"	k=k	-	str:"no"
+g015	"y: 1\n"	key0	-	str:"y"
+g016	"yes: 1\n"	key0	-	str:"yes"
+g017	"true: 1\n"	key0	-	bool:true
+g018	"k: ~\n"	k=k	-	null
+g019	"k: null\n"	k=k	-	null
+g020	"k: Null\n"	k=k	-	null
+g021	"k: NULL\n"	k=k	-	null
+g022	"k: nULL\n"	k=k	-	str:"nULL"
+g023	"k:\n"	k=k	-	null
+g024	"k: ''\n"	k=k	-	str:""
+g025	"k: \"true\"\n"	k=k	-	str:"true"
+g026	"k: 'false'\n"	k=k	-	str:"false"
+g027	"k: |\n  true\n"	k=k	-	str:"true\n"
+g028	"k: |-\n  true\n"	k=k	-	str:"true"
+g029	"k: >-\n  null\n"	k=k	-	str:"null"
+g030	"? |-\n  true\n: v\n"	key0	-	str:"true"
+g031	"? >\n  key\n: v\n"	key0	-	str:"key\n"
+g032	"[true, yes, ~]\n"	[1]	-	str:"yes"
+g033	"[true, yes, ~]\n"	[2]	-	null
+g034	"{true: 1}\n"	key0	-	bool:true
+g035	"true\n"	root	-	bool:true
+g036	""	root	-	null
+g037	"# only a comment\n"	root	-	null
+g038	"k: 42\n"	k=k	-	int:42
+g039	"k: -42\n"	k=k	-	int:-42
+g040	"k: +42\n"	k=k	-	int:42
+g041	"k: 0042\n"	k=k	-	int:42
+g042	"k: 0755\n"	k=k	-	int:755
+g043	"k: 0o17\n"	k=k	-	int:15
+g044	"k: 0x1F\n"	k=k	-	int:31
+g045	"k: -0x1\n"	k=k	-	str:"-0x1"
+g046	"k: 0b101\n"	k=k	-	str:"0b101"
+g047	"k: 1_000\n"	k=k	-	str:"1_000"
+g048	"k: 1:20\n"	k=k	-	str:"1:20"
+g049	"k: 340282366920938463463374607431768211455\n"	k=k	-	int:340282366920938463463374607431768211455
+g050	"k: 340282366920938463463374607431768211456\n"	k=k	-	err:integer_out_of_range
+g051	"k: -170141183460469231731687303715884105728\n"	k=k	-	int:-170141183460469231731687303715884105728
+g052	"k: -170141183460469231731687303715884105729\n"	k=k	-	err:integer_out_of_range
+g053	"k: 1.5\n"	k=k	-	float:3ff8000000000000
+g054	"k: 1.\n"	k=k	-	float:3ff0000000000000
+g055	"k: .5\n"	k=k	-	float:3fe0000000000000
+g056	"k: 1e3\n"	k=k	-	float:408f400000000000
+g057	"k: -0.0\n"	k=k	-	float:8000000000000000
+g058	"k: 1e9999\n"	k=k	-	err:float_out_of_range
+g059	"k: 1e-400\n"	k=k	-	float:0000000000000000
+g060	"k: .inf\n"	k=k	-	float:7ff0000000000000
+g061	"k: -.Inf\n"	k=k	-	float:fff0000000000000
+g062	"k: +.INF\n"	k=k	-	float:7ff0000000000000
+g063	"k: .nan\n"	k=k	-	float:7ff8000000000000
+g064	"k: .NaN\n"	k=k	-	float:7ff8000000000000
+g065	"k: -.nan\n"	k=k	-	str:"-.nan"
+g066	"k: inf\n"	k=k	-	str:"inf"
+g067	"k: \"8080\"\n"	k=k	-	str:"8080"
+g068	"k: !!int \"42\"\n"	k=k	-	int:42
+g069	"k: !!int \"abc\"\n"	k=k	-	err:tag_value_mismatch
+g070	"k: !!bool \"TRUE\"\n"	k=k	-	bool:true
+g071	"k: !!bool \"yes\"\n"	k=k	-	err:tag_value_mismatch
+g072	"k: !!str 42\n"	k=k	-	str:"42"
+g073	"k: !!str true\n"	k=k	-	str:"true"
+g074	"k: !!float 1\n"	k=k	-	float:3ff0000000000000
+g075	"k: !!null \"\"\n"	k=k	-	null
+g076	"k: !!null x\n"	k=k	-	err:tag_value_mismatch
+g077	"k: !!seq [1]\n"	k=k	-	seq:1
+g078	"k: !!map [1]\n"	k=k	-	err:tag_kind_mismatch
+g079	"k: !!int [1]\n"	k=k	-	err:tag_kind_mismatch
+g080	"k: !<tag:yaml.org,2002:int> 7\n"	k=k	-	int:7
+g081	"k: ! 42\n"	k=k	-	str:"42"
+g082	"k: ! true\n"	k=k	-	str:"true"
+g083	"k: !custom 42\n"	k=k	-	tagged:"!custom":str:"42"
+g084	"k: !custom true\n"	k=k	-	tagged:"!custom":str:"true"
+g085	"k: !<tag:example.com,2026:thing> x\n"	k=k	-	tagged:"tag:example.com,2026:thing":str:"x"
+g086	"%TAG !e! tag:example.com,2026:\n---\nk: !e!thing x\n"	k=k	-	tagged:"tag:example.com,2026:thing":str:"x"
+g087	"k: !!binary aGk=\n"	k=k	-	tagged:"tag:yaml.org,2002:binary":str:"aGk="
+g088	"k: !!timestamp 2001-12-14\n"	k=k	-	tagged:"tag:yaml.org,2002:timestamp":str:"2001-12-14"
+g089	"k: !custom [!inner x]\n"	k=k	-	tagged:"!custom":seq:1
+g090	"a: 1\na: 2\n"	root	-	err:duplicate_key
+g091	"1: a\n0x1: b\n"	root	-	err:duplicate_key
+g092	"1: a\n'1': b\n"	root	-	ok
+g093	"1: a\n1.0: b\n"	root	-	ok
+g094	"true: a\nTrue: b\n"	root	-	err:duplicate_key
+g095	"yes: a\nYes: b\n"	root	-	ok
+g096	"~: a\nnull: b\n"	root	-	err:duplicate_key
+g097	"0.0: a\n-0.0: b\n"	root	-	err:duplicate_key
+g098	"? {a: 1, b: 2}\n: x\n? {b: 2, a: 1}\n: y\n"	root	-	err:duplicate_key
+g099	"? [1, 2]\n: x\n? [2, 1]\n: y\n"	root	-	ok
+g100	"!a x: 1\n!b x: 2\n"	root	-	ok
+g101	"!a x: 1\n!<!a> x: 2\n"	root	-	err:duplicate_key
+g102	"? .nan\n: 1\n"	root	-	err:invalid_key
+g103	"? [.nan]\n: 1\n"	root	-	err:invalid_key
+g104	"b: &b {x: 1}\nm: {<<: *b}\n"	root	-	err:merge_rejected
+g105	"b: &b {x: 1, y: 1}\nm: {y: 2, <<: *b}\n"	k=m	apply	keys:y,x
+g106	"b: &b {x: 1, y: 1}\nm: {y: 2, <<: *b}\n"	k=m/k=y	apply	int:2
+g107	"b: &b {x: 1, y: 1}\nm: {<<: *b, y: 2}\n"	k=m/k=y	apply	int:2
+g108	"p: &p {x: 1}\nq: &q {x: 2, z: 2}\nm: {<<: [*p, *q]}\n"	k=m/k=x	apply	int:1
+g109	"p: &p {x: 1}\nq: &q {x: 2, z: 2}\nm: {<<: [*p, *q]}\n"	k=m	apply	keys:x,z
+g110	"m: {<<: 1}\n"	root	apply	err:merge_source
+g111	"b: &b {x: 1}\nm: {<<: *b, <<: *b}\n"	root	apply	err:duplicate_key
+g112	"b: &b {x: 1}\nm: {\"<<\": *b}\n"	k=m	apply	keys:"<<"
+g113	"b: &b {x: 1}\nm: {!!str <<: *b}\n"	k=m	apply	keys:"<<"
+g114	"b: &b {x: 1}\nm: {!!merge \"<<\": *b}\n"	k=m	apply	keys:x
+g115	"b: &b {x: 1}\nm: {<<: *b}\n"	k=m	as_key	keys:"<<"
+g116	"a: &x 1\nb: *x\n"	k=b	-	int:1
+g117	"a: *x\n"	root	-	err:unknown_anchor
+g118	"a: &x 1\nb: &x 2\nc: *x\n"	k=c	-	int:2
+g119	"a: 1\n---\nb: 2\n"	root	-	err:multiple_documents
+g120	"k: 8080\n"	typed_u16	-	int:8080
+g121	"k: \"8080\"\n"	typed_u16	-	err:type
+g122	"k: 70000\n"	typed_u16	-	err:integer_out_of_range
+g123	"k: 1.0\n"	typed_u16	-	err:type
+g124	"k: !custom 1\n"	typed_u16	-	err:type
+g125	"k: yes\n"	typed_bool	-	err:type
+g126	"k: 1\n"	typed_string	-	err:type
+g127	"k: ~\n"	typed_string	-	err:type
+g128	"k: ~\n"	typed_option_bool	-	none
+g129	"k: !!null ~\n"	typed_option_bool	-	none

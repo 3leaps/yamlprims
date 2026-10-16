@@ -3,9 +3,11 @@
 **A specified YAML data layer for Rust and language bindings. Built in public,
 starting with the contract.**
 
-The first release contains the [draft specification](docs/spec/yamlprims-spec.md),
-[build specification](docs/build-spec.md) and [decision records](docs/decisions/README.md).
-There is no installable parser library, CLI or binding in this release.
+The repository contains the [specification](docs/spec/yamlprims-spec.md),
+[build specification](docs/build-spec.md), [decision records](docs/decisions/README.md)
+and a working Rust core baseline. No library package, CLI or binding has been
+released. See [implementation status](docs/implementation.md) for current coverage
+and remaining work.
 
 ## What we are building
 
@@ -22,15 +24,13 @@ environment interpolation or network access.
 
 ## Status and participation
 
-Current tagged specification: [**spec-v1.2**](https://github.com/3leaps/yamlprims/tree/spec-v1.2),
-a draft contract covering owned type descriptions, error-encoder revalidation
-and empty-block scalar anchors. The earlier
-[spec-v1.0](https://github.com/3leaps/yamlprims/tree/spec-v1.0) and
-[spec-v1.1](https://github.com/3leaps/yamlprims/tree/spec-v1.1) baselines remain
-available. These tags do not imply a crate release or API freeze.
-The working specification is **revision 1.3, an unreleased draft** covering nested
+Current tagged specification: [**spec-v1.3**](https://github.com/3leaps/yamlprims/tree/spec-v1.3),
+a draft contract covering nested
 empty-scalar anchors, zero-width collection anchors, UTF-8 input scope,
 binary64-to-f32 conversion and exact keep-chomping EOF examples.
+Earlier specification tags remain immutable. The normative file retains its
+tagged bytes, including its historical draft-status wording. These tags do not
+imply a crate release or API freeze.
 Existing corpus profiles remain bound to their cited specification revision.
 GitHub release publication is separate from specification tagging.
 See [the roadmap and acceptance gates](docs/build-spec.md#delivery-gates) and
@@ -45,6 +45,7 @@ test material, including [structcorpus](https://github.com/3leaps/structcorpus).
 
 ```sh
 make check    # checks the specification release; no Rust toolchain required
+make test-rust  # runs the included core, truth, wire and stack regressions
 ```
 
 ## License

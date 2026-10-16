@@ -1,0 +1,1 @@
+{"format":"yamlprims-value","version":1,"error":{"kind":"duplicate_key","detail":{},"site":{"source":[10,3,1]},"related":[{"role":"first_definition","span":[0,1,1,1,1,2]}],"path":[],"message":"duplicate mapping key"}}

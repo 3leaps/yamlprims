@@ -1,2 +1,8 @@
 # Keep documentation and scripts byte-stable across checkouts.
 * text=auto eol=lf
+
+# Preserve fixture bytes, including invalid UTF-8, BOMs and line endings.
+/crates/yamlprims/tests/fixtures/** -text
+/crates/yamlprims/tests/fixtures/**/README.md text eol=lf
+/crates/yamlprims/tests/fixtures/**/*.py text eol=lf
+/conformance/pins/*.json -text

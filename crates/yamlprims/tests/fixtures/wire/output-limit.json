@@ -1,0 +1,1 @@
+{"format":"yamlprims-value","version":1,"error":{"kind":"output_limit_exceeded","detail":{"configured":64},"site":{"not_source":{"last_known":null}},"related":[],"path":[],"message":"encoded output exceeds max_output_bytes (64)"}}
