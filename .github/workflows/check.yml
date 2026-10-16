@@ -86,9 +86,9 @@ jobs:
   workflow-lint:
     runs-on: ubuntu-latest
     container:
-      # Digest-pinned tools include yamlfmt and yamllint.
+      # Fulmen-toolbox v0.5.10 includes goneat v0.6.4, yamlfmt and yamllint.
       # yamllint disable-line rule:line-length
-      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc@sha256:fe525f286458a7491958f8f3b916ef1b9befb05fa2dae2e37b0c08eb84860bae
+      image: ghcr.io/fulmenhq/goneat-tools-runner-glibc:v0.5.10@sha256:42e95c5d7aa961010454b0c29c07e676b220d1cde71dd2fc71c338d1ca2adbe8
       options: --user 1001:1001
     timeout-minutes: 5
     defaults:
@@ -98,6 +98,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      - name: Verify pinned goneat
+        run: make check-tooling
       - name: Check YAML configuration
         run: make lint-yaml
       - name: Install and run actionlint
@@ -111,4 +113,4 @@ jobs:
           echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check
           tar -xzf "$archive" actionlint
           cd "$GITHUB_WORKSPACE"
-          "${RUNNER_TEMP}/actionlint/actionlint" -color
+          make lint-workflows ACTIONLINT="${RUNNER_TEMP}/actionlint/actionlint"
