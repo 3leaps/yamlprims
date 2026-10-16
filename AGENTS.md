@@ -6,9 +6,12 @@ Read local guidance when present.
 
 ## Current phase
 
-Specification-only. Do not add placeholder crates or port runtime code until the
-qualification gate in the build specification is complete. Proposed decision
-records remain proposed until maintainers accept them.
+Rust core baseline under development. Read `docs/implementation.md` and
+`conformance/README.md` for the implemented surface, pinned checks and open gates.
+Preserve the baseline behavior through structural changes and rerun the same
+expectations. Do not add placeholder crates or regenerate expected results to
+match implementation output. Proposed decision records remain proposed until
+maintainers accept them.
 
 ## Public content
 
@@ -20,6 +23,9 @@ branches and PR text as permanent public content.
 ## Checks
 
 Run `make check`. It validates the documentation release, not YAML behavior.
+Run `make check-rust test-rust test-conformance-tools` for runtime changes and
+`make prepush` before publication. Run the pinned conformance gate for adapter
+changes. Keep test outputs and hydrated corpora outside the working tree.
 Keep format semantics, adapter policy, implementation observations and test
 expectations distinct. Never change expectations solely to make an implementation
 pass. Do not claim tests, platforms or package releases that were not executed.

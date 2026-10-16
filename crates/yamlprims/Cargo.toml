@@ -1,0 +1,18 @@
+[package]
+name = "yamlprims"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Owned YAML values, strict parsing, typed conversion and bounded wire encoding"
+readme = "README.md"
+publish = false
+
+[dependencies]
+granit-parser.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

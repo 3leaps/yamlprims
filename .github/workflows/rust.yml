@@ -1,0 +1,35 @@
+name: Rust baseline
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  core:
+    name: core (${{ matrix.toolchain }}, ${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ["1.88.0", "1.89.0"]
+        profile: [debug, release]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install exact toolchain
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+        run: rustup toolchain install "$TOOLCHAIN" --profile minimal
+      - name: Test core and driver build
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          flags=()
+          if [ "$PROFILE" = release ]; then flags+=(--release); fi
+          cargo +"$TOOLCHAIN" test --locked --workspace "${flags[@]}" -- --test-threads=1
+          cargo +"$TOOLCHAIN" build --locked -p yamlprims --example structcorpus "${flags[@]}"
+      - name: Check qualification failure propagation
+        run: python3 -B -m unittest discover -s conformance -p 'test_*.py'

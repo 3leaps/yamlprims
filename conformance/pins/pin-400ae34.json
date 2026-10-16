@@ -1,0 +1,220 @@
+{
+ "cases": 61348,
+ "corpus_commit": "400ae349bb8eb311656c39dc27ff3f7489c8b389",
+ "files": {
+  "manifests/cases.jsonl": "a2d9220ccdd39c42e41dbbeb8755746e3206a882d97ff91c8d19fc4d707091b0",
+  "manifests/profiles/yaml-core.r1.json": "58f71c12cc62ba47dbe9187e4fa88d4cdf00e85ea8ef1599239e975b2c55f2ab",
+  "manifests/profiles/yamlprims-core-limits.r1.json": "fda6d6fe1597f19d03bb3364f446e8a7d182312b938f2c93130d1caa40f88037",
+  "manifests/profiles/yamlprims-core-limits.r2.json": "91e9199222533bf3f2c586535e5a60e7b537f2ce47efcae7b023a2d0f76ccd92",
+  "manifests/profiles/yamlprims-core-merge-apply.r1.json": "b53476301598f2cf86422e016563b064a53383bb6e174bfc969df65142a0214f",
+  "manifests/profiles/yamlprims-core-merge-apply.r2.json": "135abb256a0a2aec5e42bdadea1c0f67ab05aa951fcc68cb759e719514dcc1f1",
+  "manifests/profiles/yamlprims-core-merge-apply.r3.json": "0db65be7ffe5d5d5450a906335aecc842c36ace966a9357504404fcff446c4b8",
+  "manifests/profiles/yamlprims-core-merge-as-key.r1.json": "a563e3b385a0e9ffe2c75664ef6ba25af9bff8a05c1a040b722efe09bfee9155",
+  "manifests/profiles/yamlprims-core-merge-as-key.r2.json": "769d46ea8a530fe4a6c34561d5b0c039290d3a3de1fb74ee10f120d43e99add9",
+  "manifests/profiles/yamlprims-core-merge-as-key.r3.json": "e258c931c3a3baebb660ef03c4bdf861ee57008be1c1efd377f82072cd3d4686",
+  "manifests/profiles/yamlprims-core-stream.r2.json": "d7c2d038f8e4e27e9c3e8ecf1342cec5977e20f2edcf3126557b555ba5007d70",
+  "manifests/profiles/yamlprims-core-stream.r3.json": "27fc00894349ff900d04bf78d2d66455dbfb80bf24ac0ba8cc3c7002b1344ae1",
+  "manifests/profiles/yamlprims-core-stress.r1.json": "7edce9aa0daa1f212f6b4511f56d27cd21aec204aba44537ddc44525576aae7e",
+  "manifests/profiles/yamlprims-core.r1.json": "c003cc2d1a73f4547db256dac35644af28781b813ad8c366799dc5e466184636",
+  "manifests/profiles/yamlprims-core.r2.json": "ba7e86eba1ab5e1b92e82ac9e3e4588d03639d1f4056e39eaa247f1164618093",
+  "manifests/profiles/yamlprims-core.r3.json": "ba154dd06dadc12c9325c41bc8578d3e4b8fc391963c3512e011757342bb9eb7",
+  "manifests/span-conventions/scalar-alias.r1.json": "1193669ffedad487489e0838f8bb88baea936a34ed968e8185eb3bfd531df87f",
+  "manifests/span-conventions/scalar-alias.r2.json": "b255438e247ef05bb141c2b4b05756e2b34946e5821d309080bf0034c42f44e1",
+  "manifests/span-conventions/yamlprims-node.r1.json": "4d35241363ad63d552ccd8ce103a063d679cf7c36f5ee8c199fd9128612dc79a",
+  "recipes/yaml/core-goldens-merge-apply-spec11.r1.json": "8e65a5bc821743f28bf61a07397c7a0ad42702ede5fc169c7e341e1edc03e6a5",
+  "recipes/yaml/core-goldens-merge-apply-spec13.r1.json": "bcd24abbc83ba446d1820aec06544ad15611d04b80d0bb611b6dca8bc80ae7e1",
+  "recipes/yaml/core-goldens-merge-apply.r1.json": "f115cec9341dcb51e2b2bd76f1a1dc7cf6ffb7550a4baed3ca17aefd92933f6c",
+  "recipes/yaml/core-goldens-merge-as-key-spec11.r1.json": "960896b0f10315d9edba1c4c32b8e954fe48aae50e2e6b29cba6371447d95c7e",
+  "recipes/yaml/core-goldens-merge-as-key-spec13.r1.json": "19fbd0c26f35776e90419d8253c90634ae2be15909486138280bc758f5f5cb16",
+  "recipes/yaml/core-goldens-merge-as-key.r1.json": "559dbb8c6dd4994de0a242171b7a5f6dab95efc7dc744504a7bb86740bdca396",
+  "recipes/yaml/core-goldens-spec11.r1.json": "ac1779999ba869edaf1e7e757f0805e567738ccc5ff1ec2d5877e79ba2a3b3eb",
+  "recipes/yaml/core-goldens-spec13.r1.json": "f4ffa77c4e8c2f326363e9ef28bd0539975ce5e3996438728355aaf8dfa6af40",
+  "recipes/yaml/core-goldens.r1.json": "57cd754d5fa8a743317b68d76fb4d19de4d05894675c6dfe6ae081b6d1d56ced",
+  "recipes/yaml/core-truth-booleans.r2.json": "bf718b6a2715880801283ee22eea83746d29ff1403653957b06f28eeb60bc4d1",
+  "recipes/yaml/core-truth-collisions.r1.json": "719e1be10cd01e36d82ff63cdee163fc780ea982382fa8f410ecfc5f03049b90",
+  "recipes/yaml/core-truth-numbers-spec11.r1.json": "0db4d292f9b56cd2a41ba3b17f5769a0cff3aa43b1b33c45817128417e97c50d",
+  "recipes/yaml/core-truth-numbers-spec13.r1.json": "bfa1b6499ddf34fdc2450305b178cc31c355e0238ff0b602c242eaa0d6eef979",
+  "recipes/yaml/core-truth-numbers.r2.json": "46ad372891dfdfe06b5658ece4c51a96b7aa813eadc36b539b95a8af0202932e",
+  "recipes/yaml/escapes-spec13.r1.json": "9c1a640573b122f17792f9016218bd21f70b4eb802f9e7483936b1de5330f36e",
+  "recipes/yaml/escapes.r1.json": "be6406033c995794e7634f28f212bcfd6e3cb8936380925551413b228119865f",
+  "recipes/yaml/float-thresholds-spec13.r1.json": "69ec7daf8068d55bb52fdd689358db5fa5c0e4f431fea956a48917c25f0c1136",
+  "recipes/yaml/float-thresholds.r1.json": "8689590bfad940cb693fde1d54df427adab9901a45893103405e2a170f008651",
+  "recipes/yaml/ladder-alias-fanout.r1.json": "efff2bed9b5b9c16942f95e5b1699df39ff781c3432cede04d0e887a64f873d5",
+  "recipes/yaml/ladder-depth.r1.json": "590a11298e308b1b9e0d7f9db73deb2b6499cd70aa6bab33cb9074db4ea0c99b",
+  "recipes/yaml/ladder-late-failure.r1.json": "50130783b4961469e491424f13850f348e764f7e23dd0fbfedf981b4e927cfc3",
+  "recipes/yaml/ladder-many-keys.r1.json": "05402ed879854f9aac1a88e6f214b5016ff547e70f974be203e5e8da953dd931",
+  "recipes/yaml/ladder-nested-fanout.r1.json": "fabd59fdc507f4015854d7178adc09bf66de2c58ce8e32c4f207cfbc2008743a",
+  "recipes/yaml/merge-pairs-spec13.r1.json": "25f0bbe11c562ec10283feeb376408a8e43f684fbc2afcf82874c0222e033429",
+  "recipes/yaml/merge-pairs.r1.json": "028092b52ad9a5fc735c8833858e98de38fde6847385767d87629a155a6e5450",
+  "recipes/yaml/resource-boundaries.r1.json": "a018046debc2b4543e1242f0f1c0513d407b64e151675edf57759070f7c76696",
+  "recipes/yaml/tag-trees-limits-spec13.r1.json": "d18b14dce19f6e793ba099ebbe0e79e77c5a14c763c84e156f322ebc33b6744e",
+  "recipes/yaml/tag-trees-limits.r1.json": "d3001d012dd42b9e2a4c8f17ec22424ac24b4de688364d46f9b33eb97be163c2",
+  "recipes/yaml/tag-trees-spec13.r1.json": "80b60d69141e508b8e4bae9eb0d8a7483bfd09a691f60ffb1cc3cb333e089e68",
+  "recipes/yaml/tag-trees.r1.json": "5fa0c3e9799d3dad6d0d4ae4ba434280211d624e80d34c999d1e1d4830c6f956"
+ },
+ "hydrated": {
+  ".structcorpus-hydrated.json": "5f144606ffcc5e3f7aee62960fce18349c881d641a58b65d1a730cb1ded2363a",
+  "cases.jsonl": "60e75f3c1378656cdb4b2cdbde5ee82512504529cde5c0221eb0e54dc443f57f"
+ },
+ "repository": "https://github.com/3leaps/structcorpus",
+ "review_status": {
+  "provisional": 61348
+ },
+ "rows": [
+  {
+   "excluded": 8,
+   "fail": 0,
+   "kind": "value",
+   "pass": 0,
+   "profile": "yaml-core",
+   "revision": 1,
+   "status": "excluded"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "typed",
+   "pass": 19954,
+   "profile": "yamlprims-core",
+   "revision": 1,
+   "status": "historical"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 59600,
+   "profile": "yamlprims-core",
+   "revision": 1,
+   "status": "historical"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "typed",
+   "pass": 4818,
+   "profile": "yamlprims-core",
+   "revision": 2,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 842,
+   "profile": "yamlprims-core",
+   "revision": 2,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "node_locations",
+   "pass": 21,
+   "profile": "yamlprims-core",
+   "revision": 3,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "typed",
+   "pass": 4820,
+   "profile": "yamlprims-core",
+   "revision": 3,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 807,
+   "profile": "yamlprims-core",
+   "revision": 3,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 8,
+   "profile": "yamlprims-core-limits",
+   "revision": 1,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 18,
+   "profile": "yamlprims-core-limits",
+   "revision": 2,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 8,
+   "profile": "yamlprims-core-merge-apply",
+   "revision": 1,
+   "status": "historical"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 32,
+   "profile": "yamlprims-core-merge-apply",
+   "revision": 2,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 32,
+   "profile": "yamlprims-core-merge-apply",
+   "revision": 3,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 1,
+   "profile": "yamlprims-core-merge-as-key",
+   "revision": 1,
+   "status": "historical"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 1,
+   "profile": "yamlprims-core-merge-as-key",
+   "revision": 2,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 1,
+   "profile": "yamlprims-core-merge-as-key",
+   "revision": 3,
+   "status": "target"
+  },
+  {
+   "excluded": 0,
+   "fail": 0,
+   "kind": "value",
+   "pass": 7,
+   "profile": "yamlprims-core-stream",
+   "revision": 2,
+   "status": "target"
+  }
+ ],
+ "schema": "structcorpus-pin/1",
+ "tier": "conformance"
+}

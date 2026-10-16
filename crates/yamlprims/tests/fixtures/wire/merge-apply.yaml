@@ -1,0 +1,7 @@
+%YAML 1.2
+---
+base: &b {x: 1, y: 2}
+m:
+  <<: *b
+  y: 3
+--- second

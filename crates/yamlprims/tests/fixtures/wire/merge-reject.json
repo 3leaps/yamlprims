@@ -1,0 +1,1 @@
+{"format":"yamlprims-value","version":1,"error":{"kind":"merge_rejected","detail":{},"site":{"source":[41,5,3]},"related":[],"path":[{"key":{"kind":"string","value":"m","span":null,"via":null,"tag_start":null}}],"message":"merge keys are rejected (merge_keys = Reject)"}}

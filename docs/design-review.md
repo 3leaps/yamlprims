@@ -1,6 +1,6 @@
 # Open design items before implementation freeze
 
-Status: proposed. Specification revision 1.3 is an unreleased draft; revision
+Status: open design work. Specification revision 1.3 is a tagged draft; revision
 1.2 and earlier revisions remain available at their immutable tags. These items
 remain open. They must not silently become implementation choices or claims of
 completed qualification.
@@ -9,8 +9,8 @@ completed qualification.
 
 ### Selected in revision 1.1
 
-The strict-only decision in ADR-0003 is accepted for revision 1.1; the other
-selections remain proposals. Implementation qualification and a new immutable
+ADR-0001 accepts the merge default and ADR-0003 accepts strict-only parsing;
+other decision records remain proposed. Implementation qualification and a new immutable
 profile are still required; revision 1.0 expectations stay bound to revision 1.0.
 
 | Contract           | Normative resolution                                                                                                                                                  | Detecting evidence still required                                                                                                                                                                        |
@@ -36,7 +36,7 @@ profile are still required; revision 1.0 expectations stay bound to revision 1.0
   BOM, line breaks, tags/anchors and sibling-versus-EOF behavior. An event-span
   convention starting at an indicator is not an exact node-span oracle.
 
-### Proposed for revision 1.3
+### Selected in tagged revision 1.3
 
 - **Nested scalar anchors (`1.3/E-1`).** Normalize zero-width omitted/empty
   scalar spans over current-line ASCII-space indentation and preceding breaks,

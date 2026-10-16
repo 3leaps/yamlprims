@@ -58,6 +58,12 @@ class DocumentationChecks(unittest.TestCase):
         (self.root / "SPEC_VERSION").unlink()
         self.rejected("missing required file: SPEC_VERSION")
 
+    def test_cargo_output_excluded_but_nested_documentation_checked(self):
+        self.write("target/package/generated/README.md", b"generated\xff\n")
+        self.assertEqual(self.run_check()[0], 0)
+        self.write("docs/target/README.md", b"authored\xff\n")
+        self.rejected("docs/target/README.md: not UTF-8")
+
     def test_version_format(self):
         for version in (
             b"1.3",

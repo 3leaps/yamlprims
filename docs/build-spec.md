@@ -1,6 +1,8 @@
 # yamlprims build specification
 
-Status: proposed implementation plan. Current release scope: specification only.
+Status: implementation plan with a working Rust core baseline. Published releases
+remain specification-only. See [implementation status](implementation.md) for the
+current code surface and qualification limits.
 The [behavioral specification](spec/yamlprims-spec.md) defines semantics; this
 document defines package boundaries, implementation order and acceptance.
 
@@ -94,7 +96,7 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
-The working draft is revision `1.3` (`SPEC_VERSION`), targeting `spec-v1.3`.
+Revision `1.3` (`SPEC_VERSION`) is tagged as `spec-v1.3`.
 Existing tags `spec-v1.0`, `spec-v1.1` and `spec-v1.2` and their pinned expectations
 remain immutable. Revision 1.3 adds nested empty-scalar normalization and the
 zero-width collection exception, and clarifies UTF-8 input scope, f32 conversion

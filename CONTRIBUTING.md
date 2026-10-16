@@ -1,6 +1,7 @@
 # Contributing
 
-This first release is specification-first. Useful contributions include concrete
+The released artifacts are specifications; a Rust core baseline is under development.
+Useful contributions include concrete
 semantic examples, API questions, independent expected results and improvements
 to the build plan.
 
@@ -52,8 +53,18 @@ These targets do not install or upgrade tools. Executable paths can be selected
 with `PYTHON`, `ACTIONLINT`, `GONEAT`, `SHELLCHECK`, `YAMLFMT` and `YAMLLINT` Make
 variables. `make check` and `make test-docs` do not require goneat or lint tools.
 
-Implementation contributions begin after the qualification gate described in
-the [build specification](docs/build-spec.md).
+Full prepush also checks Rust formatting, all targets, the core tests and
+qualification-script failure propagation. Install the pinned Rust toolchain in
+`rust-toolchain.toml`; MSRV validation uses Rust 1.88.0 separately. Run
+`make check-rust test-rust test-conformance-tools` for runtime changes. The truth,
+wire and allocation-instrumented suites run serially. Golden blessing is disabled.
+Package-local fixtures are included in extracted-package tests.
+
+The Rust baseline workflow exercises Linux on Rust 1.88.0 and 1.89.0 in debug
+and release. It does not replace the full five-target qualification plan.
+Adapter changes also need the exact pinned [conformance checks](conformance/README.md).
+See [implementation status](docs/implementation.md) and the
+[build specification](docs/build-spec.md) for remaining contract and release gates.
 
 Code and general documentation contributions use MIT OR Apache-2.0; normative
 specification text under `docs/spec/` uses CC0-1.0. Preserve upstream notices.
