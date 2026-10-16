@@ -1,4 +1,9 @@
 name: Documentation check
+inputs:
+  python-version:
+    description: Python version for documentation checks and tests.
+    default: "3.12"
+    required: false
 description: Set up Python and validate documentation without changing the checkout.
 runs:
   using: composite
@@ -6,10 +11,10 @@ runs:
     - name: Set up Python
       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
       with:
-        python-version: "3.12"
+        python-version: ${{ inputs.python-version }}
     - name: Check documentation
       shell: bash
-      run: make check PYTHON=python
+      run: make check test-docs PYTHON=python
     - name: Check working tree
       shell: bash
       run: |

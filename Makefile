@@ -4,10 +4,11 @@ YAMLLINT ?= yamllint
 SHELLCHECK ?= shellcheck
 SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh)
 
-.PHONY: help check lint lint-shell lint-yaml fmt-yaml fmt version test-release-tag-controls release-tag release-verify-tag release-push-tag release-verify-remote-tag
+.PHONY: help check test-docs lint lint-shell lint-yaml fmt-yaml fmt version test-release-tag-controls release-tag release-verify-tag release-push-tag release-verify-remote-tag
 
 help:
 	@echo "make check   Validate specification-release files and local links"
+	@echo "make test-docs Test documentation validation using temporary fixtures"
 	@echo "make lint-yaml Check YAML formatting and lint (two-space indentation)"
 	@echo "make fmt-yaml Format YAML configuration"
 	@echo "make lint-shell Check release scripts with Bash and ShellCheck"
@@ -17,6 +18,9 @@ help:
 
 check:
 	$(PYTHON) scripts/check-docs.py
+
+test-docs:
+	$(PYTHON) -B -m unittest discover -s tests/docs
 
 lint: check lint-shell lint-yaml
 

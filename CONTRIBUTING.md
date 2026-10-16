@@ -14,9 +14,13 @@ Do not submit private configuration, secrets or redacted production examples.
 Follow the [Sensitive Local Data Policy](https://github.com/3leaps/oss-policies/blob/main/SENSITIVE-LOCAL-DATA.md).
 
 Run `make check` before submitting. This checks documentation integrity only.
-CI runs documentation checks on Linux x64/ARM64, macOS ARM64 and Windows
+The checker requires `SPEC_VERSION`, the normative revision heading and the
+first release-note heading to agree. Historical release sections are retained.
+Run `make test-docs` for regression tests using temporary synthetic documents.
+CI runs documentation checks and these tests on Linux x64/ARM64, macOS ARM64 and Windows
 x64/ARM64. Fork pull requests run the three standard runner cells; the two
-custom ARM64 cells run for same-repository changes. Workflow lint and synthetic
+custom ARM64 cells run for same-repository changes. A separate Linux cell tests
+the minimum supported Python 3.9. Workflow lint and synthetic
 signed-tag controls run on Linux. These checks do not establish parser support
 or runtime conformance. The signing-control test requires Unix and uses only
 disposable keys. Run it locally with `make test-release-tag-controls`.
