@@ -4,7 +4,10 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+mod budget;
+mod build;
 mod de;
+mod engine;
 mod error;
 mod load;
 mod options;
@@ -34,14 +37,14 @@ pub fn load(input: &str) -> Result<Document, Error> {
 pub fn load_with(input: &str, opts: &Options) -> Result<Document, Error> {
     opts.validate()?;
     let (s, bom) = load::gate_str(input, opts)?;
-    one(load::Loader::new(s, bom, opts).load_all(true)?)
+    one(build::Loader::new(s, bom, opts).load_all(true)?)
 }
 
 /// Load exactly one document from raw bytes (BOM and UTF-8 checked).
 pub fn load_bytes(input: &[u8], opts: &Options) -> Result<Document, Error> {
     opts.validate()?;
     let (s, bom) = load::gate_bytes(input, opts)?;
-    one(load::Loader::new(s, bom, opts).load_all(true)?)
+    one(build::Loader::new(s, bom, opts).load_all(true)?)
 }
 
 fn one(mut docs: Vec<Document>) -> Result<Document, Error> {
@@ -57,13 +60,13 @@ pub fn load_all(input: &str) -> Result<Vec<Document>, Error> {
 pub fn load_all_with(input: &str, opts: &Options) -> Result<Vec<Document>, Error> {
     opts.validate()?;
     let (s, bom) = load::gate_str(input, opts)?;
-    load::Loader::new(s, bom, opts).load_all(false)
+    build::Loader::new(s, bom, opts).load_all(false)
 }
 
 pub fn load_all_bytes(input: &[u8], opts: &Options) -> Result<Vec<Document>, Error> {
     opts.validate()?;
     let (s, bom) = load::gate_bytes(input, opts)?;
-    load::Loader::new(s, bom, opts).load_all(false)
+    build::Loader::new(s, bom, opts).load_all(false)
 }
 
 /// Typed deserialization of one document with default options.

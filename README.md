@@ -5,7 +5,7 @@ starting with the contract.**
 
 The repository contains the [specification](docs/spec/yamlprims-spec.md),
 [build specification](docs/build-spec.md), [decision records](docs/decisions/README.md)
-and a working Rust core baseline. No library package, CLI or binding has been
+and a working Rust core with an initial [CLI](crates/yamlprims-cli/README.md). No library package, CLI or binding has been
 released. See [implementation status](docs/implementation.md) for current coverage
 and remaining work.
 

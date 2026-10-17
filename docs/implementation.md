@@ -1,7 +1,8 @@
 # Rust implementation status
 
-The workspace contains a working `yamlprims` core package. It is an initial
-baseline, with publication disabled and the public API still under development.
+The workspace contains a working `yamlprims` core and a thin `yamlprims-cli`
+consumer. Both are initial packages with publication disabled and their public
+surfaces still under development.
 Package versions, specification tags and wire versions are separate namespaces.
 
 Available operations include single-document and stream loading from UTF-8,
@@ -10,9 +11,11 @@ source spans, typed Serde conversion, canonical wire/error encoding and plain
 JSON projection. The core forbids unsafe code and performs no filesystem,
 environment or network access. Granit-parser 2.0.0 is the internal engine.
 
-The baseline preserves the iterative loader and existing resolver/builder
-organization. Engine-type isolation and separate builder/budget modules remain
-structural work. Production parsing is strict-only in both passes. Compatibility
+The engine adapter translates backend events, styles, tags and locations into
+private internal types. The iterative builder owns tree construction, anchor
+lifecycle, merges and node-span normalization; a separate budget module owns
+cumulative logical charges and copy metrics. Raw input admission remains ahead
+of parsing. Production parsing is strict-only in both passes. Compatibility
 experiments are outside the package; no lenient feature is exported.
 
 Included validation covers contract regressions, revision 1.2/1.3 additions,
@@ -32,8 +35,11 @@ Remaining gates before API freeze:
   handling and nested provenance.
 - A contract-to-test matrix for every implemented MUST and reviewed disposition
   of uncovered cases. Existing passing tests do not settle those design questions.
-- A thin CLI with explicit stdin, cardinality, I/O limits, atomic output, stream
-  and error behavior. No CLI crate or binding placeholder is included yet.
+- Independent review and freeze of CLI behavior: stdin, cardinality, I/O limits,
+  stream/error output and failure handling. The [initial CLI](../crates/yamlprims-cli/README.md)
+  has bounded file/stdin reads, multi-document check/wire dump, exactly-one-document
+  plain dump, and serialization before stdout. Operating-system write failures
+  can still leave partial output. No binding placeholder is included.
 
 Before a package release, the actual build still needs the complete native
 five-target MSRV/stable matrix, contained stress with original resource budgets,

@@ -348,3 +348,7 @@ impl serde::de::Error for Error {
         e
     }
 }
+
+pub(crate) fn internal(what: &str) -> Error {
+    Error::not_source(ErrorKind::Internal, None, format!("internal error: {what}"))
+}
