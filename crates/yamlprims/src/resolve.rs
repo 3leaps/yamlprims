@@ -1,8 +1,8 @@
 //! Scalar and tag resolution (spec §4).
 
+use crate::engine::ScalarStyle;
 use crate::error::ErrorKind;
 use crate::value::{Integer, Tag, Value};
-use granit_parser::{ScalarStyle, Tag as GTag};
 
 const YAML_NS: &str = "tag:yaml.org,2002:";
 
@@ -12,33 +12,6 @@ pub(crate) enum TagClass {
     Core(&'static str),
     Merge,
     Other(Tag),
-}
-
-pub(crate) fn classify(tag: Option<&GTag>) -> TagClass {
-    let Some(t) = tag else { return TagClass::None };
-    if t.handle().is_empty() && t.suffix() == "!" {
-        return TagClass::NonSpecific;
-    }
-    if let Some(core) = t.core_suffix() {
-        let c: &'static str = match core {
-            "bool" => "bool",
-            "float" => "float",
-            "int" => "int",
-            "map" => "map",
-            "null" => "null",
-            "seq" => "seq",
-            _ => "str",
-        };
-        return TagClass::Core(c);
-    }
-    if t.suffix_in_namespace(YAML_NS).as_deref() == Some("merge") {
-        return TagClass::Merge;
-    }
-    TagClass::Other(Tag {
-        uri: t.to_string(),
-        handle: t.original_handle().to_owned(),
-        suffix: t.suffix().to_owned(),
-    })
 }
 
 fn is_null(t: &str) -> bool {

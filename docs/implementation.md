@@ -10,9 +10,11 @@ source spans, typed Serde conversion, canonical wire/error encoding and plain
 JSON projection. The core forbids unsafe code and performs no filesystem,
 environment or network access. Granit-parser 2.0.0 is the internal engine.
 
-The baseline preserves the iterative loader and existing resolver/builder
-organization. Engine-type isolation and separate builder/budget modules remain
-structural work. Production parsing is strict-only in both passes. Compatibility
+The engine adapter translates backend events, styles, tags and locations into
+private internal types. The iterative builder owns tree construction, anchor
+lifecycle, merges and node-span normalization; a separate budget module owns
+cumulative logical charges and copy metrics. Raw input admission remains ahead
+of parsing. Production parsing is strict-only in both passes. Compatibility
 experiments are outside the package; no lenient feature is exported.
 
 Included validation covers contract regressions, revision 1.2/1.3 additions,

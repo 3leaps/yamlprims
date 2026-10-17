@@ -1,7 +1,7 @@
 //! Wire format `yamlprims-value/1` (spec §11.1) and plain JSON (§11.3).
 
+use crate::budget::{tag_bytes, ENTRY_OVERHEAD, NODE_OVERHEAD};
 use crate::error::{Error, ErrorKind, LimitKind, PathSegment, Site, MAX_FIELD, MAX_MESSAGE};
-use crate::load::{tag_bytes, ENTRY_OVERHEAD, NODE_OVERHEAD};
 use crate::options::Limits;
 use crate::value::{Document, Location, Node, NodeSpan, Span, Value, Via};
 use std::fmt::Write as _;
