@@ -1,0 +1,20 @@
+[package]
+name = "yamlprims-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Command-line consumer of the yamlprims YAML core"
+readme = "README.md"
+publish = false
+
+[[bin]]
+name = "yamlprims"
+path = "src/main.rs"
+
+[dependencies]
+yamlprims = { path = "../yamlprims", version = "=0.1.0" }
+
+[dev-dependencies]
+serde_json.workspace = true

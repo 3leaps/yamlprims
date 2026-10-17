@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/yamlprims"]
+members = ["crates/yamlprims", "crates/yamlprims-cli"]
 resolver = "2"
 
 [workspace.package]
