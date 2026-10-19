@@ -1,4 +1,35 @@
-# spec-v1.3 — unreleased specification draft
+# spec-v1.4 — unreleased specification draft
+
+- `1.4/E-1`: source collection levels, completed-subtree height and alias
+  placement, including final post-merge metrics and preserved source charges.
+- `1.4/E-2`: bytes-only anchor-cache registration charges, nested/redefined
+  anchors and whole-call counter scope.
+- `1.4/E-3`: bounded source-validation precedence, ordinary and merged entry
+  admission, copy-limit priority and completed-key weight timing; terminal engine
+  exceptions and native diagnostic sites, including unmatched opener locations.
+- `1.4/E-4`: the existing error-key nesting metric named separately from loader
+  collection height, without changing encoder preflight expectations.
+
+These are proposed contracts pending review and maintainer acceptance. New
+caller-tree APIs and general stack-safety guarantees are deferred. CLI freeze
+and the other open M1 items remain separate.
+
+The signed `spec-v1.3` tag and earlier tags remain immutable. New expectations
+require their own specification/profile pins; historical depth observations and
+event-only ladders are not promoted to normative load-boundary expectations.
+The wire grammar remains version 1. The subtree-weight formula and String-only
+scalar text charge are unchanged; correcting implementations of that formula
+does not require new semantics.
+
+The source tree includes an in-development Rust core and CLI. A specification
+tag identifies that source snapshot but does not publish a package or claim
+runtime conformance. See [implementation status](docs/implementation.md) for
+known gaps. Specification acceptance, independent oracle review and qualification
+of the actual implementation remain separate gates.
+
+## spec-v1.3 — tagged draft specification
+
+Revision 1.3 is available at the signed `spec-v1.3` tag.
 
 - `1.3/E-1`: nested zero-width scalar normalization, normalization floors,
   paired scalar tag anchors and a zero-width collection exception.
@@ -14,9 +45,9 @@ New nested-anchor behavior requires a separately pinned revision 1.3 profile;
 existing profiles keep their individual specification bindings. The wire grammar
 version remains 1, and the logical-weight formula is unchanged.
 
-This draft contains documentation only. Specification acceptance, independent
+That specification release contains documentation only. Specification acceptance, independent
 oracle review and implementation qualification remain separate gates. No runtime
-or package is published by this draft.
+or package was published by that tag.
 
 ## spec-v1.2 — tagged draft specification
 

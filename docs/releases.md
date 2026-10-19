@@ -1,15 +1,17 @@
 # Specification releases
 
-Specification tags use `spec-v<SPEC_VERSION>`. Tags `spec-v1.0`, `spec-v1.1`
-and `spec-v1.2` exist. The current `SPEC_VERSION` is `1.3`, an unreleased draft
-targeting `spec-v1.3`. Qualification gates remain open. Publishing a GitHub
+Specification tags use `spec-v<SPEC_VERSION>`. Tags `spec-v1.0` through
+`spec-v1.3` exist. The current `SPEC_VERSION` is `1.4`, an unreleased draft
+targeting `spec-v1.4`. Qualification gates remain open. Publishing a GitHub
 release entry is separate from creating a tag.
-Existing tags are never moved. Specification tags contain repository documentation
-and no crates or runtime artifacts. The proposed first Rust packages are
+Existing tags are never moved. A specification tag identifies the specification
+and the repository source tree at an exact commit. That tree may include
+in-development crates; the tag does not publish packages or certify runtime
+conformance. The proposed first Rust packages are
 `yamlprims` and `yamlprims-cli` at `0.1.0`, after their implementation and
 qualification gates. Native bindings follow their own milestone. See [the build specification](build-spec.md).
 
-The immutable `spec-v1.1` and `spec-v1.2` specifications retain their original
+The immutable `spec-v1.1`, `spec-v1.2` and `spec-v1.3` specifications retain their original
 "Unreleased draft" wording. Status corrections on `main` do not replace those
 tagged bytes or their corpus-pinned digests. Cite the tag when an exact
 specification snapshot is needed.
@@ -22,7 +24,7 @@ under the primary fingerprint in [the public anchor](../keys/expected-fingerprin
 The keyring and private signing material remain outside Git repositories.
 
 The procedure below applies to a new specification tag. Existing `spec-v1.0`,
-`spec-v1.1` and `spec-v1.2` tags must not be recreated; creation commands reject them.
+`spec-v1.1`, `spec-v1.2` and `spec-v1.3` tags must not be recreated; creation commands reject them.
 For the next revision, update `SPEC_VERSION` and select its matching unused tag.
 
 The maintainer configures these environment variables in their signing terminal:

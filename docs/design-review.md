@@ -1,9 +1,9 @@
 # Open design items before implementation freeze
 
-Status: open design work. Specification revision 1.3 is a tagged draft; revision
-1.2 and earlier revisions remain available at their immutable tags. These items
-remain open. They must not silently become implementation choices or claims of
-completed qualification.
+Status: open design work. Specification revision 1.4 is an unreleased proposal;
+revision 1.3 and earlier revisions remain available at their immutable tags.
+Proposed rules require review and maintainer acceptance. Neither proposed text
+nor specification publication establishes implementation qualification.
 
 ## M1 contract freeze
 
@@ -65,12 +65,33 @@ fail-closed driver with exact inventory/profile-revision validation and the
 negative controls in the build specification. Existing test results remain
 bound to their original source, specification and profile pins.
 
-### Remaining open items
+### Proposed in revision 1.4
+
+| Contract | Proposed resolution | Review and detecting evidence required |
+| --- | --- | --- |
+| Loader depth (`1.4/E-1`) | Collection levels, root position p=0, scalar H=0, empty collection H=1, transparent tags; final post-merge metrics and p+H alias admission | Independent source/alias/mixed/key/tag/merge examples, 127/128/129 and 254/255/256 boundaries, stale-metric and pre-copy controls |
+| Anchor accounting (`1.4/E-2`) | Full bytes-only registration charge; no extra cache nodes; no refunds; nested/redefined bindings and whole-call counters | Independently derived totals, registration-only boundaries, wrapper charges, redefinition/document reset, final metrics versus cumulative work |
+| Precedence and admission (`1.4/E-3`) | Options/size/UTF-8 before bounded source validation in yielded event/error order; terminal engine exceptions and native diagnostic sites; then ordered construction and unchanged local admission rules | Independent review of changed paired-failure expectations, native opener sites, finite lookahead headroom, exact configured values and copy/insertion/path-clone controls |
+| Error-key metric (`1.4/E-4`) | Name existing child-edge nesting P separately from loader H | Preserve prior key preflight goldens and path-segment limits; include empty/nonempty collection distinctions |
+
+The String-only scalar-text formula is unchanged; correcting an implementation
+of that formula is an existing-contract repair, not a new 1.4 policy. These
+proposals leave the general caller-tree API/support domain explicitly deferred.
+No new constructors, foreign-Serde budget seed, recursive Debug bound or
+all-finite-trees stack-safety promise is accepted by this draft.
+
+### Remaining freeze and qualification items
+
+The unmodified-engine proposal leaves the source-level boundedness audit and
+independent review of changed expectations open. Application migration coverage
+must compare inputs, loaded values and typed conversions, explicitly covering
+schema, strict indentation, duplicates and merge policies as described in the
+build specification. Diagnostic differences alone do not qualify compatibility.
 
 | Item                       | Required resolution and detecting evidence                                                                                                                                                                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Error precedence           | Define `InvalidOptions` ordering, and distinguish engine safety limits from syntax errors during a syntax-only pre-pass. An over-depth event stream must not accidentally masquerade as malformed YAML or bypass a resource guard to search for a later syntax error.                                             |
-| Accounting scope           | Specify whether anchor-cache copies charge nodes, bytes or both; define wrapper depth, root depth and alias insertion depth mathematically. Cached metrics must describe the final post-merge subtree. Test nested merge-plus-anchor-plus-alias paths with one decisive limit.                                    |
+| Error precedence           | Review and accept the 1.4 proposal; qualify engine error translation, combined source depth and bounded syntax precedence against earlier policy/materialization failures. A source safety stop must not be relabeled as malformed YAML or bypassed to seek later syntax. |
+| Accounting scope           | Review and accept the 1.4 cache/depth proposal; qualify registration, final post-merge metrics and monotonic source/copy charges independently. Existing green corpus results do not establish the new boundaries. |
 | Error storage and encoding | Complete the remaining ErrorKind payloads and bound `engine_detail`, related spans and structured paths before constructing large errors. Revision 1.2 specifies owned Type descriptions and encoder revalidation; construction-time allocation bounds and detecting evidence remain required. |
 | Public operations          | Complete the plain encoder and checked constructors/accessors needed to create Document/Tagged/Tag values without exposing invariant-bearing fields. Compile the selected Error constructors, error encoder and `load_all_bytes` API in the candidate driver; illustrative signatures alone are not API evidence. |
 | Syntax error vocabulary    | Name and test the closed `SyntaxKind` set before wire version 1 is frozen; a backend's message text is not a stable taxonomy.                                                                                                                                                                                     |
@@ -104,9 +125,10 @@ separate from revision 1.0's leniency differences.
 
 Revision 1.2 needs separately pinned profiles and matching operation tests.
 Error-path collection nesting is defined for encoder preflight in §11.1;
-general parser/materialized root and wrapper depth, and arbitrary synthetic-tree
-stack safety, remain distinct open items. Specification acceptance does not
-establish those runtime guarantees.
+revision 1.4 names that metric P and proposes separate loader height H.
+Review/qualification of the loader rules and arbitrary synthetic-tree stack
+safety remain distinct gates. Specification acceptance does not establish those
+runtime guarantees.
 
 Revision 1.3 additionally needs profile-bound node selectors and matching
 schema/validator/driver support, separate from event locations. Limit-error

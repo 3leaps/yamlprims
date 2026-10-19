@@ -25,12 +25,13 @@ environment interpolation or network access.
 ## Status and participation
 
 Current tagged specification: [**spec-v1.3**](https://github.com/3leaps/yamlprims/tree/spec-v1.3),
-a draft contract covering nested
-empty-scalar anchors, zero-width collection anchors, UTF-8 input scope,
-binary64-to-f32 conversion and exact keep-chomping EOF examples.
-Earlier specification tags remain immutable. The normative file retains its
-tagged bytes, including its historical draft-status wording. These tags do not
-imply a crate release or API freeze.
+a draft contract. The working [revision 1.4 proposal](docs/spec/yamlprims-spec.md)
+defines loader depth, anchor-cache accounting, bounded error precedence and
+entry/copy/key admission. Caller-tree guarantees remain deferred.
+Earlier specification tags and their file digests remain immutable, including
+historical draft-status wording. A specification tag may include in-development
+Rust source; it does not imply a crate release, API freeze or conformance of
+that source to every requirement.
 Existing corpus profiles remain bound to their cited specification revision.
 GitHub release publication is separate from specification tagging.
 See [the roadmap and acceptance gates](docs/build-spec.md#delivery-gates) and
