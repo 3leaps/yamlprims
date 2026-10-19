@@ -25,6 +25,11 @@ binaries. Fixtures are package-local, retain exact bytes and are included in
 extracted-package tests. Full pinned corpus checks are described in
 [conformance](../conformance/README.md).
 
+Scalar construction charges decoded text bytes only for String values under the
+existing logical-weight formula. Focused regressions cover owned/key-byte
+boundaries, core and retained tags, anchor registration, alias copies and stream
+totals. The scalar-input byte limit remains independent of that logical weight.
+
 ## Revision 1.4 proposal and implementation gaps
 
 The working specification proposes revision 1.4; these source packages are not
@@ -35,7 +40,6 @@ changes and detecting tests:
 | Proposed or existing rule | Current gap / required qualification |
 | --- | --- |
 | Final post-merge count, weight and H | Cached metrics still include source/directive structure; qualify corrected final-tree metrics independently of cumulative charges |
-| Existing String-only scalar text weight | Scalar construction charges decoded text even for non-String values; repair against the existing formula and retain detecting owned/key-byte controls |
 | Bytes-only anchor registration | Existing code charges cache bytes, not nodes; new normative totals need independent arithmetic review and exact boundary tests |
 | Combined source depth and bounded validation precedence | The syntax pass relies on separate engine guards. Terminal unknown-anchor/version failures fit the revised phase contract; combined event-depth enforcement, finite lookahead headroom and native diagnostic sites still require implementation review and qualification |
 | Merged-entry capacity before copy admission | Current merge code checks final capacity after merging; move admission before prohibited insertion/copy and test competing limits |
