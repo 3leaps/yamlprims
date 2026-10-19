@@ -5,6 +5,11 @@ Numbers are independent per type; this directory is the repository's chosen home
 ADR-0001 and ADR-0003 are **accepted**. The other records remain **proposed**.
 Decision acceptance does not establish implementation qualification.
 
+The revision 1.4 loader/accounting/precedence proposal is recorded in the
+[specification errata](../spec/yamlprims-spec.md#16-errata). It awaits review and
+maintainer acceptance; this draft does not change any decision-record status.
+Caller-tree guarantees remain outside that proposed revision's scope.
+
 | ID                                                         | Decision                                                                    | Status   |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------- | -------- |
 | [ADR-0001](ADR-0001-explicit-merge-policy.md)              | Reject merge directives by default; opt into Apply or AsKey                 | accepted |

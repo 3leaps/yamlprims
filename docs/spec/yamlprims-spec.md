@@ -1,16 +1,20 @@
 # yamlprims specification
 
-**Revision 1.3** · Status: Unreleased draft · License: CC0-1.0 (specification text)
+**Revision 1.4** · Status: Unreleased draft · License: CC0-1.0 (specification text)
 
-The tagged draft baseline is [revision 1.2](https://github.com/3leaps/yamlprims/blob/spec-v1.2/docs/spec/yamlprims-spec.md).
+The tagged draft baseline is [revision 1.3](https://github.com/3leaps/yamlprims/blob/spec-v1.3/docs/spec/yamlprims-spec.md).
 This draft contains the changes and decision status listed in §16. Existing
-profiles pinned to revisions 1.0, 1.1 and 1.2 keep their original expectations;
+profiles pinned to revisions 1.0 through 1.3 keep their original expectations;
 they do not adopt this draft implicitly.
 
-**Specification-first release.** This is a target contract. This repository does
-not yet ship the Rust library, CLI or bindings. Milestone labels describe planned
-surfaces, not implemented capabilities. See the [build specification](../build-spec.md)
-and [open design items](../design-review.md) before implementing a surface.
+**Specification release.** This is a proposed target contract, not a claim that
+the source tree conforms to every requirement. The repository contains a working
+Rust core and an initial CLI; no package or binding is published by this draft.
+See [implementation status](../implementation.md), the
+[build specification](../build-spec.md) and [open design items](../design-review.md).
+Revision 1.4 proposes loader depth, accounting, precedence and admission rules.
+New caller-built-tree APIs and general stack-safety guarantees are deferred;
+their existing open design gates remain prerequisites to M1 freeze.
 
 This document is the normative contract for yamlprims: an owned YAML 1.2 data
 layer over a maintained, safe-Rust event parser. Its key words MUST, MUST NOT,
@@ -64,7 +68,7 @@ byte-stream input (all input is a complete in-memory buffer).
 &[u8] / &str ──► input gate: max_input_bytes on raw length, BOM strip, UTF-8 validation
                  ▼
 granit-parser =2.0.0 (default-features = false, features = ["std","error_messages"])
-  engine options pinned (§9)                                          ← syntax only
+  engine options pinned (§9)                                          ← grammar / terminal engine checks
                  ▼
 event pump      engine marker → Location; anchors; alias events       ← only module importing the engine
                  ▼
@@ -134,6 +138,12 @@ pub struct Document { root: Node, yaml_version: Option<(u32, u32)>, explicit_sta
   stays valid. A key containing NaN at any depth is `InvalidKey`, so
   hand-built mappings keep the parser's invariants.
 - **No panicking `Index`.** Mapping lookup returns `Option`.
+
+These value invariants do not establish a supported depth or stack bound for
+arbitrary caller-built trees. The support domain of construction, mutation,
+Clone, Drop, equality/hashing, formatting and foreign deserialization remains
+an M1 freeze item. Revision 1.4 adds no constructor or universal caller-tree
+guarantee; loader depth alone is not such a guarantee.
 
 ## 4. Scalar resolution
 
@@ -224,7 +234,8 @@ affect resolution. A major version other than 1 is an
 | different kinds | never: `Int(1)` ≠ `Float(1.0)` ≠ `String("1")` ≠ `Tagged(!x, "1")`                                     |
 
 - NaN anywhere inside a key, at any depth, is an `InvalidKey` error, raised
-  when the key is built.
+  when the key is built. The completed-key check order is specified in §6;
+  mapping mutation retains §3's invariant.
 - `key_hash` is consistent with `key_eq`. Mapping hashes combine entry hashes
   order-independently. Hashing uses randomized SipHash (`RandomState`);
   correctness never depends on the absence of collisions.
@@ -237,6 +248,32 @@ There is **one policy: error**. `DuplicateKey` reports the second key's
 location and carries the first key's location as a related span. Duplicate
 detection and `Mapping::get` use the same `key_eq` and `key_hash`, so they
 cannot disagree.
+
+**Ordinary-entry admission.** Check key validity at key completion (§5.1, §6).
+Once its value has also been constructed and the source entry overhead charged,
+check capacity, then duplicate identity. A NaN-bearing key is `InvalidKey`
+before value construction or capacity admission. If the mapping already has
+`max_mapping_entries` ordinary entries,
+the next entry is `LimitExceeded(max_mapping_entries)`, even if its key would
+be a duplicate. Otherwise an equal existing key is `DuplicateKey`. A rejected
+entry is not inserted or counted as a stored entry; prior construction charges
+are not refunded. Key/value construction and key-admission errors can occur
+earlier. The error site is the candidate key's source start, with alias-related
+provenance under §7.2. Syntax/depth validation still has §7.1 precedence.
+
+With `max_mapping_entries = 2` and other budgets noncompeting:
+
+| Input | Result |
+| --- | --- |
+| `{a: 0, b: 0}` | Success |
+| `{a: 0, a: 1}` | `DuplicateKey` at the second `a` |
+| `{a: 0, b: 0, a: 1}` | `LimitExceeded(max_mapping_entries)`, configured 2 |
+| `{a: 0, b: 0, c: 1}` | Same limit error |
+| `{a: 0, b: 0, .nan: 1}` | `InvalidKey` |
+| `{.nan: !!int nope}` | `InvalidKey` before resolving the value |
+
+Recognized `Apply` directives and merged entries follow §5.3 instead; `AsKey`
+entries use this ordinary-entry rule after recognition.
 
 ### 5.3 Merge keys
 
@@ -278,26 +315,85 @@ resolution.
      and `max_nodes`, and their weight plus one 24-byte entry overhead to
      `max_owned_bytes`. This holds even when an implementation moves rather
      than copies the nodes, for inline and aliased sources alike, and again at
-     each level of nested merges. Shadowed entries are not charged. Each
-     merged-in entry carries `Via::Merge { directive }`.
+      each level of nested merges. Shadowed entries incur no merge-copy charge. Each
+      merged-in entry carries `Via::Merge { directive }`.
+
+Under `Apply`, the directive key, source containers and their children are
+constructed and charged as written, including one source-entry overhead for the
+directive. They consume source collection levels even when the directive or a
+shadowed value disappears from the final mapping. This applies to inline and
+aliased source mappings and source sequences. The directive is not a stored
+ordinary entry. A second directive is `DuplicateKey` after its value construction
+and source-entry charge, before merge-source validation at mapping completion.
+
+At mapping completion, validate the source kind and every source-sequence item
+before admitting merged entries. Traverse sources in their defined order;
+discard entries shadowed by any explicit key or an earlier source before copy
+admission. For each remaining entry, check that explicit entries plus already
+admitted merged entries leave capacity below `max_mapping_entries`, then check
+the copy budgets in §5.4. Capacity and copy failures use the directive's start
+as their source site and include its `merge_directive` related span. The capacity
+check MUST precede the logical copy or insertion; it is not a final oversized-
+mapping check. Shadowed entries consume no result capacity or merge-copy charge.
+
+Moving admitted source entries into the receiving mapping cannot increase their
+collection nesting. Source checks are not refunded, but completed mapping metrics
+MUST describe only the final post-merge tree, including its retained tag wrapper.
+They exclude removed directives and shadowed entries. Historical work charges
+and completed-subtree metrics are different quantities; neither may substitute
+for the other in a later anchor registration or alias-copy preflight.
 
 ### 5.4 Anchors and aliases
 
 - An alias resolves to the most recent definition of its anchor.
 - When an anchored node completes, the builder caches its node count,
-  owned-byte weight, and height (checked arithmetic).
+  owned-byte weight, and collection height H (§6), all from the final post-merge
+  subtree using checked arithmetic. The count includes every retained wrapper.
 - Before copying, all of the following MUST hold; otherwise `LimitExceeded`
-  is raised **before** the copy:
+  is raised **before** the copy. Check them in this order:
 
+  `p + H(anchor) ≤ max_depth`
   `nodes + count ≤ max_nodes`
   `expanded_nodes + count ≤ max_expanded_nodes`
   `owned_bytes + weight ≤ max_owned_bytes`
-  `use_site_depth + height ≤ max_depth`
+
+  Here `p` counts collection ancestors at the alias position (§6). A violation
+  uses the alias use site's start, the violated limit and its configured value.
+  Checked arithmetic overflow fails that bound at the same priority. No copy
+  may begin until every applicable check succeeds. The same node, expanded-node,
+  owned-byte order applies to merged-entry copies after capacity admission;
+  their placement is already bounded by source admission (§5.3).
+
+- At an alias event, first admit its increment against `max_alias_events`, then
+  validate the target, then perform copy preflight. A still-open most-recent
+  definition is `RecursiveAlias`; it MUST NOT fall back to an older definition
+  of the same name. An undefined anchor is `UnknownAnchor`; the pinned engine
+  reports it during source validation, before construction admission (§7.1).
+  `RecursiveAlias` remains a construction error subject to that phase order.
 
 - The copy's root carries `Via::Alias { use_site }`. Nodes inside the copy
   keep their **definition** spans (§7.2).
-- An alias to an anchor whose node is still open is `RecursiveAlias`. An
-  undefined anchor is `UnknownAnchor`.
+- Anchor definitions are document-local. Starting a new definition shadows the
+  previous definition of that name; completing it registers that definition's
+  subtree without changing which definition is most recent. Name binding follows
+  definition-start order, not completion order: completion of an older enclosing
+  definition MUST NOT restore it over a newer nested definition of the same name.
+  Document boundaries discard anchor bindings, not whole-call budget charges.
+
+For example, `[&a [&a 1], *a]` produces `[[1], 1]`: the alias selects the inner
+scalar, not the later-completing outer sequence. Both completed definitions
+still incur their registration charges (§6).
+
+**Copy-tie example.** In `[&a [0], [[*a]]]`, immediately before the alias,
+construction has charged 5 nodes, 0 expanded nodes and 448 owned bytes including
+128 registration bytes. Its target has count 2, weight 128 and H=1; use-site p=3.
+Successful copying requires depth 4, nodes 7, expanded nodes 2 and owned bytes
+576. With limits `(max_depth, max_nodes, max_expanded_nodes, max_owned_bytes)`
+set to `(3, 6, 1, 575)`, all four copy checks would fail and `max_depth` wins at
+the alias start. Set scalar/key limits to 64 and keep other limits noncompeting
+so the options and prefix are admissible. Raising each of the first three
+limits in order to 4, 7 and 2 exposes nodes, expanded nodes and owned bytes
+respectively; finally raising owned bytes to 576 permits the copy.
 
 ### 5.5 Documents
 
@@ -345,11 +441,11 @@ at the second `---`, byte 8, line 3, column 1.
 #[non_exhaustive]
 pub struct Limits {            // defaults are proposed, not yet measured
     pub max_input_bytes: usize,       //   8 MiB   raw length, checked before UTF-8 validation
-    pub max_depth: usize,             //   128     lexical and materialized; ≤ 255
+    pub max_depth: usize,             //   128     source/copy collection levels; ≤ 255
     pub max_nodes: usize,             //   250_000 materialized nodes, whole call
     pub max_expanded_nodes: usize,    //   100_000 nodes created by alias or merge copies
     pub max_alias_events: usize,      //   10_000
-    pub max_owned_bytes: usize,       //   64 MiB  weight of the built tree (below)
+    pub max_owned_bytes: usize,       //   64 MiB  cumulative logical charges (below)
     pub max_scalar_bytes: usize,      //   1 MiB   checked on the event, before owning it
     pub max_key_bytes: usize,         //   64 KiB  weight of one key subtree
     pub max_mapping_entries: usize,   //   100_000 per mapping
@@ -358,6 +454,54 @@ pub struct Limits {            // defaults are proposed, not yet measured
     pub max_warnings: usize,          //   1_000   (M3 lint), then one truncation marker
 }
 ```
+
+**Loader collection depth.** Let `p` be the number of collection ancestors at
+a processing position. The root position has `p = 0`. Descending from a Sequence
+or Mapping to an item, key or value increments `p`; a retained tag does not.
+A collection consumes level `p + 1` and MUST satisfy `p + 1 <= max_depth` before
+its contents are constructed. Scalars consume no additional collection level.
+Source validation checks all collections as written, including empty collections,
+mapping keys and merge-source containers, with mixed block/flow nesting counted
+together. It does not expand aliases. Each document resets this nesting context.
+This is not a promise that a scanner reads no lookahead bytes (§7.1, §9).
+
+Define completed-subtree collection height H independently of source history:
+
+- Scalar: `H = 0`.
+- Tagged: `H = H(inner)`.
+- Sequence or Mapping: `H = 1 + max(H(children))`, with `max(empty) = 0`.
+  Mapping children include both keys and values.
+
+Thus an empty collection has height 1. Core tags add no wrapper; retained tags
+are transparent to H but still consume nodes and bytes. An alias copy at position
+`p` requires `p + H(anchor) <= max_depth`. Apply uses final post-merge H for later
+copies, while the original source checks and work charges remain in force.
+There is no constant bound on the difference between source depth and final H:
+explicit keys can shadow arbitrarily deeper source values within the input limit.
+
+With other budgets noncompeting, these are the minimum legal `max_depth` values:
+
+| Input | Merge mode | Minimum | Reason |
+| --- | --- | --- | --- |
+| `0` | Reject | 1 | H is 0, but configured limits must be positive |
+| `[]` or `!t [0]` | Reject | 1 | Root collection, transparent tag |
+| `[[]]` | Reject | 2 | Empty inner collection counts |
+| `{? []: 0}` | Reject | 2 | Collection key counts |
+| `{a: &a {x: 0}, b: &b {<<: *a}, c: [*b]}` | Apply | 3 | Both aliases have p=2 and completed target H=1 |
+| `{a: &a {x: 0}, b: &b {<<: [*a]}, c: [*b]}` | Apply | 4 | Source-list alias has p=3; later alias still needs only 3 |
+| `{m: {x: 0, <<: {x: [[[1]]]}}}` | Apply | 6 | Shadowed source still consumes levels; final H is 2 |
+
+For boundary recipes, let `S_n(Y)` be `n` opening `[` bytes, the YAML fragment
+`Y`, then `n` closing `]` bytes. At `max_depth = 128`, `S_127(0)` and `S_128(0)`
+succeed; `S_129(0)` fails source-depth validation at the 129th `[`.
+In `{a: &a [], b: S_k(*a)}`, substitute that construction for `S_k(*a)`:
+`k = 125, 126, 127` gives alias insertion levels 127, 128, 129 respectively.
+The first two succeed; the third has source depth 128 but fails at the alias
+use. Likewise test levels 254/255/256 at legal configured depth 255. These are
+recipes for exact input bytes, not a claim that the notation `S_k` is YAML.
+
+These loader definitions do not redefine error-path key nesting (§11.1) or
+establish stack safety for arbitrary caller-built trees and foreign deserializers.
 
 **Owned-byte weight** is a deterministic accounting quantity, not measured
 memory and not an allocator bound:
@@ -385,25 +529,76 @@ For `!t x`, the tag charge sums URI `!t`, handle `!` and suffix `t`: 2 + 1 + 1.
   `suffix`). This applies to scalars and collections. A collection's tag is
   checked and charged at its start event, so tag errors precede errors inside
   the collection. Core tags are not retained and add no wrapper. Anchor
-  storage, alias copies, and `from_node` count the same way.
+  storage uses the same subtree weight, including wrappers; its counter scope
+  is specified below. Alias copies count both wrapper and inner nodes.
 - **Charging is monotonic within a call.** Weight is charged when a node is
   created — by parsing, alias copy, or merge copy — and never refunded.
 - The weight and expansion counters are the **normative gates**. A rejected
   expansion MUST fail before it copies.
 - Counters use checked 64-bit arithmetic; overflow raises `LimitExceeded`.
-- `max_key_bytes` applies the same weight to the key subtree while it is
-  built. Nothing is serialized to measure it.
+- Each completed source mapping entry, including an Apply directive, charges
+  its 24-byte overhead after key/value construction and before entry admission.
+  An entry discarded by a later policy error is not a refund.
+- `max_key_bytes` compares the completed key subtree's logical weight before
+  cloning a diagnostic path key, constructing its associated value or inserting
+  the entry. Nothing is serialized to measure it. Earlier incremental node,
+  owned-byte, scalar, depth and alias-copy limits remain active while building
+  the key; this check does not authorize unlimited intermediate construction.
+  An oversized key fails at its source start, with alias-related provenance
+  under §7.2. A competing earlier construction failure wins. Source syntax/depth
+  validation still precedes this construction phase (§7.1).
+- After the completed-key weight check, reject NaN anywhere in an ordinary key
+  as `InvalidKey` before cloning its diagnostic path or constructing its value.
+  Thus an oversized NaN-bearing key fails `max_key_bytes`; an in-budget NaN key
+  fails `InvalidKey` even if its associated value would have a resolution error.
+
+**Anchor-cache accounting.** Registration of each completed anchored subtree
+charges its full logical weight to `max_owned_bytes` before cache copying. It
+charges **no additional `max_nodes` or `max_expanded_nodes`**. This is a logical
+registration charge even if the implementation shares or moves storage. It uses
+the final post-merge subtree weight, including every retained wrapper; anchor
+names and physical cache/hash-table overhead are not part of this formula.
+Nested registrations each charge their own complete subtree. Redefinition and
+document reset release bindings without refunding earlier charges. Every later
+alias copy additionally charges nodes, expanded nodes and bytes under §5.4.
+Registration failure is `LimitExceeded(max_owned_bytes)` with the configured
+limit and the completed anchored node's source start; it is not attributed to
+a hypothetical later alias.
+
+The following whole-call totals assume successful loading with noncompeting
+limits; scalar text for Null, Bool, Int and Float contributes zero as before.
+Escaped `\n` in the stream row denotes an actual line break.
+
+| Input | Materialized nodes | Expanded nodes | Owned bytes, including registration |
+| --- | --- | --- | --- |
+| `[&a 1]` | 2 | 0 | 192 = 128 construction + 64 cache |
+| `[&a 1, *a]` | 3 | 1 | 256 = 192 construction/copy + 64 cache |
+| `[&a 1, &a 2, *a]` | 4 | 1 | 384 = 256 construction/copy + 128 registrations |
+| `[&a [&b 1], *a]` | 5 | 2 | 512 = 320 construction/copy + 64 inner cache + 128 outer cache |
+| `[&a [&a 1], *a]` | 4 | 1 | 448 = 256 construction/copy + 64 inner cache + 128 outer cache |
+| `[&a !t x, *a]` | 5 | 2 | 463 = 64 sequence + 2 × 133 tagged subtree + 133 cache |
+| `--- &a 1\n--- &a 2\n` | 2 | 0 | 256 = 128 construction + 128 registrations |
+
+These are normative arithmetic examples for the proposed accounting policy,
+not measurements or implementation observations. Zero expanded nodes is an
+actual counter value, not a legal configured expansion limit; limits remain
+positive. Test below/at/above each
+total with other limits noncompeting and valid options. In particular, small
+owned-byte budgets require correspondingly small scalar/key limits.
 
 Example: with a 1 MiB anchored scalar and 10,000 aliases, the call is
 rejected by `max_owned_bytes` at roughly the 63rd copy.
 
-**Counter scope.** Every counter covers the whole `load`/`load_all` call,
-including documents already built. For the M3 iterator, tree counters reset
+**Counter scope.** Cumulative node, expanded-node, owned-byte, alias-event and
+document counters cover the whole `load`/`load_all` call, including documents
+already built and discarded merge-source structure. Depth resets per document;
+mapping-entry limits apply per mapping and scalar/key limits per scalar/key.
+For the M3 iterator, tree counters reset
 per document; input, document, and alias-event counters do not. Memory a
 caller retains after a call returns is the caller's.
 
-**Validation.** `Options::validate()` runs on every call: every limit MUST be
-≥ 1; `max_depth` MUST be ≤ 255 (the engine's nesting ceiling);
+**Validation.** `Options::validate()` runs before processing input on every call:
+every limit MUST be ≥ 1; `max_depth` MUST be ≤ 255;
 `max_scalar_bytes` and `max_key_bytes` MUST be ≤ `max_owned_bytes`. An invalid
 configuration is `InvalidOptions`. There is no unlimited setting.
 
@@ -549,13 +744,100 @@ offending position.
 
 **Error precedence.**
 
-1. Input-gate errors (`max_input_bytes`, invalid UTF-8) come first.
-2. If the stream is not well-formed YAML, the first syntax error is reported,
-   ahead of any resolution, structure, or tag error earlier in event order.
-3. Otherwise, the first error in event order wins.
+YAML-loading entrypoints, including the loading phase of typed string calls,
+use the following logical phase order to select their result. This does not
+prescribe a number of physical parser passes. Encoder and `from_node` preflights
+remain their own operations; this is not a global ordering of every `ErrorKind`.
 
-An implementation MAY meet rule 2 with a syntax-only pre-pass; its cost is
-part of measured parse cost.
+1. Validate options. `InvalidOptions` precedes any examination of input and has
+   `Site::NotSource { last_known: None }`.
+2. Check raw input byte length, including any BOM, against `max_input_bytes`.
+   A size failure wins over invalid UTF-8 and all later phases.
+3. Strip only the optional initial UTF-8 BOM and validate UTF-8, preserving
+   original-byte coordinates. The first invalid byte is `InvalidUtf8` (§7.2).
+4. Perform **bounded source validation**: validate YAML grammar and source
+   collection depth in yielded event/error order. Alias expansion and owned-tree construction
+   budgets do not participate in this validation. At a valid collection-start
+   event, test the §6 level before
+   descending further. An excess is `LimitExceeded(max_depth)` at that
+   collection's source start with the configured limit. If the engine yields an
+   error before the next valid event, report that error with the translation
+   below. Stop at the first yielded engine error or source-depth rejection;
+   do not resume validation to search for later syntax. Scanner lookahead may
+   yield an error before an earlier collection start becomes available; this
+   is not a globally earliest-byte ordering. A source-depth safety stop MUST
+   NOT be relabeled as malformed YAML.
+5. Only if source validation succeeds may resolution, structure, tag, document
+   and materialization-budget failures determine the result. The first failing
+   construction operation in event order wins, using the operation-specific admission order
+   in §§5–6. Errors that depend on a completed key, value, collection or merge
+   source occur at that operation, not retroactively at the reported source byte.
+
+The pinned engine's terminal `UnknownAnchor` and `UnsupportedYamlMajorVersion`
+failures select `UnknownAnchor` and `UnsupportedYamlVersion`, respectively,
+at their native diagnostic sites. Its `RecursionLimitExceeded` selects
+`LimitExceeded(max_depth)` with the caller's configured depth and native site,
+never generic syntax. These are the non-syntax terminal engine exceptions for
+the string-input path. Other grammar/profile failures retain `Syntax(kind)`.
+Later syntax beyond a terminal failure is not searched or promised. A syntax
+failure reached by source validation precedes earlier construction-only errors,
+including duplicates, rejected tags, recursive aliases and materialization
+limits. Source validation does not charge materialized-node, expansion
+or cache budgets; it is bounded by raw input, source depth and the engine's
+fixed scanner guards (§9). The fixed non-depth guards listed there retain
+syntax-classified failures in this draft; exceeding a profile restriction is
+not independent evidence of malformed YAML. The closed syntax-error vocabulary
+remains an M1 freeze item.
+
+A source-validation pre-pass MAY implement phase 4; its cost is part of measured parse
+cost. A combined implementation MUST preserve the same observable order without
+constructing or copying past an applicable safety bound. After a construction
+failure it may continue only bounded source validation to determine precedence,
+not prohibited construction or expansion. Scanner lookahead needed
+to produce the next event is not an alias expansion or permission to continue
+source validation after a reported depth failure. For malformed text that cannot
+produce a valid next event, do not infer a hypothetical deeper tree from its bytes.
+Validation MUST use original input without per-failure recovery reparsing. A
+separate validation pass consumes and discards events without constructing an
+owned tree or expanding aliases. The engine may retain its own scanner/parser
+storage; this is not a constant-total-memory guarantee.
+
+Examples below assume other options are valid and noncompeting:
+
+| Competing failures | Selected result |
+| --- | --- |
+| Invalid options and invalid UTF-8 | `InvalidOptions` |
+| Oversized raw input and invalid UTF-8 | `LimitExceeded(max_input_bytes)` |
+| Source-depth excess, followed by a later syntax failure | First source-depth failure |
+| Syntax failure before a valid over-depth collection event | First syntax failure |
+| Unknown anchor yielded before later syntax | `UnknownAnchor` at the native alias site |
+| Unsupported YAML major yielded before later syntax | `UnsupportedYamlVersion` at the native directive site |
+| Duplicate key or rejected tag, followed by syntax failure within source-depth bounds | Syntax failure |
+| Materialized alias depth exceeds the limit, followed by syntax failure within source-depth bounds | Syntax failure |
+| Oversized completed key followed by a resolution-invalid value, with valid source syntax/depth | `LimitExceeded(max_key_bytes)` |
+
+Concrete paired-failure inputs use escaped line breaks and original byte offsets,
+with other limits noncompeting:
+
+| Input | Selected result and byte offset |
+| --- | --- |
+| `a: 1\na: 2\nb: [\n` | `Syntax(unclosed_flow_collection)`, opener 13 |
+| `a: *missing\nb: [\n` | `UnknownAnchor`, alias 3 |
+| `%YAML 2.0\n---\n[\n` | `UnsupportedYamlVersion`, directive 0 |
+| `a: &a []\nb: [[*a]]\nc: [\n`, max_depth=3 | `Syntax(unclosed_flow_collection)`, opener 22 |
+| `? ab\n: [\n`, max_key_bytes=1 | `Syntax(unclosed_flow_collection)`, opener 7 |
+| `a: !t 1\nb: [\n`, unknown_tags=Reject | `Syntax(unclosed_flow_collection)`, opener 11 |
+| `&a [*a]\n---\n[\n` | `Syntax(unclosed_flow_collection)`, opener 12 |
+
+These are proposed expectations for this revision, requiring independent review
+under §13; they do not rebind historical profiles.
+
+During construction, alias-event admission precedes target validation and copy checks (§5.4).
+Copy ties use depth, nodes, expanded nodes, then owned bytes; ordinary keys
+check weight then validity before their values, followed by entry capacity and
+duplicate identity after value construction/overhead;
+merge admission uses source validity, shadow filtering, capacity, then copy
+budgets. These local orders do not reorder failures across validation phases.
 
 ### 7.2 Coordinates
 
@@ -581,7 +863,7 @@ part of measured parse cost.
 | Tag                              | `tag_start` at the tag token                                                                                                                                                                                                                                                                                                                       |
 | Alias-copied subtree             | each node keeps its **definition** span; the copy's root has `Via::Alias { use_site }`; diagnostics inside a copy report the definition in `site` and the use site in `related`                                                                                                                                                                    |
 | Merged-in entry                  | definition span plus `Via::Merge { directive }`, also in `related` on errors                                                                                                                                                                                                                                                                       |
-| Syntax error at end of input     | `byte_offset = input.len()`, with that point's line and column                                                                                                                                                                                                                                                                                     |
+| Engine diagnostic               | native diagnostic marker, translated to original-byte coordinates; missing closure or a mismatched delimiter may point at its unmatched opener. Use EOF only when the engine supplies EOF, with that point's line and column |
 | Invalid UTF-8                    | `byte_offset` = length of the valid prefix; line and column over the valid prefix; `invalid_len` = length of the invalid sequence, or None when truncated at end                                                                                                                                                                                   |
 | Typed conversion error (§8)      | span of the node being converted, with `path` to it                                                                                                                                                                                                                                                                                                |
 
@@ -775,22 +1057,40 @@ rejected. `3.4028235677973362e38` is accepted. Negative values are symmetric.
   `Spanned` gets `span: None`, and `TaggedValue` is an error.
 - **`from_node` on hand-built trees.** Constructors keep the invariants, so
   the tree is well-formed. `from_node` applies `max_depth` and `max_nodes`.
-- **Panics.** Crate-owned code paths do not panic on any input or options.
-  Caller conversions are excluded. Recursion through serde is bounded by
-  `max_depth`.
+- **Panics.** Crate-owned YAML-loading paths must handle input and invalid options
+  without panicking. Caller conversions are excluded. Depth enforcement through
+  crate-owned typed conversion remains required; the construction/cleanup support
+  domain for arbitrary caller-built trees and foreign deserializers is deferred
+  to the M1 freeze gate. Loader depth is not a bound on caller-owned Serde frames
+  or every operation on a synthetic tree.
 
 ## 9. Engine configuration
+
+The selected source is unmodified `granit-parser =2.0.0` with the features below.
 
 | Engine option                                   | Value                                                                                    |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | features                                        | `std`, `error_messages` (comments off)                                                   |
 | `strict_indentation`                            | `true` in this draft; required in every parsing pass, including any syntax-only pre-pass |
-| flow and block nesting limits                   | `max_depth`                                                                              |
+| flow and block nesting limits                   | bounded guards consistent with §6 source collection levels and §7.1 precedence             |
 | simple-key lookahead                            | 1024 (engine default; the YAML simple-key rule)                                          |
 | directive bytes / reserved directive parameters | 1024 / 16 (engine defaults)                                                              |
 
 Changing the engine or its pinned version requires requalification against
 the conformance suites (§13).
+
+The normative depth is the combined block/flow collection count in §6, not an
+engine's internal stack or separate flow/block counter. Keep finite engine
+guards enabled in every pass. Their configuration and error translation MUST
+admit the source shapes allowed by §6 and reject excess levels without making
+them generic syntax failures. If the engine rejects a permitted source shape,
+that is an implementation gap requiring correction and qualification, not a
+new definition of `max_depth`. Qualify pure block, pure flow and mixed nesting,
+including mapping keys and empty collections, at the configured boundaries.
+Qualify scanner lookahead, implicit mappings and indentless sequences as well.
+The finite native headroom needed to preserve combined event-depth enforcement
+requires a source-level boundedness audit; passing boundary examples alone does
+not establish it. No particular headroom formula is accepted by this draft.
 
 Revision 1.0 pinned `strict_indentation = false`. Revision 1.1 requires strict
 indentation as an accepted contract change under
@@ -970,8 +1270,23 @@ before scheduling them and stop at the first bound. It MUST NOT first clone,
 serialize or traverse the entire rejected subtree. Arithmetic must detect a
 weight beyond the limit without wrapping. This bounds preflight work by the
 path and key budgets, not by the size of a caller-created rejected tree.
-The general root/wrapper depth definition and stack safety of arbitrary
-hand-built trees remain explicit M1 gates in the design review.
+Call this existing error-key nesting metric **P**: scalars and empty collections
+have P=0; a nonempty Sequence or Mapping has `P = 1 + max(P(children))`; a Tagged
+wrapper has its child's P. Mapping children include both keys and values.
+This counts child edges, including edges to scalars, unlike loader collection
+height H (§6). Revision 1.4 names the distinction without changing preflight
+expectations or path-segment limits:
+
+| Key tree | Loader H | Error-key P |
+| --- | --- | --- |
+| `[]` | 1 | 0 |
+| `[0]` | 1 | 1 |
+| `[[]]` | 2 | 1 |
+| `[[0]]` | 2 | 2 |
+
+There is no universal constant offset between H and P. Stack safety of arbitrary
+caller-built trees, including destruction and operations without Options,
+remains an explicit M1 gate in the design review.
 
 While writing, truncate `message` to 4,096 UTF-8 bytes and each `expected`,
 `found` and `field` description to 1,024 bytes, retaining a character-boundary
@@ -1177,6 +1492,34 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   raw NUL and valid escaped `\0`, the optional UTF-8 BOM, and input-size boundaries.
 - **Worked weights.** Assert §6's 133/192/218 subtree weights independently of
   serialization or allocator layout, with wrapper/entry charges intact.
+- **Revision 1.4 depth.** Derive expected H and p from §§5–6 independently of
+  the implementation. Include root scalars, empty collections, mapping keys,
+  retained/core tags, mixed block/flow nesting, inline/aliased merges, source
+  lists, shadowing, merged anchors reused later and document reset. Exercise
+  127/128/129 at limit 128 and 254/255/256 at limit 255, isolating source versus
+  materialized rejection. Assert kind/configured/source site and alias/merge
+  provenance. Removing empty-collection levels, counting tags, omitting keys,
+  changing alias base or retaining pre-merge metrics must each be detected.
+- **Revision 1.4 accounting.** Independently derive §6's registration totals;
+  test below/at/above with valid options and other budgets noncompeting. Include
+  nested/redefined anchors, including nested reuse of the same name where
+  definition-start order differs from completion order, wrapper weights,
+  stream reset and registration of a
+  merged anchor before any later alias. Verify final count/weight separately
+  from monotonic source/directive/copy charges. Scalar text weight remains the
+  existing String-only rule; cover owned-byte and key-byte boundaries directly.
+- **Revision 1.4 admission and precedence.** Exercise every §7.1 paired-failure
+  row, including unknown aliases and unsupported YAML versions before later
+  syntax, with their new terminal selections and native sites. Include lookahead
+  errors before collection starts, missing/mismatched delimiter opener sites,
+  original-byte BOM/Unicode/CRLF coordinates and detecting controls for relocated
+  diagnostics or per-failure reparsing. Test ordinary-entry capacity versus duplicate/NaN, second Apply
+  directives, malformed later merge sources, shadowed and unshadowed entries at
+  capacity, all pairwise copy-limit ties and an all-four tie. Prove each competing
+  limit independently before asserting the selected result. Test completed-key
+  weight with composite keys, earlier incremental failures and a later invalid
+  value. Instrument rejection before path cloning or prohibited copies. Keep
+  error-key P and path-segment controls unchanged and distinct from load depth.
 - **Document cardinality.** Every §5.5 row and the consecutive explicit-empty
   document example through string and byte entrypoints,
   with EOF coordinates for zero-document streams and boundary coordinates for
@@ -1237,19 +1580,35 @@ yamlprims repository under `docs/decisions/`. The merge-key default
 
 ## 16. Errata
 
-Tagged revisions 1.0, 1.1 and 1.2 remain preserved at `spec-v1.0`, `spec-v1.1`
-and `spec-v1.2`.
+Tagged revisions 1.0 through 1.3 remain preserved at their `spec-v1.x` tags.
 Erratum numbering belongs to this public specification and restarts per revision;
-cross-document references use revision-qualified identifiers such as `1.3/E-1`.
+cross-document references use revision-qualified identifiers such as `1.4/E-1`.
 Specification publication and decision acceptance do not establish implementation
 qualification.
 
-### Revision 1.3 — unreleased draft
+### Revision 1.4 — unreleased draft
 
 These proposed contract updates require maintainer acceptance and a separately
-pinned qualification profile. New nested-anchor expectations MUST NOT be bound
-to a profile claiming unchanged revision 1.2 behavior. Historical profiles keep
-their individual specification bindings.
+pinned qualification profile. Historical tags, profiles and observations remain
+unchanged; successful historical comparisons do not qualify these new boundaries.
+
+| ID | Sections | Change from revision 1.3 |
+| --- | --- | --- |
+| E-1 | §5.3–5.4, §6, §9, §13.2 | Define source collection levels, completed height H and alias placement; use final post-merge metrics while preserving source checks and work charges. |
+| E-2 | §5.4, §6, §13.2 | Specify bytes-only anchor-registration charges, no extra cache-node charges, nested/redefined anchors and whole-call scope. |
+| E-3 | §5.1–5.4, §6–7, §9, §13.2 | Specify bounded source-validation precedence with terminal engine exceptions and native diagnostic sites, ordinary-entry and merge-capacity admission, deterministic copy-limit ties and completed-key weight timing. |
+| E-4 | §6, §11.1, §13.2 | Name the existing error-key nesting metric P separately from loader height H without changing encoder preflight expectations. |
+
+The logical subtree-weight formula, 64-byte node charge and wire grammar version
+1 are unchanged. This draft adds no caller-tree constructor, foreign-Serde seed,
+general stack-safety guarantee, or CLI contract freeze. Those remain open M1
+items. Implementation and package qualification are separate from this revision.
+
+### Revision 1.3 — tagged draft specification
+
+The following updates were incorporated in revision 1.3. Its immutable tag and
+separately pinned expectations remain unchanged. New nested-anchor expectations
+are not attributed to profiles claiming unchanged revision 1.2 behavior.
 
 | ID | Sections | Change from revision 1.2 |
 | --- | -------- | ------------------------ |

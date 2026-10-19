@@ -25,10 +25,30 @@ binaries. Fixtures are package-local, retain exact bytes and are included in
 extracted-package tests. Full pinned corpus checks are described in
 [conformance](../conformance/README.md).
 
-Remaining gates before API freeze:
+## Revision 1.4 proposal and implementation gaps
 
-- Mathematical root/wrapper/alias/merge depth rules and safety of arbitrary
-  hand-built trees across clone, drop, equality, formatting and conversion.
+The working specification proposes revision 1.4; these source packages are not
+qualified against it. Historical specification tags and conformance pins retain
+their exact bindings. The following gaps require separately reviewed source
+changes and detecting tests:
+
+| Proposed or existing rule | Current gap / required qualification |
+| --- | --- |
+| Final post-merge count, weight and H | Cached metrics still include source/directive structure; qualify corrected final-tree metrics independently of cumulative charges |
+| Existing String-only scalar text weight | Scalar construction charges decoded text even for non-String values; repair against the existing formula and retain detecting owned/key-byte controls |
+| Bytes-only anchor registration | Existing code charges cache bytes, not nodes; new normative totals need independent arithmetic review and exact boundary tests |
+| Combined source depth and bounded validation precedence | The syntax pass relies on separate engine guards. Terminal unknown-anchor/version failures fit the revised phase contract; combined event-depth enforcement, finite lookahead headroom and native diagnostic sites still require implementation review and qualification |
+| Merged-entry capacity before copy admission | Current merge code checks final capacity after merging; move admission before prohibited insertion/copy and test competing limits |
+| Ordinary-entry, copy-tie and completed-key rules | NaN key rejection currently follows value construction; the draft makes the existing key-built requirement explicit before value construction. Review all admission timing and add isolated/competing-limit tests |
+
+This is a gap inventory, not a claim of executed revision 1.4 qualification.
+The revision changes no Rust code, lock, fixture or conformance expectation.
+
+## Remaining gates before API freeze
+
+- Acceptance and qualification of proposed loader depth/accounting/precedence
+  rules; separately, safety of arbitrary hand-built trees across clone, drop,
+  equality, formatting and conversion. New caller-tree guarantees are deferred.
 - Every open M1 item in [the design review](design-review.md): error precedence,
   construction-time error bounds, anchor-cache accounting, checked construction,
   closed syntax vocabulary, wire decoding, metadata ranges, enum source-style
@@ -48,6 +68,7 @@ and license audit, and package/downstream qualification. Logical weight limits
 are not RSS limits. The current Rust workflow is baseline coverage on Linux;
 documentation CI is not runtime qualification. Bindings have separate M2 gates.
 
-The tagged specification remains byte-identical to its immutable baseline.
-Historical draft-status prose inside it does not describe package availability;
-this page and the repository README describe current implementation status.
+The working specification is a new draft; tagged specifications remain at their
+immutable baselines. Historical draft-status prose inside those tags does not
+describe current package availability; this page and the repository README
+describe current implementation status.

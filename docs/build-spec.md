@@ -1,6 +1,6 @@
 # yamlprims build specification
 
-Status: implementation plan with a working Rust core baseline. Published releases
+Status: implementation plan with a working Rust core and initial CLI. Published releases
 remain specification-only. See [implementation status](implementation.md) for the
 current code surface and qualification limits.
 The [behavioral specification](spec/yamlprims-spec.md) defines semantics; this
@@ -8,8 +8,8 @@ document defines package boundaries, implementation order and acceptance.
 
 ## Workspace and dependency direction
 
-Use a virtual Cargo workspace when implementation begins. Start with two crates;
-add the native boundary crates when their milestones begin.
+Use the virtual Cargo workspace with its working core and CLI crates; add native
+boundary crates when their milestones begin.
 
 | Package          | Path                     | Responsibility                                                                | First milestone |
 | ---------------- | ------------------------ | ----------------------------------------------------------------------------- | --------------- |
@@ -60,14 +60,14 @@ docs/decisions/          architecture, data, security and process records
 
 `src/build.rs` above is an ordinary module, not a Cargo build script. The core
 must not require native compilation, code generation or network access at build
-time. The docs-only release creates no Cargo workspace or placeholder crates.
+time. Specification releases do not publish packages or authorize placeholder crates.
 
 ## Rust and dependency policy
 
 - Proposed MSRV: Rust 1.88, edition 2021, workspace resolver 2. Confirm with an
   actual locked build/test on 1.88; current stable is a separate test cell.
 - Initial engine qualification pin: `granit-parser =2.0.0`, defaults off,
-  `std,error_messages` on. Inspect the shipped archive and complete dependency
+  `std,error_messages` on, using the unmodified release. Inspect the shipped archive and complete dependency
   closure before the first code release. A pin is not qualification evidence.
 - Rust core and CLI forbid unsafe code. Native boundaries, generated glue and
   their dependency closures have their own review obligations.
@@ -96,13 +96,46 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
-Revision `1.3` (`SPEC_VERSION`) is tagged as `spec-v1.3`.
-Existing tags `spec-v1.0`, `spec-v1.1` and `spec-v1.2` and their pinned expectations
-remain immutable. Revision 1.3 adds nested empty-scalar normalization and the
+Revision `1.3` is tagged as `spec-v1.3`; `SPEC_VERSION` now names the proposed
+revision `1.4`. Existing tags `spec-v1.0` through `spec-v1.3` and their pinned
+expectations remain immutable. Revision 1.3 adds nested empty-scalar normalization and the
 zero-width collection exception, and clarifies UTF-8 input scope, f32 conversion
 and exact keep-chomping EOF values. Its new anchor rules require a new profile
 citing the final specification commit/file digest and independently reviewed
 expectations before transfer is authorized.
+
+Revision 1.4 proposes loader depth, anchor-cache accounting, bounded source-
+validation precedence and entry/copy/key admission. It names the unchanged
+error-key preflight metric separately. It defers new caller-tree APIs and general
+stack-safety guarantees. The source tree may contain unfinished implementations
+when a specification is tagged; publication of the contract neither publishes
+packages nor qualifies those implementations.
+
+Before claiming revision 1.4 conformance, independently review the mathematical
+examples and paired-failure expectations in specification §§5–7 and §13.2. Add
+immutable profile/recipe revisions citing the accepted specification commit and
+file digest; do not assign new semantics to old locks, provisional records or
+event-only depth ladders. Map each selected rule to an actual-port test and
+detecting control, including registration before any subsequent alias and
+rejection before copy/insertion. Keep scalar-weight conformance repairs to the
+existing formula separate from newly selected accounting or depth policies.
+Use API tests for operations the corpus cannot yet express; unsupported reader
+capabilities are explicit exclusions, not successful comparisons.
+
+Revision 1.4's terminal engine precedence and native diagnostic sites require
+new independently reviewed expectations. Combined source-depth enforcement still
+requires a boundedness audit of scanner lookahead and finite engine guards;
+passing examples alone do not close that gate.
+
+Migration compatibility must be demonstrated through representative application
+inputs, exact loaded values and typed conversions through both string and node
+entrypoints. Use public synthetic or appropriately licensed fixtures. Explicitly
+cover schema resolution, strict indentation, duplicate rejection and each merge
+policy, recording preserved behavior, intentional differences and required caller
+changes. Compare diagnostic sites and competing-error selection separately from
+successful data/conversion results. Parser-event agreement or different diagnostics
+alone neither proves nor disproves application compatibility; do not claim blanket
+drop-in compatibility from either. Keep old expectations pinned to their versions.
 
 The revision 1.1 corpus migration specifies `yamlprims-core` r2 and `scalar-alias`
 span convention r2 revisions citing `spec-v1.1`. Pin the tag's specification
