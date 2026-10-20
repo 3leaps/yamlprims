@@ -467,6 +467,12 @@ impl<'a> Loader<'a> {
                     let msg = format!("cannot resolve scalar: {}", k.name());
                     self.err(k, tag_loc, msg)
                 })?;
+                let string_bytes = match &resolved {
+                    Resolved::Plain(Value::String(s)) | Resolved::Tagged(_, Value::String(s)) => {
+                        s.len() as u64
+                    }
+                    _ => 0,
+                };
                 let (value, tag_bytes, nodes) = match resolved {
                     Resolved::Plain(v) => (v, 0, 1),
                     Resolved::Tagged(t, inner) => {
@@ -484,7 +490,7 @@ impl<'a> Loader<'a> {
                         )
                     }
                 };
-                let weight = NODE_OVERHEAD + text.len() as u64 + tag_bytes;
+                let weight = NODE_OVERHEAD + string_bytes + tag_bytes;
                 self.charge(nodes, weight, span.start, false)?;
                 let node = Node::parsed(value, span, tag_start);
                 let mut b = Built {
