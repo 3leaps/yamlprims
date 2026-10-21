@@ -677,9 +677,6 @@ impl<'a> Loader<'a> {
                     (o.last_start, o.last_end) = (s.start, s.end);
                     o.floor = s.end;
                 }
-                o.count += k.count + v.count;
-                o.weight += k.weight + v.weight + ENTRY_OVERHEAD;
-                o.height = o.height.max(k.height).max(v.height);
                 let (kspan, key_use) = (k.kspan, k.key_use);
                 self.charge(0, ENTRY_OVERHEAD, kspan.start, false)?;
                 if k.is_directive && self.opts.merge_keys == MergeKeys::Apply {
@@ -697,6 +694,9 @@ impl<'a> Loader<'a> {
                     *directive = Some((map.len(), kspan, v.node));
                     return Ok(());
                 }
+                o.count += k.count + v.count;
+                o.weight += k.weight + v.weight + ENTRY_OVERHEAD;
+                o.height = o.height.max(k.height).max(v.height);
                 if contains_nan(&k.node.value) {
                     return Err(with_alias_use(
                         self.err(
@@ -756,9 +756,9 @@ impl<'a> Loader<'a> {
             flow,
             span,
             tag_start,
-            count,
-            weight,
-            height,
+            mut count,
+            mut weight,
+            mut height,
             last_start,
             last_end,
             ..
@@ -782,7 +782,12 @@ impl<'a> Loader<'a> {
                 mut map, directive, ..
             } => {
                 if let Some((slot, dspan, source)) = directive {
-                    map = self.apply_merge(map, slot, dspan, source)?;
+                    let (merged, added_count, added_weight, added_height) =
+                        self.apply_merge(map, slot, dspan, source)?;
+                    map = merged;
+                    count += added_count;
+                    weight += added_weight;
+                    height = height.max(added_height);
                 }
                 map.shrink();
                 Value::Mapping(map)
@@ -869,7 +874,7 @@ impl<'a> Loader<'a> {
         slot: usize,
         dspan: Span,
         source: Node,
-    ) -> Result<Mapping, Error> {
+    ) -> Result<(Mapping, u64, u64, usize), Error> {
         let src_span = source.source_span().unwrap_or(dspan);
         let src_use = alias_use(&source);
         let sources: Vec<Mapping> = match source.value {
@@ -907,14 +912,20 @@ impl<'a> Loader<'a> {
         // §5.3 rule 6: each merged-in entry is a copy, charged to the expansion budgets
         // before it joins the result. Entries move; nothing is cloned.
         let mut merged = Mapping::new();
+        // These describe only retained entries, independently of source work
+        // already charged. Height here is below the receiving mapping.
+        let (mut count, mut weight, mut height) = (0, 0, 0);
         for m in sources {
             for (k, v) in m.entries {
                 if explicit.get_value(&k.value).is_some() || merged.get_value(&k.value).is_some() {
                     continue;
                 }
-                let ((kc, kw), (vc, vw)) = (metrics(&k), metrics(&v));
+                let ((kc, kw, kh), (vc, vw, vh)) = (metrics(&k), metrics(&v));
                 let e = self.charge(kc + vc, kw + vw + ENTRY_OVERHEAD, dspan.start, true);
                 e.map_err(|e| e.with_related(RelatedRole::MergeDirective, dspan))?;
+                count += kc + vc;
+                weight += kw + vw + ENTRY_OVERHEAD;
+                height = height.max(kh).max(vh);
                 let via = Some(Via::Merge { directive: dspan });
                 let (mut k, mut v) = (k, v);
                 k.set_via(via.clone());
@@ -946,7 +957,7 @@ impl<'a> Loader<'a> {
                 dspan.start,
             ));
         }
-        Ok(out)
+        Ok((out, count, weight, height))
     }
 }
 

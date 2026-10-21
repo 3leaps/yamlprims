@@ -66,23 +66,27 @@ pub(crate) fn tag_bytes(t: &crate::value::Tag) -> u64 {
     (t.uri.len() + t.handle.len() + t.suffix.len()) as u64
 }
 
-/// Node count and §6 weight of a built subtree (used to charge merge copies).
-pub(crate) fn metrics(n: &Node) -> (u64, u64) {
+/// Final node count, §6 weight and collection height (used for merge copies).
+pub(crate) fn metrics(n: &Node) -> (u64, u64, usize) {
     match &n.value {
-        Value::String(s) => (1, NODE_OVERHEAD + s.len() as u64),
+        Value::String(s) => (1, NODE_OVERHEAD + s.len() as u64, 0),
         Value::Tagged(t) => {
-            let (c, w) = metrics(&t.value);
-            (c + 1, w + NODE_OVERHEAD + tag_bytes(&t.tag))
+            let (c, w, h) = metrics(&t.value);
+            (c + 1, w + NODE_OVERHEAD + tag_bytes(&t.tag), h)
         }
-        Value::Sequence(items) => items.iter().fold((1, NODE_OVERHEAD), |(c, w), i| {
-            let (ic, iw) = metrics(i);
-            (c + ic, w + iw)
+        Value::Sequence(items) => items.iter().fold((1, NODE_OVERHEAD, 1), |(c, w, h), i| {
+            let (ic, iw, ih) = metrics(i);
+            (c + ic, w + iw, h.max(1 + ih))
         }),
-        Value::Mapping(m) => m.iter().fold((1, NODE_OVERHEAD), |(c, w), (k, v)| {
-            let (kc, kw) = metrics(k);
-            let (vc, vw) = metrics(v);
-            (c + kc + vc, w + kw + vw + ENTRY_OVERHEAD)
+        Value::Mapping(m) => m.iter().fold((1, NODE_OVERHEAD, 1), |(c, w, h), (k, v)| {
+            let (kc, kw, kh) = metrics(k);
+            let (vc, vw, vh) = metrics(v);
+            (
+                c + kc + vc,
+                w + kw + vw + ENTRY_OVERHEAD,
+                h.max(1 + kh.max(vh)),
+            )
         }),
-        _ => (1, NODE_OVERHEAD),
+        _ => (1, NODE_OVERHEAD, 0),
     }
 }
