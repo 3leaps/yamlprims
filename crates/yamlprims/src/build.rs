@@ -620,6 +620,16 @@ impl<'a> Loader<'a> {
                         key_use,
                     ));
                 }
+                if contains_nan(&k.node.value) {
+                    return Err(with_alias_use(
+                        self.err(
+                            ErrorKind::InvalidKey,
+                            kspan.start,
+                            "NaN inside a mapping key",
+                        ),
+                        key_use,
+                    ));
+                }
                 if let (Value::Tagged(t), false) = (&k.node.value, k.merge_directive) {
                     if t.tag.uri == "tag:yaml.org,2002:merge" {
                         return Err(with_alias_use(
@@ -697,16 +707,6 @@ impl<'a> Loader<'a> {
                 o.count += k.count + v.count;
                 o.weight += k.weight + v.weight + ENTRY_OVERHEAD;
                 o.height = o.height.max(k.height).max(v.height);
-                if contains_nan(&k.node.value) {
-                    return Err(with_alias_use(
-                        self.err(
-                            ErrorKind::InvalidKey,
-                            kspan.start,
-                            "NaN inside a mapping key",
-                        ),
-                        key_use,
-                    ));
-                }
                 if map.len() >= self.opts.limits.max_mapping_entries {
                     return Err(with_alias_use(
                         self.err_limit(
