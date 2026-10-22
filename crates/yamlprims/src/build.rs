@@ -912,6 +912,11 @@ impl<'a> Loader<'a> {
         // §5.3 rule 6: each merged-in entry is a copy, charged to the expansion budgets
         // before it joins the result. Entries move; nothing is cloned.
         let mut merged = Mapping::new();
+        let capacity = self
+            .opts
+            .limits
+            .max_mapping_entries
+            .saturating_sub(explicit.len());
         // These describe only retained entries, independently of source work
         // already charged. Height here is below the receiving mapping.
         let (mut count, mut weight, mut height) = (0, 0, 0);
@@ -920,6 +925,17 @@ impl<'a> Loader<'a> {
                 if explicit.get_value(&k.value).is_some() || merged.get_value(&k.value).is_some() {
                     continue;
                 }
+                if merged.len() >= capacity {
+                    return Err(self
+                        .err_limit(
+                            LimitKind::MaxMappingEntries,
+                            self.opts.limits.max_mapping_entries,
+                            dspan.start,
+                        )
+                        .with_related(RelatedRole::MergeDirective, dspan));
+                }
+                #[cfg(test)]
+                merge_admission_tests::copy_started(merged.len(), capacity);
                 let ((kc, kw, kh), (vc, vw, vh)) = (metrics(&k), metrics(&v));
                 let e = self.charge(kc + vc, kw + vw + ENTRY_OVERHEAD, dspan.start, true);
                 e.map_err(|e| e.with_related(RelatedRole::MergeDirective, dspan))?;
@@ -930,6 +946,8 @@ impl<'a> Loader<'a> {
                 let (mut k, mut v) = (k, v);
                 k.set_via(via.clone());
                 v.set_via(via);
+                #[cfg(test)]
+                merge_admission_tests::insertion_started(merged.len(), capacity);
                 merged.insert_new(k, v).map_err(|_| internal("merge dup"))?;
             }
         }
@@ -950,14 +968,113 @@ impl<'a> Loader<'a> {
             out.insert_new(k, v)
                 .map_err(|_| internal("merge explicit dup"))?;
         }
-        if out.len() > self.opts.limits.max_mapping_entries {
-            return Err(self.err_limit(
-                LimitKind::MaxMappingEntries,
-                self.opts.limits.max_mapping_entries,
-                dspan.start,
-            ));
-        }
         Ok((out, count, weight, height))
+    }
+}
+
+#[cfg(test)]
+mod merge_admission_tests {
+    use crate::{load_with, ErrorKind, LimitKind, MergeKeys, Options};
+    use std::cell::Cell;
+
+    std::thread_local! {
+        static OPERATIONS: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
+    }
+
+    pub(super) fn copy_started(stored: usize, capacity: usize) {
+        OPERATIONS.with(|operations| {
+            if let Some((copies, insertions)) = operations.get() {
+                assert!(stored < capacity, "logical copy past result capacity");
+                operations.set(Some((copies + 1, insertions)));
+            }
+        });
+    }
+
+    pub(super) fn insertion_started(stored: usize, capacity: usize) {
+        OPERATIONS.with(|operations| {
+            if let Some((copies, insertions)) = operations.get() {
+                assert!(stored < capacity, "insertion past result capacity");
+                operations.set(Some((copies, insertions + 1)));
+            }
+        });
+    }
+
+    #[test]
+    fn merge_capacity_stops_before_logical_copy_and_insertion() {
+        for (input, capacity, want, expected) in [
+            (
+                "{x: 0, <<: {a: 1}}",
+                1,
+                (0, 0),
+                Some(LimitKind::MaxMappingEntries),
+            ),
+            ("{x: 0, <<: {a: 1}}", 2, (1, 1), None),
+            (
+                "{x: 0, <<: [{a: 1}, {b: 2}]}",
+                2,
+                (1, 1),
+                Some(LimitKind::MaxMappingEntries),
+            ),
+            ("{x: 0, <<: {x: 1}}", 1, (0, 0), None),
+            ("{<<: [{a: 1}, {a: 2}]}", 1, (1, 1), None),
+            (
+                "{x: 0, <<: {<<: {a: 1}}}",
+                1,
+                (1, 1),
+                Some(LimitKind::MaxMappingEntries),
+            ),
+        ] {
+            let mut options = Options::default();
+            options.merge_keys = MergeKeys::Apply;
+            options.limits.max_mapping_entries = capacity;
+            OPERATIONS.with(|operations| operations.set(Some((0, 0))));
+            let result = load_with(input, &options);
+            let got = OPERATIONS.with(|operations| operations.replace(None).unwrap());
+            assert_eq!(got, want, "{input}");
+            match expected {
+                Some(limit) => assert_eq!(
+                    result.unwrap_err().kind,
+                    ErrorKind::LimitExceeded {
+                        limit,
+                        configured: capacity as u64,
+                    }
+                ),
+                None => {
+                    result.unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn all_sources_validate_before_any_logical_copy_or_insertion() {
+        let mut options = Options::default();
+        options.merge_keys = MergeKeys::Apply;
+        options.limits.max_mapping_entries = 1;
+        OPERATIONS.with(|operations| operations.set(Some((0, 0))));
+        let result = load_with("{x: 0, <<: [{a: 1}, 0]}", &options);
+        let got = OPERATIONS.with(|operations| operations.replace(None).unwrap());
+        assert_eq!(result.unwrap_err().kind, ErrorKind::MergeSource);
+        assert_eq!(got, (0, 0));
+    }
+
+    #[test]
+    fn logical_copy_budget_rejects_before_insertion() {
+        let mut options = Options::default();
+        options.merge_keys = MergeKeys::Apply;
+        options.limits.max_mapping_entries = 2;
+        options.limits.max_nodes = 8; // Source prefix 7; the copy needs 2.
+        OPERATIONS.with(|operations| operations.set(Some((0, 0))));
+        let result = load_with("{x: 0, <<: {a: 1}}", &options);
+        let got = OPERATIONS.with(|operations| operations.replace(None).unwrap());
+        assert_eq!(
+            result.unwrap_err().kind,
+            ErrorKind::LimitExceeded {
+                limit: LimitKind::MaxNodes,
+                configured: 8,
+            }
+        );
+        assert_eq!(got, (1, 0));
     }
 }
 
