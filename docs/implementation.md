@@ -36,6 +36,12 @@ collection heights. Construction, directive/source work and logical copy charges
 remain cumulative. Focused controls cover shadowing, source lists, empty/tagged
 subtrees, mapping keys, repeated/nested anchors and streams.
 
+Ordinary keys are checked for NaN after their completed logical weight is
+admitted, before diagnostic-key cloning or associated value construction.
+Focused controls cover competing value failures, earlier construction failures,
+source syntax, nested keys and alias definition/use provenance, with allocation
+and bounded parser-key stack checks.
+
 ## Revision 1.4 proposal and implementation gaps
 
 The working specification proposes revision 1.4; these source packages are not
@@ -48,7 +54,7 @@ changes and detecting tests:
 | Bytes-only anchor registration | Existing code charges cache bytes, not nodes; new normative totals need independent arithmetic review and exact boundary tests |
 | Combined source depth and bounded validation precedence | The syntax pass relies on separate engine guards. Terminal unknown-anchor/version failures fit the revised phase contract; combined event-depth enforcement, finite lookahead headroom and native diagnostic sites still require implementation review and qualification |
 | Merged-entry capacity before copy admission | Current merge code checks final capacity after merging; move admission before prohibited insertion/copy and test competing limits |
-| Ordinary-entry, copy-tie and completed-key rules | NaN key rejection currently follows value construction; the draft makes the existing key-built requirement explicit before value construction. Review all admission timing and add isolated/competing-limit tests |
+| Ordinary-entry, copy-tie and completed-key rules | Completed-key weight and NaN admission have focused coverage; review the remaining entry/copy admission timing with isolated and competing-limit tests |
 
 This is a gap inventory, not a claim of executed revision 1.4 qualification.
 The revision changes no Rust code, lock, fixture or conformance expectation.
