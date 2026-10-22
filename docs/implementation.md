@@ -42,6 +42,14 @@ Focused controls cover competing value failures, earlier construction failures,
 source syntax, nested keys and alias definition/use provenance, with allocation
 and bounded parser-key stack checks.
 
+Merge completion validates all source kinds before admitting entries. Explicit
+keys and earlier sources shadow later entries before capacity admission. Each
+remaining entry must fit the result's entry limit before logical copy charges
+or insertion. Focused controls cover competing copy budgets, partial capacity,
+inline and aliased sources, nested merges, exact directive provenance and
+cumulative source/copy accounting. Test-only instrumentation observes logical
+copy and insertion attempts; source entries move rather than physically clone.
+
 ## Revision 1.4 proposal and implementation gaps
 
 The working specification proposes revision 1.4; these source packages are not
@@ -53,7 +61,7 @@ changes and detecting tests:
 | --- | --- |
 | Bytes-only anchor registration | Existing code charges cache bytes, not nodes; new normative totals need independent arithmetic review and exact boundary tests |
 | Combined source depth and bounded validation precedence | The syntax pass relies on separate engine guards. Terminal unknown-anchor/version failures fit the revised phase contract; combined event-depth enforcement, finite lookahead headroom and native diagnostic sites still require implementation review and qualification |
-| Merged-entry capacity before copy admission | Current merge code checks final capacity after merging; move admission before prohibited insertion/copy and test competing limits |
+| Merged-entry capacity before copy admission | Focused source-validation, shadowing, capacity/copy precedence and instrumentation controls are included; integrated revision 1.4 qualification remains open |
 | Ordinary-entry, copy-tie and completed-key rules | Completed-key weight and NaN admission have focused coverage; review the remaining entry/copy admission timing with isolated and competing-limit tests |
 
 This is a gap inventory, not a claim of executed revision 1.4 qualification.
