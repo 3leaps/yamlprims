@@ -50,6 +50,15 @@ inline and aliased sources, nested merges, exact directive provenance and
 cumulative source/copy accounting. Test-only instrumentation observes logical
 copy and insertion attempts; source entries move rather than physically clone.
 
+Source validation counts yielded sequence and mapping starts together before
+owned construction, including empty collections, keys, implicit mappings,
+indentless sequences and merge sources. Tags add no collection level and each
+document starts at level zero. The first yielded engine error or excess start
+terminates validation at its original-input site. Both parser passes keep finite
+native nesting guards with headroom for the pinned scanner's simple-key
+lookahead. Focused controls cover depth boundaries, native and adapter error
+precedence, coordinates, pass counts and the native resource fallback.
+
 ## Revision 1.4 proposal and implementation gaps
 
 The working specification proposes revision 1.4; these source packages are not
@@ -60,7 +69,7 @@ changes and detecting tests:
 | Proposed or existing rule | Current gap / required qualification |
 | --- | --- |
 | Bytes-only anchor registration | Existing code charges cache bytes, not nodes; new normative totals need independent arithmetic review and exact boundary tests |
-| Combined source depth and bounded validation precedence | The syntax pass relies on separate engine guards. Terminal unknown-anchor/version failures fit the revised phase contract; combined event-depth enforcement, finite lookahead headroom and native diagnostic sites still require implementation review and qualification |
+| Combined source depth and bounded validation precedence | Combined event-depth enforcement and finite native headroom have focused source/site, phase-order and instrumentation controls; integrated revision 1.4 qualification remains open |
 | Merged-entry capacity before copy admission | Focused source-validation, shadowing, capacity/copy precedence and instrumentation controls are included; integrated revision 1.4 qualification remains open |
 | Ordinary-entry, copy-tie and completed-key rules | Completed-key weight and NaN admission have focused coverage; review the remaining entry/copy admission timing with isolated and competing-limit tests |
 
