@@ -824,10 +824,13 @@ impl<'a> Loader<'a> {
                 column: 1,
             });
             self.charge(0, b.weight, at, false)?;
+            #[cfg(test)]
+            registration_admission_tests::copy_started();
+            let node = b.node.clone();
             self.anchors.insert(
                 anchor,
                 Anchored {
-                    node: b.node.clone(),
+                    node,
                     count: b.count,
                     weight: b.weight,
                     height: b.height,
@@ -1105,5 +1108,196 @@ fn with_alias_use(e: Error, use_site: Option<Span>) -> Error {
     match use_site {
         Some(u) => e.with_related(RelatedRole::AliasUse, u),
         None => e,
+    }
+}
+
+#[cfg(test)]
+mod registration_admission_tests {
+    use crate::{
+        load_all_with, load_with, ErrorKind, LimitKind, Location, MergeKeys, Options, UnknownTags,
+    };
+    use std::cell::Cell;
+
+    std::thread_local! {
+        static COPIES: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    // This hook is adjacent to the actual cache clone. Only an opted-in unit
+    // test counts attempts; other tests and production builds have no counter.
+    pub(super) fn copy_started() {
+        COPIES.with(|copies| {
+            if let Some(n) = copies.get() {
+                copies.set(Some(n + 1));
+            }
+        });
+    }
+
+    struct Counting;
+    impl Counting {
+        fn start() -> Self {
+            COPIES.with(|copies| assert_eq!(copies.replace(Some(0)), None));
+            Self
+        }
+        fn copies(&self) -> usize {
+            COPIES.with(|copies| copies.get().unwrap())
+        }
+    }
+    impl Drop for Counting {
+        fn drop(&mut self) {
+            COPIES.with(|copies| copies.set(None));
+        }
+    }
+
+    fn options(
+        owned: usize,
+        nodes: usize,
+        expanded: usize,
+        depth: usize,
+        scalar: usize,
+        tags: UnknownTags,
+    ) -> Options {
+        let mut o = Options::default();
+        o.merge_keys = MergeKeys::Reject;
+        o.unknown_tags = tags;
+        o.limits.max_input_bytes = 4096;
+        o.limits.max_depth = depth;
+        o.limits.max_nodes = nodes;
+        o.limits.max_expanded_nodes = expanded;
+        o.limits.max_alias_events = 32;
+        o.limits.max_owned_bytes = owned;
+        o.limits.max_scalar_bytes = scalar;
+        o.limits.max_key_bytes = 16;
+        o.limits.max_mapping_entries = 16;
+        o.limits.max_documents = 4;
+        o.limits.max_output_bytes = 4096;
+        o.limits.max_warnings = 1;
+        o.validate().expect("complete valid, noncompeting options");
+        o
+    }
+
+    fn witness(input: &str, owned: usize, stream: bool, copies: usize, error: Option<Location>) {
+        let o = options(owned, 128, 64, 16, 16, UnknownTags::Preserve);
+        let counting = Counting::start();
+        let result = if stream {
+            load_all_with(input, &o)
+        } else {
+            load_with(input, &o).map(|d| vec![d])
+        };
+        assert_eq!(
+            counting.copies(),
+            copies,
+            "registration clone attempts: {input:?}"
+        );
+        match error {
+            Some(at) => {
+                let got = result.unwrap_err();
+                assert_eq!(
+                    got.kind,
+                    ErrorKind::LimitExceeded {
+                        limit: LimitKind::MaxOwnedBytes,
+                        configured: owned as u64
+                    },
+                    "{input:?}"
+                );
+                assert_eq!(got.location(), Some(at), "{input:?}");
+            }
+            None => {
+                result.expect(input);
+            }
+        }
+    }
+    macro_rules! witnesses {
+        ($($name:ident: ($input:expr, $owned:expr, $stream:expr, $copies:expr, $at:expr),)*) => {$(
+            #[test]
+            fn $name() {
+                witness($input, $owned, $stream, $copies, $at.map(|(byte_offset,line,column)| Location { byte_offset,line,column }));
+            }
+        )*};
+    }
+    witnesses! {
+        scalar_definition_registration_1_below: ("[&a 1]", 191, false, 0, Some((4, 1, 5))),
+        scalar_definition_registration_1_at: ("[&a 1]", 192, false, 1, None::<(usize,usize,usize)>),
+        scalar_definition_registration_1_above: ("[&a 1]", 193, false, 1, None::<(usize,usize,usize)>),
+        scalar_alias_registration_1_below: ("[&a 1, *a]", 191, false, 0, Some((4, 1, 5))),
+        scalar_alias_registration_1_at: ("[&a 1, *a]", 192, false, 1, Some((7, 1, 8))),
+        scalar_alias_registration_1_above: ("[&a 1, *a]", 193, false, 1, Some((7, 1, 8))),
+        redefinition_registration_1_below: ("[&a 1, &a 2, *a]", 191, false, 0, Some((4, 1, 5))),
+        redefinition_registration_1_at: ("[&a 1, &a 2, *a]", 192, false, 1, Some((10, 1, 11))),
+        redefinition_registration_1_above: ("[&a 1, &a 2, *a]", 193, false, 1, Some((10, 1, 11))),
+        redefinition_registration_2_below: ("[&a 1, &a 2, *a]", 319, false, 1, Some((10, 1, 11))),
+        redefinition_registration_2_at: ("[&a 1, &a 2, *a]", 320, false, 2, Some((13, 1, 14))),
+        redefinition_registration_2_above: ("[&a 1, &a 2, *a]", 321, false, 2, Some((13, 1, 14))),
+        nested_distinct_registration_1_below: ("[&a [&b 1], *a]", 255, false, 0, Some((8, 1, 9))),
+        nested_distinct_registration_1_at: ("[&a [&b 1], *a]", 256, false, 1, Some((4, 1, 5))),
+        nested_distinct_registration_1_above: ("[&a [&b 1], *a]", 257, false, 1, Some((4, 1, 5))),
+        nested_distinct_registration_2_below: ("[&a [&b 1], *a]", 383, false, 1, Some((4, 1, 5))),
+        nested_distinct_registration_2_at: ("[&a [&b 1], *a]", 384, false, 2, Some((12, 1, 13))),
+        nested_distinct_registration_2_above: ("[&a [&b 1], *a]", 385, false, 2, Some((12, 1, 13))),
+        nested_same_name_registration_1_below: ("[&a [&a 1], *a]", 255, false, 0, Some((8, 1, 9))),
+        nested_same_name_registration_1_at: ("[&a [&a 1], *a]", 256, false, 1, Some((4, 1, 5))),
+        nested_same_name_registration_1_above: ("[&a [&a 1], *a]", 257, false, 1, Some((4, 1, 5))),
+        nested_same_name_registration_2_below: ("[&a [&a 1], *a]", 383, false, 1, Some((4, 1, 5))),
+        nested_same_name_registration_2_at: ("[&a [&a 1], *a]", 384, false, 2, Some((12, 1, 13))),
+        nested_same_name_registration_2_above: ("[&a [&a 1], *a]", 385, false, 2, Some((12, 1, 13))),
+        retained_scalar_alias_registration_1_below: ("[&a !t x, *a]", 329, false, 0, Some((7, 1, 8))),
+        retained_scalar_alias_registration_1_at: ("[&a !t x, *a]", 330, false, 1, Some((10, 1, 11))),
+        retained_scalar_alias_registration_1_above: ("[&a !t x, *a]", 331, false, 1, Some((10, 1, 11))),
+        stream_registration_1_below: ("--- &a 1\n--- &a 2\n", 127, true, 0, Some((7, 1, 8))),
+        stream_registration_1_at: ("--- &a 1\n--- &a 2\n", 128, true, 1, Some((16, 2, 8))),
+        stream_registration_1_above: ("--- &a 1\n--- &a 2\n", 129, true, 1, Some((16, 2, 8))),
+        stream_registration_2_below: ("--- &a 1\n--- &a 2\n", 255, true, 1, Some((16, 2, 8))),
+        stream_registration_2_at: ("--- &a 1\n--- &a 2\n", 256, true, 2, None::<(usize,usize,usize)>),
+        stream_registration_2_above: ("--- &a 1\n--- &a 2\n", 257, true, 2, None::<(usize,usize,usize)>),
+        root_scalar_registration_1_below: ("&a 1", 127, false, 0, Some((3, 1, 4))),
+        root_scalar_registration_1_at: ("&a 1", 128, false, 1, None::<(usize,usize,usize)>),
+        root_scalar_registration_1_above: ("&a 1", 129, false, 1, None::<(usize,usize,usize)>),
+        core_scalar_registration_1_below: ("&a !!int 1", 127, false, 0, Some((9, 1, 10))),
+        core_scalar_registration_1_at: ("&a !!int 1", 128, false, 1, None::<(usize,usize,usize)>),
+        core_scalar_registration_1_above: ("&a !!int 1", 129, false, 1, None::<(usize,usize,usize)>),
+        empty_sequence_registration_1_below: ("&a []", 127, false, 0, Some((3, 1, 4))),
+        empty_sequence_registration_1_at: ("&a []", 128, false, 1, None::<(usize,usize,usize)>),
+        empty_sequence_registration_1_above: ("&a []", 129, false, 1, None::<(usize,usize,usize)>),
+        empty_mapping_registration_1_below: ("&a {}", 127, false, 0, Some((3, 1, 4))),
+        empty_mapping_registration_1_at: ("&a {}", 128, false, 1, None::<(usize,usize,usize)>),
+        empty_mapping_registration_1_above: ("&a {}", 129, false, 1, None::<(usize,usize,usize)>),
+        retained_scalar_registration_1_below: ("&a !t x", 265, false, 0, Some((6, 1, 7))),
+        retained_scalar_registration_1_at: ("&a !t x", 266, false, 1, None::<(usize,usize,usize)>),
+        retained_scalar_registration_1_above: ("&a !t x", 267, false, 1, None::<(usize,usize,usize)>),
+        utf8_scalar_registration_1_below: ("&a \"é🙂\"", 139, false, 0, Some((3, 1, 4))),
+        utf8_scalar_registration_1_at: ("&a \"é🙂\"", 140, false, 1, None::<(usize,usize,usize)>),
+        utf8_scalar_registration_1_above: ("&a \"é🙂\"", 141, false, 1, None::<(usize,usize,usize)>),
+        sequence_registration_1_below: ("&a [1]", 255, false, 0, Some((3, 1, 4))),
+        sequence_registration_1_at: ("&a [1]", 256, false, 1, None::<(usize,usize,usize)>),
+        sequence_registration_1_above: ("&a [1]", 257, false, 1, None::<(usize,usize,usize)>),
+        core_sequence_registration_1_below: ("&a !!seq [1]", 255, false, 0, Some((9, 1, 10))),
+        core_sequence_registration_1_at: ("&a !!seq [1]", 256, false, 1, None::<(usize,usize,usize)>),
+        core_sequence_registration_1_above: ("&a !!seq [1]", 257, false, 1, None::<(usize,usize,usize)>),
+        retained_sequence_registration_1_below: ("&a !t [1]", 391, false, 0, Some((6, 1, 7))),
+        retained_sequence_registration_1_at: ("&a !t [1]", 392, false, 1, None::<(usize,usize,usize)>),
+        retained_sequence_registration_1_above: ("&a !t [1]", 393, false, 1, None::<(usize,usize,usize)>),
+        collection_redefinition_registration_1_below: ("[&a [], &a [2], *a]", 191, false, 0, Some((4, 1, 5))),
+        collection_redefinition_registration_1_at: ("[&a [], &a [2], *a]", 192, false, 1, Some((11, 1, 12))),
+        collection_redefinition_registration_1_above: ("[&a [], &a [2], *a]", 193, false, 1, Some((11, 1, 12))),
+        collection_redefinition_registration_2_below: ("[&a [], &a [2], *a]", 447, false, 1, Some((11, 1, 12))),
+        collection_redefinition_registration_2_at: ("[&a [], &a [2], *a]", 448, false, 2, Some((16, 1, 17))),
+        collection_redefinition_registration_2_above: ("[&a [], &a [2], *a]", 449, false, 2, Some((16, 1, 17))),
+        bom_registration_1_below: ("\u{feff}[&a 1]", 191, false, 0, Some((7, 1, 5))),
+        bom_registration_1_at: ("\u{feff}[&a 1]", 192, false, 1, None::<(usize,usize,usize)>),
+        bom_registration_1_above: ("\u{feff}[&a 1]", 193, false, 1, None::<(usize,usize,usize)>),
+        unicode_prefix_registration_1_below: ("[\"é🙂\", &a 1]", 261, false, 0, Some((14, 1, 11))),
+        unicode_prefix_registration_1_at: ("[\"é🙂\", &a 1]", 262, false, 1, None::<(usize,usize,usize)>),
+        unicode_prefix_registration_1_above: ("[\"é🙂\", &a 1]", 263, false, 1, None::<(usize,usize,usize)>),
+        lf_registration_1_below: ("[\n &a 1\n]", 191, false, 0, Some((6, 2, 5))),
+        lf_registration_1_at: ("[\n &a 1\n]", 192, false, 1, None::<(usize,usize,usize)>),
+        lf_registration_1_above: ("[\n &a 1\n]", 193, false, 1, None::<(usize,usize,usize)>),
+        crlf_registration_1_below: ("[\r\n &a 1\r\n]", 191, false, 0, Some((7, 2, 5))),
+        crlf_registration_1_at: ("[\r\n &a 1\r\n]", 192, false, 1, None::<(usize,usize,usize)>),
+        crlf_registration_1_above: ("[\r\n &a 1\r\n]", 193, false, 1, None::<(usize,usize,usize)>),
+        cr_registration_1_below: ("[\r &a 1\r]", 191, false, 0, Some((6, 2, 5))),
+        cr_registration_1_at: ("[\r &a 1\r]", 192, false, 1, None::<(usize,usize,usize)>),
+        cr_registration_1_above: ("[\r &a 1\r]", 193, false, 1, None::<(usize,usize,usize)>),
+        bom_unicode_crlf_registration_1_below: ("\u{feff}[\"é🙂\",\r\n &a !!int 1\r\n]", 261, false, 0, Some((25, 2, 11))),
+        bom_unicode_crlf_registration_1_at: ("\u{feff}[\"é🙂\",\r\n &a !!int 1\r\n]", 262, false, 1, None::<(usize,usize,usize)>),
+        bom_unicode_crlf_registration_1_above: ("\u{feff}[\"é🙂\",\r\n &a !!int 1\r\n]", 263, false, 1, None::<(usize,usize,usize)>),
     }
 }

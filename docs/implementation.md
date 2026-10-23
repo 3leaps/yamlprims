@@ -36,6 +36,14 @@ collection heights. Construction, directive/source work and logical copy charges
 remain cumulative. Focused controls cover shadowing, source lists, empty/tagged
 subtrees, mapping keys, repeated/nested anchors and streams.
 
+Anchor-cache registration charges the completed subtree's full logical weight
+before cloning, without additional materialized or expanded nodes. Focused
+controls cover the seven normative totals, registration-specific boundaries,
+nested and redefined bindings, retained/core tags, document-local names and
+whole-call charges, original-byte sites and earlier failures. Test-only crate
+unit witnesses count actual registration clone attempts, including admitted
+copies before a later refusal; they do not measure physical allocation or RSS.
+
 Ordinary keys are checked for NaN after their completed logical weight is
 admitted, before diagnostic-key cloning or associated value construction.
 Focused controls cover competing value failures, earlier construction failures,
@@ -68,7 +76,7 @@ changes and detecting tests:
 
 | Proposed or existing rule | Current gap / required qualification |
 | --- | --- |
-| Bytes-only anchor registration | Existing code charges cache bytes, not nodes; new normative totals need independent arithmetic review and exact boundary tests |
+| Bytes-only anchor registration | Normative totals, binding values, exact registration boundaries/sites and pre-copy witnesses have focused coverage; independent review and integrated revision 1.4 qualification remain open |
 | Combined source depth and bounded validation precedence | Combined event-depth enforcement and finite native headroom have focused source/site, phase-order and instrumentation controls; integrated revision 1.4 qualification remains open |
 | Merged-entry capacity before copy admission | Focused source-validation, shadowing, capacity/copy precedence and instrumentation controls are included; integrated revision 1.4 qualification remains open |
 | Ordinary-entry, copy-tie and completed-key rules | Completed-key weight and NaN admission have focused coverage; review the remaining entry/copy admission timing with isolated and competing-limit tests |
