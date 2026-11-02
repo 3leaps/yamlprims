@@ -44,8 +44,8 @@ Python's Unix-only `pty` module. Windows contributors can run `make check test-d
 and the individual lint targets; full prepush still needs a Unix host or CI.
 
 Install Python 3.9+, Make, Bash, Git, GnuPG, actionlint, ShellCheck, yamlfmt,
-yamllint and **goneat v0.6.4** before full prepush. `.goneat-version` records the
-exact goneat version; `make check-tooling` rejects other versions. Obtain goneat
+yamllint and **goneat v0.6.4** (or newer) before full prepush. `.goneat-version` records the
+minimum goneat version; `make check-tooling` rejects older versions. Obtain goneat
 from its [release](https://github.com/fulmenhq/goneat/releases/tag/v0.6.4).
 The workflow-lint container is the digest-pinned fulmen-toolbox **v0.5.10**
 `goneat-tools-runner-glibc` image and verifies this same goneat pin.
@@ -54,11 +54,11 @@ with `PYTHON`, `ACTIONLINT`, `GONEAT`, `SHELLCHECK`, `YAMLFMT` and `YAMLLINT` Ma
 variables. `make check` and `make test-docs` do not require goneat or lint tools.
 
 Full prepush also checks Rust formatting, all targets, the core tests and
-qualification-script failure propagation. Install the pinned Rust toolchain in
-`rust-toolchain.toml`; MSRV validation uses Rust 1.88.0 separately. Run
-`make check-rust test-rust test-conformance-tools` for runtime changes. The truth,
-wire and allocation-instrumented suites run serially. Golden blessing is disabled.
-Package-local fixtures are included in extracted-package tests.
+qualification-script failure propagation. Install a Rust toolchain meeting the
+`rust-version = "1.88.0"` MSRV in `Cargo.toml`; MSRV validation uses Rust 1.88.0
+separately. Run `make check-rust test-rust test-conformance-tools` for runtime
+changes. The truth, wire and allocation-instrumented suites run serially. Golden
+blessing is disabled. Package-local fixtures are included in extracted-package tests.
 
 The Rust baseline workflow exercises Linux on Rust 1.88.0 and 1.89.0 in debug
 and release. It does not replace the full five-target qualification plan.

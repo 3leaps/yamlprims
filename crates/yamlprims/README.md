@@ -19,7 +19,7 @@ The API is not frozen or published. Remaining work includes depth and synthetic
 tree guarantees, checked construction, error vocabulary, wire decoding and
 production platform/resource qualification. Passing included regressions does
 not establish complete conformance to the
-[specification](https://github.com/3leaps/yamlprims/blob/spec-v1.3/docs/spec/yamlprims-spec.md).
+[specification](https://github.com/3leaps/yamlprims/blob/spec-v1.4/docs/spec/yamlprims-spec.md).
 
 Run `cargo test --locked -- --test-threads=1`. Synthetic truth and wire fixtures
 are included in this package; they need no external checkout. Golden blessing

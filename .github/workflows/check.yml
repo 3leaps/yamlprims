@@ -78,6 +78,20 @@ jobs:
           echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $archive" | sha256sum --check
           tar -xJf "$archive" --strip-components=1 shellcheck-v0.11.0/shellcheck
           echo "${RUNNER_TEMP}/shellcheck" >> "$GITHUB_PATH"
+      - name: Install the pinned checker
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/decernor.XXXXXX")"
+          name="$(awk '{print $2}' config/release/decernor-ci-sha256.txt)"
+          version="${name#decernor_}"
+          version="${version%%_*}"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+            "https://github.com/3leaps/decernor/releases/download/v${version}/${name}" \
+            --output "$tool_dir/$name"
+          (cd "$tool_dir" && sha256sum --check "$GITHUB_WORKSPACE/config/release/decernor-ci-sha256.txt")
+          tar -xzf "$tool_dir/$name" -C "$tool_dir" decernor
+          echo "YAMLPRIMS_DECERNOR_BIN=$tool_dir/decernor" >> "$GITHUB_ENV"
       - name: Check release scripts
         run: |
           shellcheck --version

@@ -1,189 +1,439 @@
 #!/usr/bin/env bash
-# Adapted from decernor's signed-tag controls.
-# Copyright (c) 2025-2026 3 Leaps, LLC. SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Signed-tag ceremony invariants, shared by the tag scripts. yamlprims tags one
+# commit with every name in the release tag set (vX.Y.Z for code releases or
+# spec-vX.Y for specification releases); no signing material lives in this
+# repository.
 set -euo pipefail
 
-release_die() { echo "error: $*" >&2; return 1; }
-release_repo_root() { git rev-parse --show-toplevel; }
-release_require_env() {
-	[ -n "${!1:-}" ] || release_die "$1 is required"
+tag_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+tag_repo_slug=3leaps/yamlprims
+
+tag_die() {
+	echo "error: $*" >&2
+	return 1
 }
 
-release_assert_tag_version() {
-	release_require_env YAMLPRIMS_RELEASE_TAG || return 1
-	local version
-	version="$(cat SPEC_VERSION)" || return 1
-	[[ "$version" =~ ^[0-9]+\.[0-9]+$ ]] || {
-		release_die 'SPEC_VERSION must be MAJOR.MINOR'; return 1;
+# The release tag is the explicit input; it must name the canonical vX.Y.Z tag
+# for VERSION or the canonical spec-vX.Y tag for SPEC_VERSION.
+tag_version() {
+	[[ -n "${YAMLPRIMS_RELEASE_TAG:-}" ]] || {
+		tag_die 'YAMLPRIMS_RELEASE_TAG is required'
+		return 1
 	}
-	[ "$YAMLPRIMS_RELEASE_TAG" = "spec-v${version}" ] || {
-		release_die 'YAMLPRIMS_RELEASE_TAG must match spec-v<SPEC_VERSION>'; return 1;
-	}
+	if [[ "$YAMLPRIMS_RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+		[[ "$YAMLPRIMS_RELEASE_TAG" == "v$(tr -d '\r\n' <"$tag_root/VERSION")" ]] || {
+			tag_die 'YAMLPRIMS_RELEASE_TAG does not match VERSION'
+			return 1
+		}
+	elif [[ "$YAMLPRIMS_RELEASE_TAG" =~ ^spec-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+		[[ "$YAMLPRIMS_RELEASE_TAG" == "spec-v$(tr -d '\r\n' <"$tag_root/SPEC_VERSION")" ]] || {
+			tag_die 'YAMLPRIMS_RELEASE_TAG does not match SPEC_VERSION'
+			return 1
+		}
+	else
+		tag_die 'YAMLPRIMS_RELEASE_TAG must be a canonical vX.Y.Z or spec-vX.Y tag'
+		return 1
+	fi
 }
 
-release_assert_checkout() {
-	release_require_env YAMLPRIMS_RELEASE_COMMIT || return 1
-	[[ "$YAMLPRIMS_RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
-		release_die 'YAMLPRIMS_RELEASE_COMMIT must be a full lowercase commit SHA'; return 1;
-	}
-	[ "$(git branch --show-current)" = main ] || {
-		release_die 'release checkout must be on main'; return 1;
-	}
-	[ -z "$(git status --porcelain --untracked-files=all)" ] || {
-		release_die 'release checkout must be clean'; return 1;
-	}
-	git fetch --quiet origin 'refs/heads/main:refs/remotes/origin/main' || return 1
-	[ "$(git rev-parse HEAD)" = "$YAMLPRIMS_RELEASE_COMMIT" ] &&
-		[ "$(git rev-parse refs/remotes/origin/main)" = "$YAMLPRIMS_RELEASE_COMMIT" ] || {
-		release_die 'HEAD and fetched origin/main must equal YAMLPRIMS_RELEASE_COMMIT'; return 1;
-	}
+# The release tag set is fixed: the one vX.Y.Z or spec-vX.Y tag. It is not
+# configuration, so nothing in a checkout can widen or rename it. tag_load_set
+# fills the tag_names array; callers use it directly and never read the set
+# through a pipe or process substitution.
+# With --tagged, the caller has already checked VERSION or SPEC_VERSION in the
+# tagged commit, so the working tree is not consulted.
+tag_load_set() {
+	tag_names=()
+	if [[ "${1:-}" == --tagged ]]; then
+		[[ "${YAMLPRIMS_RELEASE_TAG:-}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ || "${YAMLPRIMS_RELEASE_TAG:-}" =~ ^spec-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+			tag_die 'YAMLPRIMS_RELEASE_TAG must be a canonical vX.Y.Z or spec-vX.Y tag'
+			return 1
+		}
+	else
+		tag_version || return 1
+	fi
+	# shellcheck disable=SC2034 # Consumed by scripts sourcing this helper.
+	tag_names=("$YAMLPRIMS_RELEASE_TAG")
 }
 
-release_assert_remote_absent() {
-	local status=0
-	git ls-remote --exit-code --tags origin "refs/tags/$YAMLPRIMS_RELEASE_TAG" >/dev/null 2>&1 || status=$?
-	case "$status" in
-		2) ;;
-		0) release_die 'remote tag already exists'; return 1 ;;
-		*) release_die 'unable to determine remote tag state'; return 1 ;;
+tag_identity() {
+	[[ "${YAMLPRIMS_TAGGER_NAME:-} <${YAMLPRIMS_TAGGER_EMAIL:-}>" == "$(cat "$tag_root/config/release/tagger-identity.txt")" ]] || {
+		tag_die 'the committed tagger identity is required'
+		return 1
+	}
+	local value
+	for value in "$YAMLPRIMS_TAGGER_NAME" "$YAMLPRIMS_TAGGER_EMAIL"; do
+		[[ "$value" != *$'\n'* && "$value" != *$'\r'* && "$value" != *'<'* && "$value" != *'>'* ]] || {
+			tag_die 'invalid tagger identity'
+			return 1
+		}
+	done
+}
+
+# Tag messages live outside the repository in one per-release directory, one
+# file per tag: the tag name with "/" replaced by "__", plus ".txt".
+tag_message_dir() {
+	local dir="${YAMLPRIMS_TAG_MESSAGE_DIR:-}" canonical
+	[[ -n "$dir" && -d "$dir" && ! -L "$dir" ]] || {
+		tag_die 'YAMLPRIMS_TAG_MESSAGE_DIR must name an existing directory'
+		return 1
+	}
+	[[ "$dir" == /* && "/$dir/" != *'/../'* ]] || {
+		tag_die 'YAMLPRIMS_TAG_MESSAGE_DIR must be absolute without parent traversal'
+		return 1
+	}
+	[[ "${dir%/}" == */"$YAMLPRIMS_RELEASE_TAG" ]] || {
+		tag_die 'YAMLPRIMS_TAG_MESSAGE_DIR must end in the release tag'
+		return 1
+	}
+	# The directory itself must not be a symlink. Ancestors may be (macOS /tmp
+	# and /var are), so the repository check uses the fully resolved path.
+	[[ ! -L "${dir%/}" ]] || {
+		tag_die 'YAMLPRIMS_TAG_MESSAGE_DIR may not be a symlink'
+		return 1
+	}
+	canonical="$(cd "$dir" && pwd -P)"
+	[[ "${canonical##*/}" == "$YAMLPRIMS_RELEASE_TAG" ]] || {
+		tag_die 'YAMLPRIMS_TAG_MESSAGE_DIR must resolve to a directory named for the release tag'
+		return 1
+	}
+	local probe cur
+	for probe in "$dir" "$canonical"; do
+		cur="$probe"
+		while true; do
+			if [[ -e "$cur" && "$cur" -ef "$tag_root" ]]; then
+				tag_die 'YAMLPRIMS_TAG_MESSAGE_DIR must be outside the repository'
+				return 1
+			fi
+			[[ "$cur" != / ]] || break
+			cur="$(dirname "$cur")"
+		done
+	done
+	case "$canonical" in "$tag_root" | "$tag_root"/*)
+		tag_die 'YAMLPRIMS_TAG_MESSAGE_DIR must be outside the repository'
+		return 1
+		;;
+	esac
+	printf '%s\n' "${dir%/}"
+}
+
+tag_message_file() {
+	local tag="$1" dir file
+	dir="$(tag_message_dir)" || return 1
+	file="$dir/${tag//\//__}.txt"
+	[[ -f "$file" && ! -L "$file" && -s "$file" ]] || {
+		tag_die "tag message for $tag is missing"
+		return 1
+	}
+	local subject="$tag"
+	[[ "$tag" == v* ]] && subject="Release ${tag#v}"
+	"$tag_root/scripts/release-prepare-tag-message.py" --validate-message "$file" "$subject" || return 1
+	printf '%s\n' "$file"
+}
+
+tag_origin() {
+	local url host
+	url="$(git config --get remote.origin.url)"
+	case "$url" in
+	"https://github.com/$tag_repo_slug" | "https://github.com/$tag_repo_slug.git" | \
+		"git@github.com:$tag_repo_slug" | "git@github.com:$tag_repo_slug.git") ;;
+	git@*:"$tag_repo_slug" | git@*:"$tag_repo_slug.git")
+		host="${url#git@}"
+		host="${host%%:*}"
+		[[ "$(ssh -G "$host" 2>/dev/null | awk '$1=="hostname" {print $2;exit}')" == github.com ]] || {
+			tag_die 'origin SSH host must resolve to github.com'
+			return 1
+		}
+		;;
+	*)
+		tag_die "origin must be $tag_repo_slug on GitHub"
+		return 1
+		;;
 	esac
 }
 
-release_assert_tag_absent() {
-	if git show-ref --verify --quiet "refs/tags/$YAMLPRIMS_RELEASE_TAG"; then
-		release_die 'local tag already exists'; return 1
-	fi
-	release_assert_remote_absent
+tag_checkout() {
+	tag_origin
+	git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main'
+	[[ -z "$(git status --porcelain --untracked-files=normal)" ]] || tag_die 'clean checkout required'
+	[[ "$(git rev-parse HEAD)" == "$(git rev-parse refs/remotes/origin/main)" ]] || tag_die 'HEAD must match fetched origin/main'
 }
 
-release_validate_key_state() {
-	local capabilities="$1" validity="$2" expires="$3"
-	[[ "$capabilities" != *D* && ! "$validity" =~ ^[redi]$ ]] || {
-		release_die 'key is revoked, expired, disabled or invalid'; return 1;
+# The operator's subkey selector must name the committed signing subkey.
+tag_selector() {
+	[[ "${YAMLPRIMS_PGP_KEY_ID:-}" =~ ^[0-9A-F]{40}!$ ]] || {
+		tag_die 'YAMLPRIMS_PGP_KEY_ID must be the exact uppercase signing subkey followed by !'
+		return 1
 	}
-	if [ -n "$expires" ] && [ "$expires" != 0 ]; then
-		[[ "$expires" =~ ^[0-9]+$ ]] && [ "$expires" -gt "$(date +%s)" ] || {
-			release_die 'key expiry is invalid or in the past'; return 1;
-		}
-	fi
+	[[ "${YAMLPRIMS_PGP_KEY_ID%!}" == "$(tr -d '\r\n' <"$tag_root/config/release/signing-subkey.txt")" ]] || {
+		tag_die 'YAMLPRIMS_PGP_KEY_ID differs from config/release/signing-subkey.txt'
+		return 1
+	}
 }
 
-release_resolve_signing_subkey() {
-	local listing="$1" records count primary capabilities validity expires subkey
-	records="$(awk -F: '
-		$1 == "pub" || $1 == "sec" { want=1; cap=$12; valid=$2; expiry=$7; next }
-		want && $1 == "fpr" { print $10 "|" cap "|" valid "|" expiry; want=0 }
-	' <<<"$listing")"
-	count="$(awk 'NF {n++} END {print n+0}' <<<"$records")"
-	[ "$count" = 1 ] || { release_die 'exactly one primary key required'; return 1; }
-	IFS='|' read -r primary capabilities validity expires <<<"$records"
-	[ "$primary" = "$YAMLPRIMS_GPG_SIGNING_FINGERPRINT" ] || {
-		release_die 'selected subkey does not belong to the authorized primary'; return 1;
+# The approved primary comes from the maintainer environment, never from the
+# tree, and must be the primary the committed anchors name at HEAD. Checked
+# before signing and before pushing.
+tag_approved_primary() {
+	local approved="${YAMLPRIMS_GPG_SIGNING_FINGERPRINT:-}" pinned
+	[[ "$approved" =~ ^[0-9A-F]{40}$ ]] || {
+		tag_die 'approved primary YAMLPRIMS_GPG_SIGNING_FINGERPRINT required (40 uppercase hex)'
+		return 1
 	}
-	release_validate_key_state "$capabilities" "$validity" "$expires" || return 1
-	records="$(awk -F: -v selected="${YAMLPRIMS_PGP_KEY_ID%!}" '
-		$1 == "sub" || $1 == "ssb" { want=1; cap=$12; valid=$2; expiry=$7; next }
-		want && $1 == "fpr" {
-			if ($10 == selected) print $10 "|" cap "|" valid "|" expiry
-			want=0
-		}
-	' <<<"$listing")"
-	count="$(awk 'NF {n++} END {print n+0}' <<<"$records")"
-	[ "$count" = 1 ] || { release_die 'exactly one matching subkey required'; return 1; }
-	IFS='|' read -r subkey capabilities validity expires <<<"$records"
-	[[ "$capabilities" =~ [sS] ]] || { release_die 'subkey cannot sign'; return 1; }
-	release_validate_key_state "$capabilities" "$validity" "$expires" || return 1
-	printf '%s %s\n' "$subkey" "$primary"
+	pinned="$(git cat-file blob HEAD:keys/expected-fingerprints.txt 2>/dev/null | awk '$1=="gpg" {print $2}')"
+	[[ -n "$pinned" && "$pinned" == "$approved" ]] || {
+		tag_die 'the committed anchor is not the approved primary'
+		return 1
+	}
 }
 
-release_validate_verification_env() {
-	release_assert_tag_version || return 1
-	release_require_env YAMLPRIMS_GPG_HOMEDIR || return 1
-	release_require_env YAMLPRIMS_PGP_KEY_ID || return 1
-	release_require_env YAMLPRIMS_GPG_SIGNING_FINGERPRINT || return 1
-	[[ "$YAMLPRIMS_PGP_KEY_ID" =~ ^[0-9A-F]{40}!$ ]] || {
-		release_die 'exact uppercase signing-subkey fingerprint followed by ! required'; return 1;
+tag_key_home() {
+	[[ -n "${YAMLPRIMS_GPG_HOMEDIR:-}" && ( "$YAMLPRIMS_GPG_HOMEDIR" == /* || "$YAMLPRIMS_GPG_HOMEDIR" == [A-Za-z]:/* || "$YAMLPRIMS_GPG_HOMEDIR" == [A-Za-z]:\\* || "$YAMLPRIMS_GPG_HOMEDIR" == \\\\* ) && -d "$YAMLPRIMS_GPG_HOMEDIR" && ! -L "$YAMLPRIMS_GPG_HOMEDIR" ]] || {
+		tag_die 'an external YAMLPRIMS_GPG_HOMEDIR is required'
+		return 1
 	}
-	[[ "$YAMLPRIMS_GPG_SIGNING_FINGERPRINT" =~ ^[0-9A-F]{40}$ ]] || {
-		release_die 'full uppercase primary fingerprint required'; return 1;
-	}
-	local anchor home listing
-	anchor="$(cat keys/expected-fingerprints.txt)" || return 1
-	[ "$anchor" = "gpg $YAMLPRIMS_GPG_SIGNING_FINGERPRINT" ] || {
-		release_die 'primary fingerprint differs from committed anchor'; return 1;
-	}
-	[ "${YAMLPRIMS_TAGGER_NAME:-}" = '3 Leaps Infosec Team' ] &&
-		[ "${YAMLPRIMS_TAGGER_EMAIL:-}" = 'infosec@3leaps.net' ] || {
-		release_die 'established release tagger identity required'; return 1;
-	}
-	home="$(CDPATH='' cd -- "$YAMLPRIMS_GPG_HOMEDIR" && pwd -P)" || return 1
-	if git -C "$home" rev-parse --git-dir >/dev/null 2>&1; then
-		release_die 'GPG home must remain outside Git repositories'; return 1
-	fi
+	local home
+	home="$(
+		python3 -I - "$YAMLPRIMS_GPG_HOMEDIR" "$tag_root" "${HOME:-}" <<'PY'
+import os
+import pathlib
+import subprocess
+import sys
+
+probe = os.fsencode(sys.argv[1])
+seps = (b"/", b"\\") if os.name == "nt" else (b"/",)
+dot_seps = (b"/.", b"\\.") if os.name == "nt" else (b"/.",)
+dotdot_seps = (b"/..", b"\\..") if os.name == "nt" else (b"/..",)
+while True:
+    if len(probe) > 1 and probe.endswith(seps):
+        probe = probe[:-1]
+    elif probe.endswith(dot_seps):
+        probe = probe[:-2] or b"/"
+    else:
+        break
+if probe.endswith(dotdot_seps) or os.path.islink(probe):
+    print("error: an external YAMLPRIMS_GPG_HOMEDIR is required", file=sys.stderr)
+    sys.exit(1)
+
+def is_win_style(raw: str) -> bool:
+    return (
+        os.name == "nt"
+        or os.path.sep == "\\"
+        or raw.startswith("\\\\")
+        or (len(raw) >= 3 and raw[0].isalpha() and raw[1:3] in (":/", ":\\"))
+    )
+
+
+def resolve_path(raw: bytes) -> str:
+    s = os.fsdecode(raw)
+    if os.name != "nt" and is_win_style(s):
+        return s
+    return os.fsdecode(os.path.realpath(raw))
+
+
+home = pathlib.Path(resolve_path(os.fsencode(sys.argv[1])))
+repo_root = pathlib.Path(resolve_path(os.fsencode(sys.argv[2])))
+env_home = sys.argv[3]
+
+
+def strip_line_terminator(raw: bytes) -> bytes:
+    if (os.name == "nt" or os.path.sep == "\\") and raw.endswith(b"\r\n"):
+        return raw[:-2]
+    if raw.endswith(b"\r\n") and is_win_style(os.fsdecode(raw[:-2])):
+        return raw[:-2]
+    if raw.endswith(b"\n"):
+        return raw[:-1]
+    return raw
+
+
+def same_or_within(path: pathlib.Path, target: pathlib.Path) -> bool:
+    p_str = str(path)
+    t_str = str(target)
+    if is_win_style(p_str) or is_win_style(t_str):
+        p_low = p_str.replace("\\", "/").lower().rstrip("/")
+        t_low = t_str.replace("\\", "/").lower().rstrip("/")
+    else:
+        p_low = p_str.lower().rstrip("/")
+        t_low = t_str.lower().rstrip("/")
+    if p_low == t_low or p_low.startswith(t_low + "/"):
+        return True
+    for cur in (path, *path.parents):
+        try:
+            if target.exists() and cur.exists() and os.path.samefile(cur, target):
+                return True
+            if (
+                cur.parent.exists()
+                and target.parent.exists()
+                and os.path.samefile(cur.parent, target.parent)
+                and cur.name.lower() == target.name.lower()
+            ):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+repo_roots = {repo_root}
+try:
+    wt_records = subprocess.run(
+        ["git", "-C", str(repo_root), "worktree", "list", "--porcelain", "-z"],
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+except (OSError, subprocess.CalledProcessError):
+    print("error: failed to enumerate repository worktrees", file=sys.stderr)
+    sys.exit(1)
+found_worktree = False
+for rec in wt_records:
+    if rec.startswith(b"worktree "):
+        wt_bytes = rec[len(b"worktree ") :]
+        if not wt_bytes:
+            print("error: empty worktree path from git worktree list", file=sys.stderr)
+            sys.exit(1)
+        found_worktree = True
+        repo_roots.add(pathlib.Path(os.fsdecode(os.path.realpath(wt_bytes))))
+if not found_worktree:
+    print("error: no repository worktrees reported by git worktree list", file=sys.stderr)
+    sys.exit(1)
+for git_flag in ("--git-dir", "--git-common-dir"):
+    try:
+        git_dir_raw = strip_line_terminator(
+            subprocess.run(
+                ["git", "-C", str(repo_root), "rev-parse", "--path-format=absolute", git_flag],
+                check=True,
+                capture_output=True,
+            ).stdout
+        )
+    except (OSError, subprocess.CalledProcessError):
+        print(f"error: failed to resolve repository {git_flag}", file=sys.stderr)
+        sys.exit(1)
+    if not git_dir_raw:
+        print(f"error: empty repository {git_flag}", file=sys.stderr)
+        sys.exit(1)
+    repo_roots.add(pathlib.Path(os.fsdecode(os.path.realpath(git_dir_raw))))
+
+for r_root in repo_roots:
+    if same_or_within(home, r_root):
+        print("error: YAMLPRIMS_GPG_HOMEDIR must be outside the repository", file=sys.stderr)
+        sys.exit(1)
+
+candidates = set()
+for home_candidate in (
+    env_home,
+    os.environ.get("USERPROFILE", ""),
+    (os.environ.get("HOMEDRIVE", "") + os.environ.get("HOMEPATH", "")) if os.environ.get("HOMEDRIVE") and os.environ.get("HOMEPATH") else "",
+    os.path.expanduser("~"),
+):
+    if home_candidate and home_candidate != "~":
+        candidates.add(pathlib.Path(os.path.realpath(os.path.expanduser(home_candidate))) / ".gnupg")
+for appdata_candidate in (os.environ.get("APPDATA", ""), os.environ.get("LOCALAPPDATA", "")):
+    if appdata_candidate:
+        candidates.add(pathlib.Path(os.path.realpath(os.path.expanduser(appdata_candidate))) / "gnupg")
+try:
+    import pwd
+
+    acct = pathlib.Path(os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir))
+    candidates.add(acct / ".gnupg")
+except (ImportError, AttributeError, KeyError, OSError):
+    pass
+env = {k: v for k, v in os.environ.items() if k != "GNUPGHOME"}
+try:
+    out = strip_line_terminator(
+        subprocess.run(
+            ["gpgconf", "--list-dirs", "homedir"],
+            env=env,
+            check=True,
+            capture_output=True,
+        ).stdout
+    )
+    out_str = os.fsdecode(out)
+    if is_win_style(out_str) or out.startswith(b"/") or os.path.isabs(out_str):
+        candidates.add(pathlib.Path(resolve_path(out)))
+        candidates.add(pathlib.Path(out_str))
+except (OSError, subprocess.CalledProcessError):
+    pass
+
+for cand in candidates:
+    if same_or_within(home, cand):
+        print("error: the default GPG home is not approved for release signing", file=sys.stderr)
+        sys.exit(1)
+
+sys.stdout.write(str(home) + "x")
+PY
+	)" || return 1
+	home="${home%x}"
 	export GNUPGHOME="$home"
-	listing="$(gpg --batch --with-colons --fingerprint --with-subkey-fingerprint \
-		--list-keys "$YAMLPRIMS_PGP_KEY_ID")" || return 1
-	release_resolve_signing_subkey "$listing" >/dev/null || return 1
-	if ! awk -F: '$1 == "uid" && $2 !~ /^[redi]$/ {print $10}' <<<"$listing" |
-		sed -n 's/.*<\([^<>]*\)>.*/\1/p' | grep -qxF "$YAMLPRIMS_TAGGER_EMAIL"; then
-		release_die 'release tagger email must match a valid signing-key UID'; return 1
-	fi
 }
 
-release_validate_signing_env() {
-	release_validate_verification_env || return 1
-	local listing
-	listing="$(gpg --batch --with-colons --fingerprint --with-subkey-fingerprint \
-		--list-secret-keys "$YAMLPRIMS_PGP_KEY_ID")" || return 1
-	release_resolve_signing_subkey "$listing" >/dev/null
+tag_signing_git() {
+	git -c gpg.format=openpgp -c gpg.program=gpg -c gpg.openpgp.program=gpg "$@"
 }
 
-release_setup_gpg_tty() {
-	[ -t 0 ] && [ -t 1 ] || {
-		release_die 'release-tag requires an interactive terminal for GPG pinentry'; return 1;
-	}
-	export GPG_TTY
-	GPG_TTY="$(tty)"
-	if command -v gpg-connect-agent >/dev/null 2>&1; then
-		gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || true
-	fi
+# PDR-0008 §2.10: the signing command pins gpg.format, gpg.program and
+# gpg.openpgp.program on its own command line; a configured value the pin
+# overrides is reported, and the step stops only if the pin would not take
+# effect.
+tag_signing_program() {
+	local key want value effective rc
+	for key in gpg.format gpg.program gpg.openpgp.program; do
+		want=gpg
+		[[ "$key" == gpg.format ]] && want=openpgp
+		rc=0
+		effective="$(tag_signing_git config --get "$key")" || rc=$?
+		if ((rc != 0)) || [[ "$effective" != "$want" ]]; then
+			tag_die "release signing would not use $key=$want; not signing"
+			return 1
+		fi
+		rc=0
+		value="$(git config --get-all "$key")" || rc=$?
+		if ((rc == 1)); then
+			continue
+		fi
+		if ((rc != 0)); then
+			tag_die "could not read git config $key"
+			return 1
+		fi
+		if [[ "$value" != "$want" ]]; then
+			echo "note: git config $key is '${value//$'\n'/, }'; release signing uses $want" >&2
+		fi
+	done
 }
 
-release_verify_local_tag() {
-	local ref="refs/tags/$YAMLPRIMS_RELEASE_TAG" text header message tagger verification
-	[ "$(git cat-file -t "$ref")" = tag ] || {
-		release_die 'annotated tag object required'; return 1;
+# Check one annotated tag object: name, target, tagger and exact message bytes.
+tag_verify_object() {
+	local tag="$1" target="$2" object expected actual tagger
+	object="$(git rev-parse --verify --quiet "refs/tags/$tag")" || {
+		tag_die "tag $tag is absent"
+		return 1
 	}
-	text="$(git cat-file tag "$ref")" || return 1
-	header="$(sed '/^$/q' <<<"$text")"
-	[ "$(sed -n 's/^object //p' <<<"$header")" = "$YAMLPRIMS_RELEASE_COMMIT" ] &&
-		[ "$(sed -n 's/^type //p' <<<"$header")" = commit ] &&
-		[ "$(sed -n 's/^tag //p' <<<"$header")" = "$YAMLPRIMS_RELEASE_TAG" ] || {
-		release_die 'tag must directly target the selected commit with the expected name'; return 1;
+	[[ "$(git cat-file -t "$object")" == tag ]] || {
+		tag_die "$tag must be an annotated tag"
+		return 1
 	}
-	tagger="$(sed -n 's/^tagger //p' <<<"$header")"
-	[[ "$tagger" =~ ^"$YAMLPRIMS_TAGGER_NAME <$YAMLPRIMS_TAGGER_EMAIL> "[0-9]+\ [+-][0-9]{4}$ ]] || {
-		release_die 'tagger identity mismatch'; return 1;
+	[[ "$(git cat-file tag "$object" | sed -n 's/^tag //p' | head -1)" == "$tag" ]] || {
+		tag_die "$tag object names a different tag"
+		return 1
 	}
-	[ "$(grep -c '^-----BEGIN PGP SIGNATURE-----$' <<<"$text")" = 1 ] &&
-		[ "$(grep -c '^-----END PGP SIGNATURE-----$' <<<"$text")" = 1 ] || {
-		release_die 'exactly one OpenPGP signature required'; return 1;
+	[[ "$(git rev-parse "${object}^{commit}")" == "$target" ]] || {
+		tag_die "$tag does not point at $target"
+		return 1
 	}
-	message="$(awk 'BEGIN {body=0} !body && NF==0 {body=1; next}
-		body && /^-----BEGIN PGP SIGNATURE-----$/ {exit} body && NF {print}' <<<"$text")"
-	[ "$message" = "yamlprims $YAMLPRIMS_RELEASE_TAG" ] || {
-		release_die 'unexpected signed tag message'; return 1;
+	tagger="$(git cat-file tag "$object" | sed -n 's/^tagger \(.*\) [0-9][0-9]* [+-][0-9][0-9][0-9][0-9]$/\1/p' | head -1)"
+	[[ "$tagger" == "$(cat "$tag_root/config/release/tagger-identity.txt")" ]] || {
+		tag_die "$tag tagger differs from the committed identity"
+		return 1
 	}
-	verification="$(git -c gpg.format=openpgp -c gpg.program=gpg verify-tag --raw "$ref" 2>&1)" || {
-		release_die 'tag signature verification failed'; return 1;
-	}
-	if grep -Eq '^\[GNUPG:\] (EXPKEYSIG|EXPSIG|REVKEYSIG|KEYEXPIRED|SIGEXPIRED) ' <<<"$verification"; then
-		release_die 'expired or revoked signature/key'; return 1
+	expected="$(tag_message_file "$tag")" || return 1
+	actual="$(mktemp)"
+	if ! "$tag_root/scripts/release-tag-body.sh" "$object" >"$actual"; then
+		rm -f "$actual"
+		return 1
 	fi
-	grep -q '^\[GNUPG:\] GOODSIG ' <<<"$verification" || return 1
-	local fingerprints
-	fingerprints="$(awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" {print $3, $12}' <<<"$verification")"
-	[ "$fingerprints" = "${YAMLPRIMS_PGP_KEY_ID%!} $YAMLPRIMS_GPG_SIGNING_FINGERPRINT" ] || {
-		release_die 'signature must use the exact subkey under the pinned primary'; return 1;
-	}
+	if ! cmp -s "$expected" "$actual"; then
+		rm -f "$actual"
+		tag_die "$tag message differs from the prepared message"
+		return 1
+	fi
+	rm -f "$actual"
 }

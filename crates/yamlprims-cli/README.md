@@ -44,7 +44,7 @@ guarantee. Diagnostic text itself does not have a separate CLI byte cap.
 These behaviors need independent review before the CLI contract is frozen.
 Production platform/resource qualification and package publication remain open.
 The versioned wire grammar and YAML semantics are defined by the
-[specification](https://github.com/3leaps/yamlprims/blob/spec-v1.3/docs/spec/yamlprims-spec.md).
+[specification](https://github.com/3leaps/yamlprims/blob/spec-v1.4/docs/spec/yamlprims-spec.md).
 
 Run `cargo test --locked -p yamlprims-cli`. Tests cover command parsing, bounded
 reads, failed reads/writes and serialization, file/stdin streams, diagnostics,

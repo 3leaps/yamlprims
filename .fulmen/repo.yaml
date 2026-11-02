@@ -1,0 +1,54 @@
+# yamlprims Repository Configuration
+# Fulmen Ecosystem Config
+# Ref: https://github.com/fulmenhq/crucible
+
+version: "1.0"
+
+repository:
+  name: yamlprims
+  slug: 3leaps/yamlprims
+  category: library
+  primary_language: rust
+  additional_languages: []
+  description: "Specified YAML 1.2 data layer for Rust, CLI, and language bindings"
+
+versioning:
+  source: VERSION
+  scheme: semver
+  sync_targets:
+    - path: Cargo.toml
+      pattern: 'version = "{version}"'
+      description: "Rust workspace version"
+    - path: crates/yamlprims-cli/Cargo.toml
+      pattern: 'yamlprims = { path = "../yamlprims", version = "={version}" }'
+      description: "CLI workspace dependency pin"
+
+commands:
+  bootstrap: make bootstrap
+  check: make check
+  lint: make lint
+  fmt: make fmt
+  test: make test-rust
+  build: cargo build --workspace --release
+  version: make version
+  prepush: make prepush
+
+quality:
+  rust_clippy: true
+  rust_fmt: true
+  cargo_deny: true
+  goneat_assess: true
+  shellcheck: true
+  actionlint: true
+
+ecosystem:
+  crucible_sync: false
+  ssot_consumer: false
+  GoneatIntegration: true
+
+security:
+  file_signing: minisign
+  git_tag_signing: gpg
+  network_imports: forbidden
+  unsafe_rust:
+    core: forbidden

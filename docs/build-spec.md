@@ -34,7 +34,7 @@ tools, outside consumer dependency closures.
 Planned tree (directories are created only when they contain working material):
 
 ```text
-Cargo.toml / Cargo.lock / rust-toolchain.toml
+Cargo.toml / Cargo.lock / VERSION / SPEC_VERSION
 crates/yamlprims/src/
   lib.rs                 public facade and operation entrypoints
   value.rs               owned model and checked mutation
@@ -96,15 +96,14 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
-Revision `1.3` is tagged as `spec-v1.3`; `SPEC_VERSION` now names the proposed
-revision `1.4`. Existing tags `spec-v1.0` through `spec-v1.3` and their pinned
+Revision `1.4` is tagged as `spec-v1.4` (`SPEC_VERSION` is `1.4`). Existing tags `spec-v1.0` through `spec-v1.4` and their pinned
 expectations remain immutable. Revision 1.3 adds nested empty-scalar normalization and the
 zero-width collection exception, and clarifies UTF-8 input scope, f32 conversion
 and exact keep-chomping EOF values. Its new anchor rules require a new profile
 citing the final specification commit/file digest and independently reviewed
 expectations before transfer is authorized.
 
-Revision 1.4 proposes loader depth, anchor-cache accounting, bounded source-
+Revision 1.4 defines loader depth, anchor-cache accounting, bounded source-
 validation precedence and entry/copy/key admission. It names the unchanged
 error-key preflight metric separately. It defers new caller-tree APIs and general
 stack-safety guarantees. The source tree may contain unfinished implementations
@@ -343,7 +342,7 @@ Document that Rust typed enum re-resolution is not a binding guarantee.
 Distribute only platform/architecture combinations with executed native tests.
 Record shared-library ABI, Node-API floor, Go/Node floors, artifact checksums and
 runtime loading behavior. No implicit download on library import. Package Rust
-libraries before their dependents; npm/Go publication follows native artifacts
+libraries before their dependents; npm (`@3leaps/yamlprims`), PyPI (`yamlprims`) and Go (`github.com/3leaps/yamlprims/bindings/go`) publication follows native/WASM artifacts
 and binding tests. `yamlprims-node` can remain `publish = false` on crates.io if
 the supported distribution is solely npm; it need not occupy a crate name.
 

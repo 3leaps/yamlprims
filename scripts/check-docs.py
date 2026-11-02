@@ -15,6 +15,7 @@ REQUIRED = (
     "SECURITY.md",
     "LICENSE-MIT",
     "LICENSE-APACHE",
+    "NOTICE",
     "SPEC_VERSION",
     "RELEASE_NOTES.md",
     "docs/spec/LICENSE",

@@ -5,8 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "Command-line consumer of the yamlprims YAML core"
 readme = "README.md"
+build = false
 publish = false
 
 [[bin]]

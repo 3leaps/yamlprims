@@ -1,8 +1,8 @@
 # Open design items before implementation freeze
 
-Status: open design work. Specification revision 1.4 is an unreleased proposal;
+Status: open design work. Specification revision 1.4 is tagged at `spec-v1.4`;
 revision 1.3 and earlier revisions remain available at their immutable tags.
-Proposed rules require review and maintainer acceptance. Neither proposed text
+Neither specification text
 nor specification publication establishes implementation qualification.
 
 ## M1 contract freeze
