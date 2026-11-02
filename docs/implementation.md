@@ -67,20 +67,29 @@ native nesting guards with headroom for the pinned scanner's simple-key
 lookahead. Focused controls cover depth boundaries, native and adapter error
 precedence, coordinates, pass counts and the native resource fallback.
 
-## Revision 1.4 status and implementation gaps
+## Revision 1.4 conformance integration and remaining gaps
 
-Specification revision 1.4 is tagged at `spec-v1.4`. Historical specification tags and conformance pins retain
-their exact bindings. The following areas track revision 1.4 conformance and remaining qualification items:
+The working specification is at revision 1.4 (`spec-v1.4`). Historical
+specification tags (`spec-v1.0` through `spec-v1.4`) and conformance pins
+retain their exact bindings. The pinned conformance baseline at
+`c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99` (`conformance/pins/pin-c8b7421.json`)
+adds the 12 explicit-limit revision 1.4 records (`yamlprims-core-depth128` r1
+and `yamlprims-core-entries2` r1) and synthetic driver controls
+(`conformance/scripts/structcorpus_probes_v14.py`) for the four revision 4
+policy profiles (`yamlprims-core`, `yamlprims-core-stream`,
+`yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key` r4), which carry
+zero shipped corpus records in `c8b7421`:
 
-| Proposed or existing rule | Current gap / required qualification |
+| Revision 1.4 rule | Conformance and unit coverage |
 | --- | --- |
-| Bytes-only anchor registration | Normative totals, binding values, exact registration boundaries/sites and pre-copy witnesses have focused coverage; independent review and integrated revision 1.4 qualification remain open |
-| Combined source depth and bounded validation precedence | Combined event-depth enforcement and finite native headroom have focused source/site, phase-order and instrumentation controls; integrated revision 1.4 qualification remains open |
-| Merged-entry capacity before copy admission | Focused source-validation, shadowing, capacity/copy precedence and instrumentation controls are included; integrated revision 1.4 qualification remains open |
-| Ordinary-entry, copy-tie and completed-key rules | Completed-key weight and NaN admission have focused coverage; review the remaining entry/copy admission timing with isolated and competing-limit tests |
+| Bytes-only anchor registration | Focused unit/integration controls plus `yaml.limits.anchor-registration-bytes-not-nodes` (`yamlprims-core-entries2` r1) |
+| Combined source depth and bounded validation precedence | Focused unit/integration controls plus the six `yamlprims-core-depth128` r1 depth-boundary and alias-subtree records (`depth-127`, `depth-128`, `depth-129`, `alias-125`, `alias-126`, `alias-127`) |
+| Merged-entry capacity before copy admission | Focused unit/integration controls plus `yaml.limits.merge-shadowed-fits-entries2` and `yaml.limits.merge-partial-entries-before-copy` (`yamlprims-core-entries2` r1) |
+| Ordinary-entry, copy-tie and completed-key rules | Focused unit/integration controls plus `yaml.limits.ordinary-entry-before-value-nodes` and the two completed-key NaN precedence records (`nan-key-before-value-nodes`, `nan-key-after-key-owned-bytes`) under `yamlprims-core-entries2` r1 |
 
-This is a gap inventory, not a claim of executed revision 1.4 qualification.
-The revision changes no Rust code, lock, fixture or conformance expectation.
+Passing the pinned conformance gate establishes bounded corpus transfer for
+these 12 records and the historical 61,348-case baseline; it does not close the
+broader M1 release gates below.
 
 ## Remaining gates before API freeze
 
