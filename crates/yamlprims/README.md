@@ -15,10 +15,11 @@ Parsing uses UTF-8 and strict indentation. Merge directives are rejected by
 default. The library performs no I/O or environment expansion. Its engine is
 internal and pinned to granit-parser 2.0.0.
 
-The API is not frozen or published. Remaining work includes depth and synthetic
-tree guarantees, checked construction, error vocabulary, wire decoding and
-production platform/resource qualification. Passing included regressions does
-not establish complete conformance to the
+The API is not frozen or published. The parser syntax taxonomy is closed under
+`SyntaxKind` (`SyntaxKind::ALL`, 81 codes). Remaining work includes synthetic
+caller-tree guarantees, checked construction, wire decoding and production
+platform/resource qualification. Passing included regressions does not establish
+complete conformance to the
 [specification](https://github.com/3leaps/yamlprims/blob/spec-v1.4/docs/spec/yamlprims-spec.md).
 
 Run `cargo test --locked -- --test-threads=1`. Synthetic truth and wire fixtures

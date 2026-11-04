@@ -1889,13 +1889,10 @@ fn encode_error_rechecks_mutated_errors() {
         Some(LimitKind::MaxKeyBytes)
     );
 
-    // syntax_kind must be a snake_case code.
+    // syntax_kind is closed to SyntaxKind::ALL (`[a-z0-9_]{1,64}` by construction).
+    assert!(SyntaxKind::from_code("Not A Code").is_none());
     let mut e = base();
-    e.kind = ErrorKind::Syntax("Not A Code".into());
-    let r = encode_error(&e, &opts()).unwrap_err();
-    assert_eq!(r.kind, ErrorKind::Internal);
-    assert!(not_source(&r));
-    e.kind = ErrorKind::Syntax("unexpected_token".into());
+    e.kind = ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection);
     assert!(encode_error(&e, &opts()).is_ok());
 }
 

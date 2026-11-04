@@ -2,10 +2,19 @@
 id: SecDR-0001
 title: Resource accounting and native boundary controls
 status: proposed
+superseded_in_part_by: ADR-0004
 date: 2026-10-14
 ---
 
 # SecDR-0001: Resource accounting and native boundary controls
+
+> **Note:** The C ABI (`yamlprims-ffi`) and Node-API (`yamlprims-node`) boundary
+> mechanisms in this record are superseded by accepted
+> [ADR-0004](ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md) (`Profile B`
+> pure-Go twin `CGO_ENABLED=0`, isolated `wasm32-unknown-unknown` TypeScript WASM
+> bridge with pre-copy `options_reserve` / `input_reserve` linear-memory bounds,
+> and isolated `PyO3/maturin` `abi3-py310` Python workspace). All resource
+> accounting, zero-I/O, and sensitive-local-data requirements remain in effect.
 
 ## Decision
 

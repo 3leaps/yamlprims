@@ -320,7 +320,7 @@ fn utf8_safe_truncation_with_marker() {
 #[test]
 fn exact_encoded_length_boundary() {
     let mut e = Error::new(
-        ErrorKind::Syntax("unexpected_token".into()),
+        ErrorKind::Syntax(SyntaxKind::UnexpectedEof),
         Site::Source(Location {
             byte_offset: 9,
             line: 2,
@@ -385,9 +385,9 @@ fn detail_follows_current_kind() {
             serde_json::json!({"field": "f"}),
         ),
         (
-            ErrorKind::Syntax("bad_indent".into()),
+            ErrorKind::Syntax(SyntaxKind::InvalidIndentation),
             "syntax",
-            serde_json::json!({"syntax_kind": "bad_indent"}),
+            serde_json::json!({"syntax_kind": "invalid_indentation"}),
         ),
         (
             ErrorKind::InvalidUtf8 { invalid_len: None },
@@ -407,13 +407,23 @@ fn detail_follows_current_kind() {
     }
 }
 
-/// `syntax_kind` shape: 1–64 bytes of `[a-z0-9_]`; anything else is `Internal`.
+/// `syntax_kind` shape: `ErrorKind::Syntax(SyntaxKind)` guarantees 1–64 bytes of
+/// `[a-z0-9_]` by construction (`spec-v1.4` §7.1, §11.1), while `SyntaxKind::from_code`
+/// rejects unknown or ill-formed codes.
 #[test]
 fn syntax_code_shape() {
     let mut e = base();
-    for ok in ["a", "0", "_", "unexpected_token", &"a".repeat(64), "x9_"] {
-        e.kind = ErrorKind::Syntax(ok.into());
-        assert!(encode_error(&e, &opts()).is_ok(), "{ok:?}");
+    for &sk in SyntaxKind::ALL {
+        let code = sk.as_str();
+        assert!(!code.is_empty() && code.len() <= 64, "{code:?}");
+        assert!(
+            code.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+            "{code:?}"
+        );
+        e.kind = ErrorKind::Syntax(sk);
+        let w = json(&encode_error(&e, &opts()).unwrap());
+        assert_eq!(w["error"]["detail"]["syntax_kind"], code);
     }
     for bad in [
         "",
@@ -425,9 +435,9 @@ fn syntax_code_shape() {
         "a\n",
         "a.b",
         "\u{0}",
+        "unexpected_token",
     ] {
-        e.kind = ErrorKind::Syntax(bad.into());
-        rejected(encode_error(&e, &opts()), ErrorKind::Internal);
+        assert!(SyntaxKind::from_code(bad).is_none(), "{bad:?}");
     }
 }
 

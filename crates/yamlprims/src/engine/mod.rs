@@ -2,7 +2,7 @@
 //! Scalar text retains its borrowed/owned storage without copying it.
 use crate::budget::limit_err;
 use crate::error::internal;
-use crate::error::{Error, ErrorKind, LimitKind};
+use crate::error::{Error, ErrorKind, LimitKind, SyntaxKind};
 use crate::options::Options;
 use crate::resolve::TagClass;
 use crate::value::{Location, Span, Tag};
@@ -73,25 +73,114 @@ fn classify(tag: Option<&GTag>) -> TagClass {
     })
 }
 
-/// granit error kind name in snake_case.
-fn syntax_name(e: &ScanError) -> String {
-    let dbg = format!("{:?}", e.kind());
-    let name: String = dbg
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric())
-        .collect();
-    let mut out = String::new();
-    for (i, c) in name.chars().enumerate() {
-        if c.is_ascii_uppercase() {
-            if i > 0 {
-                out.push('_');
-            }
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
+/// Map a backend grammar/scanner error kind to a closed [`SyntaxKind`] member.
+/// Returns `None` for non-syntax terminal translations and non-`StrInput` adapter errors.
+pub(crate) fn syntax_kind(kind: &granit_parser::ErrorKind) -> Option<SyntaxKind> {
+    use granit_parser::ErrorKind as G;
+    match kind {
+        G::UnexpectedEofFlowSequence => Some(SyntaxKind::UnexpectedEofFlowSequence),
+        G::UnexpectedEofFlowMapping => Some(SyntaxKind::UnexpectedEofFlowMapping),
+        G::UnexpectedEofImplicitFlowMapping => Some(SyntaxKind::UnexpectedEofImplicitFlowMapping),
+        G::UnexpectedEofBlockSequence => Some(SyntaxKind::UnexpectedEofBlockSequence),
+        G::UnexpectedEofBlockMapping => Some(SyntaxKind::UnexpectedEofBlockMapping),
+        G::UnexpectedEof => Some(SyntaxKind::UnexpectedEof),
+        G::ExpectedStreamStart => Some(SyntaxKind::ExpectedStreamStart),
+        G::DuplicateVersionDirective => Some(SyntaxKind::DuplicateVersionDirective),
+        G::DuplicateTagDirective => Some(SyntaxKind::DuplicateTagDirective),
+        G::ExpectedDocumentStart => Some(SyntaxKind::ExpectedDocumentStart),
+        G::MissingDocumentEndBeforeDirective => Some(SyntaxKind::MissingDocumentEndBeforeDirective),
+        G::AnchorCountOverflow => Some(SyntaxKind::AnchorCountOverflow),
+        G::ExpectedNodeContent => Some(SyntaxKind::ExpectedNodeContent),
+        G::ExpectedBlockMappingKey => Some(SyntaxKind::ExpectedBlockMappingKey),
+        G::ExpectedFlowMappingSeparator => Some(SyntaxKind::ExpectedFlowMappingSeparator),
+        G::ExpectedFlowSequenceSeparator => Some(SyntaxKind::ExpectedFlowSequenceSeparator),
+        G::ExpectedBlockSequenceEntry => Some(SyntaxKind::ExpectedBlockSequenceEntry),
+        G::UndeclaredTagHandle => Some(SyntaxKind::UndeclaredTagHandle),
+        G::ExpectedTagBang => Some(SyntaxKind::ExpectedTagBang),
+        G::ExpectedTagDirectiveBang => Some(SyntaxKind::ExpectedTagDirectiveBang),
+        G::InvalidGlobalTagCharacter => Some(SyntaxKind::InvalidGlobalTagCharacter),
+        G::SimpleKeyExpected => Some(SyntaxKind::SimpleKeyExpected),
+        G::InvalidSimpleKey => Some(SyntaxKind::InvalidSimpleKey),
+        G::InvalidDocumentEnd => Some(SyntaxKind::InvalidDocumentEnd),
+        G::InvalidIndentation => Some(SyntaxKind::InvalidIndentation),
+        G::BomInsideDocument => Some(SyntaxKind::BomInsideDocument),
+        G::UnexpectedCharacter { .. } => Some(SyntaxKind::UnexpectedCharacter),
+        G::TabNotAllowed => Some(SyntaxKind::TabNotAllowed),
+        G::TabInBlockIndentation => Some(SyntaxKind::TabInBlockIndentation),
+        G::CommentInterceptedScalar => Some(SyntaxKind::CommentInterceptedScalar),
+        G::ExpectedWhitespace => Some(SyntaxKind::ExpectedWhitespace),
+        G::CommentNotSeparated => Some(SyntaxKind::CommentNotSeparated),
+        G::InvalidDirectiveTerminator => Some(SyntaxKind::InvalidDirectiveTerminator),
+        G::MissingYamlVersionSeparator => Some(SyntaxKind::MissingYamlVersionSeparator),
+        G::MissingDirectiveName => Some(SyntaxKind::MissingDirectiveName),
+        G::InvalidDirectiveName => Some(SyntaxKind::InvalidDirectiveName),
+        G::DirectiveByteLimitExceeded { .. } => Some(SyntaxKind::DirectiveByteLimitExceeded),
+        G::TooManyReservedDirectiveParams { .. } => {
+            Some(SyntaxKind::TooManyReservedDirectiveParams)
         }
+        G::YamlVersionTooLong => Some(SyntaxKind::YamlVersionTooLong),
+        G::MissingYamlVersion => Some(SyntaxKind::MissingYamlVersion),
+        G::InvalidTagDirectiveTerminator => Some(SyntaxKind::InvalidTagDirectiveTerminator),
+        G::InvalidTagTerminator => Some(SyntaxKind::InvalidTagTerminator),
+        G::MissingTagUri => Some(SyntaxKind::MissingTagUri),
+        G::UnclosedVerbatimTag => Some(SyntaxKind::UnclosedVerbatimTag),
+        G::InvalidTagEscape => Some(SyntaxKind::InvalidTagEscape),
+        G::InvalidTagUtf8LeadingByte => Some(SyntaxKind::InvalidTagUtf8LeadingByte),
+        G::InvalidTagUtf8TrailingByte => Some(SyntaxKind::InvalidTagUtf8TrailingByte),
+        G::InvalidTagUtf8 => Some(SyntaxKind::InvalidTagUtf8),
+        G::MissingAnchorOrAliasName => Some(SyntaxKind::MissingAnchorOrAliasName),
+        G::MisplacedFlowCollectionEnd => Some(SyntaxKind::MisplacedFlowCollectionEnd),
+        G::MismatchedFlowCollectionEnd { .. } => Some(SyntaxKind::MismatchedFlowCollectionEnd),
+        G::UnclosedFlowCollection { .. } => Some(SyntaxKind::UnclosedFlowCollection),
+        G::BlockEntryInFlowCollection => Some(SyntaxKind::BlockEntryInFlowCollection),
+        G::BlockSequenceEntryNotAllowed => Some(SyntaxKind::BlockSequenceEntryNotAllowed),
+        G::InvalidBlockEntryWhitespace => Some(SyntaxKind::InvalidBlockEntryWhitespace),
+        G::ZeroBlockScalarIndent => Some(SyntaxKind::ZeroBlockScalarIndent),
+        G::InvalidBlockScalarHeader => Some(SyntaxKind::InvalidBlockScalarHeader),
+        G::TabAtBlockScalarStart => Some(SyntaxKind::TabAtBlockScalarStart),
+        G::InvalidBlockScalarIndent => Some(SyntaxKind::InvalidBlockScalarIndent),
+        G::DocumentIndicatorInQuotedScalar => Some(SyntaxKind::DocumentIndicatorInQuotedScalar),
+        G::UnclosedQuotedScalar => Some(SyntaxKind::UnclosedQuotedScalar),
+        G::TabInIndentation => Some(SyntaxKind::TabInIndentation),
+        G::InvalidQuotedScalarIndent => Some(SyntaxKind::InvalidQuotedScalarIndent),
+        G::InvalidTrailingSingleQuotedScalar => Some(SyntaxKind::InvalidTrailingSingleQuotedScalar),
+        G::InvalidTrailingDoubleQuotedScalar => Some(SyntaxKind::InvalidTrailingDoubleQuotedScalar),
+        G::UnknownQuotedScalarEscape => Some(SyntaxKind::UnknownQuotedScalarEscape),
+        G::InvalidQuotedScalarHexEscape => Some(SyntaxKind::InvalidQuotedScalarHexEscape),
+        G::InvalidLowSurrogateHexEscape => Some(SyntaxKind::InvalidLowSurrogateHexEscape),
+        G::InvalidLowSurrogate => Some(SyntaxKind::InvalidLowSurrogate),
+        G::MissingLowSurrogate => Some(SyntaxKind::MissingLowSurrogate),
+        G::UnpairedLowSurrogate => Some(SyntaxKind::UnpairedLowSurrogate),
+        G::InvalidUnicodeEscape => Some(SyntaxKind::InvalidUnicodeEscape),
+        G::InvalidFlowScalarIndent => Some(SyntaxKind::InvalidFlowScalarIndent),
+        G::PlainScalarStartsWithDashFlowIndicator => {
+            Some(SyntaxKind::PlainScalarStartsWithDashFlowIndicator)
+        }
+        G::TabInPlainScalar => Some(SyntaxKind::TabInPlainScalar),
+        G::UnexpectedEndOfPlainScalar => Some(SyntaxKind::UnexpectedEndOfPlainScalar),
+        G::MappingKeyNotAllowed => Some(SyntaxKind::MappingKeyNotAllowed),
+        G::FlowMappingValueAdjacentCollection => {
+            Some(SyntaxKind::FlowMappingValueAdjacentCollection)
+        }
+        G::InvalidMappingValueWhitespace => Some(SyntaxKind::InvalidMappingValueWhitespace),
+        G::InvalidColonPlacement => Some(SyntaxKind::InvalidColonPlacement),
+        G::MappingValueNotAllowed => Some(SyntaxKind::MappingValueNotAllowed),
+        G::UnknownAnchor
+        | G::UnsupportedYamlMajorVersion
+        | G::RecursionLimitExceeded
+        | G::InputIo { .. }
+        | G::InputDecoding { .. }
+        | G::InputByteLimitExceeded { .. }
+        | G::MissingIncludeResolver
+        | G::Custom(_)
+        | G::MultipleDocumentsUnsupported
+        | G::InputOffsetsWithoutSlice
+        | G::InputSlicingUnavailable => None,
+        // granit_parser::ErrorKind is #[non_exhaustive] (and gates TooManyComments
+        // behind the disabled `comments` feature). Any bump of the `granit-parser =2.0.0`
+        // pin requires re-auditing all variants against `SyntaxKind::ALL`.
+        _ => None,
     }
-    out
 }
 
 pub(crate) struct Engine<'a> {
@@ -143,20 +232,23 @@ impl<'a> Engine<'a> {
         };
         let detail = e.info();
         let mut err = match e.kind() {
-            G::UnknownAnchor { .. } => Error::at(ErrorKind::UnknownAnchor, loc, "unknown anchor"),
-            G::UnsupportedYamlMajorVersion { .. } => Error::at(
+            G::UnknownAnchor => Error::at(ErrorKind::UnknownAnchor, loc, "unknown anchor"),
+            G::UnsupportedYamlMajorVersion => Error::at(
                 ErrorKind::UnsupportedYamlVersion,
                 loc,
                 "unsupported YAML version",
             ),
-            G::RecursionLimitExceeded { .. } => {
+            G::RecursionLimitExceeded => {
                 limit_err(LimitKind::MaxDepth, self.opts.limits.max_depth, loc)
             }
-            _ => Error::at(
-                ErrorKind::Syntax(syntax_name(&e)),
-                loc,
-                format!("syntax error: {detail}"),
-            ),
+            other => match syntax_kind(other) {
+                Some(sk) => Error::at(
+                    ErrorKind::Syntax(sk),
+                    loc,
+                    format!("syntax error: {detail}"),
+                ),
+                None => return internal("unexpected engine adapter error"),
+            },
         };
         err.engine_detail = Some(detail);
         err
@@ -495,6 +587,291 @@ mod validation_tests {
                 );
                 assert!(error.engine_detail.is_some());
             }
+        }
+    }
+
+    #[test]
+    fn closed_syntax_kind_vocabulary_and_engine_mapping() {
+        use granit_parser::{ErrorKind as G, InputIoError};
+        use std::collections::BTreeSet;
+
+        assert_eq!(SyntaxKind::ALL.len(), 81);
+        let mut seen_codes = BTreeSet::new();
+        for &sk in SyntaxKind::ALL {
+            let code = sk.as_str();
+            assert!(!code.is_empty() && code.len() <= 64, "{code}");
+            assert!(
+                code.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+                "{code}"
+            );
+            assert!(seen_codes.insert(code), "duplicate code {code}");
+            assert_eq!(SyntaxKind::from_code(code), Some(sk));
+            assert_eq!(sk.to_string(), code);
+            assert_eq!(String::from(sk), code);
+            assert_eq!(sk, code);
+            assert_eq!(code, sk);
+            let err = Error::at(
+                ErrorKind::syntax(sk),
+                Location {
+                    byte_offset: 0,
+                    line: 1,
+                    column: 1,
+                },
+                "syntax error",
+            );
+            assert_eq!(err.syntax_kind(), Some(sk));
+            assert_eq!(err.kind.syntax_kind(), Some(sk));
+            let wire = crate::encode_error(&err, &Options::default()).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&wire).unwrap();
+            assert_eq!(parsed["error"]["kind"], "syntax");
+            assert_eq!(parsed["error"]["detail"]["syntax_kind"], code);
+        }
+        assert_eq!(SyntaxKind::from_code(""), None);
+        assert_eq!(SyntaxKind::from_code("not_a_registered_syntax_kind"), None);
+
+        let syntax_pairs: &[(G, SyntaxKind)] = &[
+            (
+                G::UnexpectedEofFlowSequence,
+                SyntaxKind::UnexpectedEofFlowSequence,
+            ),
+            (
+                G::UnexpectedEofFlowMapping,
+                SyntaxKind::UnexpectedEofFlowMapping,
+            ),
+            (
+                G::UnexpectedEofImplicitFlowMapping,
+                SyntaxKind::UnexpectedEofImplicitFlowMapping,
+            ),
+            (
+                G::UnexpectedEofBlockSequence,
+                SyntaxKind::UnexpectedEofBlockSequence,
+            ),
+            (
+                G::UnexpectedEofBlockMapping,
+                SyntaxKind::UnexpectedEofBlockMapping,
+            ),
+            (G::UnexpectedEof, SyntaxKind::UnexpectedEof),
+            (G::ExpectedStreamStart, SyntaxKind::ExpectedStreamStart),
+            (
+                G::DuplicateVersionDirective,
+                SyntaxKind::DuplicateVersionDirective,
+            ),
+            (G::DuplicateTagDirective, SyntaxKind::DuplicateTagDirective),
+            (G::ExpectedDocumentStart, SyntaxKind::ExpectedDocumentStart),
+            (
+                G::MissingDocumentEndBeforeDirective,
+                SyntaxKind::MissingDocumentEndBeforeDirective,
+            ),
+            (G::AnchorCountOverflow, SyntaxKind::AnchorCountOverflow),
+            (G::ExpectedNodeContent, SyntaxKind::ExpectedNodeContent),
+            (
+                G::ExpectedBlockMappingKey,
+                SyntaxKind::ExpectedBlockMappingKey,
+            ),
+            (
+                G::ExpectedFlowMappingSeparator,
+                SyntaxKind::ExpectedFlowMappingSeparator,
+            ),
+            (
+                G::ExpectedFlowSequenceSeparator,
+                SyntaxKind::ExpectedFlowSequenceSeparator,
+            ),
+            (
+                G::ExpectedBlockSequenceEntry,
+                SyntaxKind::ExpectedBlockSequenceEntry,
+            ),
+            (G::UndeclaredTagHandle, SyntaxKind::UndeclaredTagHandle),
+            (G::ExpectedTagBang, SyntaxKind::ExpectedTagBang),
+            (
+                G::ExpectedTagDirectiveBang,
+                SyntaxKind::ExpectedTagDirectiveBang,
+            ),
+            (
+                G::InvalidGlobalTagCharacter,
+                SyntaxKind::InvalidGlobalTagCharacter,
+            ),
+            (G::SimpleKeyExpected, SyntaxKind::SimpleKeyExpected),
+            (G::InvalidSimpleKey, SyntaxKind::InvalidSimpleKey),
+            (G::InvalidDocumentEnd, SyntaxKind::InvalidDocumentEnd),
+            (G::InvalidIndentation, SyntaxKind::InvalidIndentation),
+            (G::BomInsideDocument, SyntaxKind::BomInsideDocument),
+            (
+                G::UnexpectedCharacter { character: '@' },
+                SyntaxKind::UnexpectedCharacter,
+            ),
+            (G::TabNotAllowed, SyntaxKind::TabNotAllowed),
+            (G::TabInBlockIndentation, SyntaxKind::TabInBlockIndentation),
+            (
+                G::CommentInterceptedScalar,
+                SyntaxKind::CommentInterceptedScalar,
+            ),
+            (G::ExpectedWhitespace, SyntaxKind::ExpectedWhitespace),
+            (G::CommentNotSeparated, SyntaxKind::CommentNotSeparated),
+            (
+                G::InvalidDirectiveTerminator,
+                SyntaxKind::InvalidDirectiveTerminator,
+            ),
+            (
+                G::MissingYamlVersionSeparator,
+                SyntaxKind::MissingYamlVersionSeparator,
+            ),
+            (G::MissingDirectiveName, SyntaxKind::MissingDirectiveName),
+            (G::InvalidDirectiveName, SyntaxKind::InvalidDirectiveName),
+            (
+                G::DirectiveByteLimitExceeded { limit: 64 },
+                SyntaxKind::DirectiveByteLimitExceeded,
+            ),
+            (
+                G::TooManyReservedDirectiveParams { limit: 8 },
+                SyntaxKind::TooManyReservedDirectiveParams,
+            ),
+            (G::YamlVersionTooLong, SyntaxKind::YamlVersionTooLong),
+            (G::MissingYamlVersion, SyntaxKind::MissingYamlVersion),
+            (
+                G::InvalidTagDirectiveTerminator,
+                SyntaxKind::InvalidTagDirectiveTerminator,
+            ),
+            (G::InvalidTagTerminator, SyntaxKind::InvalidTagTerminator),
+            (G::MissingTagUri, SyntaxKind::MissingTagUri),
+            (G::UnclosedVerbatimTag, SyntaxKind::UnclosedVerbatimTag),
+            (G::InvalidTagEscape, SyntaxKind::InvalidTagEscape),
+            (
+                G::InvalidTagUtf8LeadingByte,
+                SyntaxKind::InvalidTagUtf8LeadingByte,
+            ),
+            (
+                G::InvalidTagUtf8TrailingByte,
+                SyntaxKind::InvalidTagUtf8TrailingByte,
+            ),
+            (G::InvalidTagUtf8, SyntaxKind::InvalidTagUtf8),
+            (
+                G::MissingAnchorOrAliasName,
+                SyntaxKind::MissingAnchorOrAliasName,
+            ),
+            (
+                G::MisplacedFlowCollectionEnd,
+                SyntaxKind::MisplacedFlowCollectionEnd,
+            ),
+            (
+                G::MismatchedFlowCollectionEnd {
+                    open: '[',
+                    close: '}',
+                },
+                SyntaxKind::MismatchedFlowCollectionEnd,
+            ),
+            (
+                G::UnclosedFlowCollection { open: '[' },
+                SyntaxKind::UnclosedFlowCollection,
+            ),
+            (
+                G::BlockEntryInFlowCollection,
+                SyntaxKind::BlockEntryInFlowCollection,
+            ),
+            (
+                G::BlockSequenceEntryNotAllowed,
+                SyntaxKind::BlockSequenceEntryNotAllowed,
+            ),
+            (
+                G::InvalidBlockEntryWhitespace,
+                SyntaxKind::InvalidBlockEntryWhitespace,
+            ),
+            (G::ZeroBlockScalarIndent, SyntaxKind::ZeroBlockScalarIndent),
+            (
+                G::InvalidBlockScalarHeader,
+                SyntaxKind::InvalidBlockScalarHeader,
+            ),
+            (G::TabAtBlockScalarStart, SyntaxKind::TabAtBlockScalarStart),
+            (
+                G::InvalidBlockScalarIndent,
+                SyntaxKind::InvalidBlockScalarIndent,
+            ),
+            (
+                G::DocumentIndicatorInQuotedScalar,
+                SyntaxKind::DocumentIndicatorInQuotedScalar,
+            ),
+            (G::UnclosedQuotedScalar, SyntaxKind::UnclosedQuotedScalar),
+            (G::TabInIndentation, SyntaxKind::TabInIndentation),
+            (
+                G::InvalidQuotedScalarIndent,
+                SyntaxKind::InvalidQuotedScalarIndent,
+            ),
+            (
+                G::InvalidTrailingSingleQuotedScalar,
+                SyntaxKind::InvalidTrailingSingleQuotedScalar,
+            ),
+            (
+                G::InvalidTrailingDoubleQuotedScalar,
+                SyntaxKind::InvalidTrailingDoubleQuotedScalar,
+            ),
+            (
+                G::UnknownQuotedScalarEscape,
+                SyntaxKind::UnknownQuotedScalarEscape,
+            ),
+            (
+                G::InvalidQuotedScalarHexEscape,
+                SyntaxKind::InvalidQuotedScalarHexEscape,
+            ),
+            (
+                G::InvalidLowSurrogateHexEscape,
+                SyntaxKind::InvalidLowSurrogateHexEscape,
+            ),
+            (G::InvalidLowSurrogate, SyntaxKind::InvalidLowSurrogate),
+            (G::MissingLowSurrogate, SyntaxKind::MissingLowSurrogate),
+            (G::UnpairedLowSurrogate, SyntaxKind::UnpairedLowSurrogate),
+            (G::InvalidUnicodeEscape, SyntaxKind::InvalidUnicodeEscape),
+            (
+                G::InvalidFlowScalarIndent,
+                SyntaxKind::InvalidFlowScalarIndent,
+            ),
+            (
+                G::PlainScalarStartsWithDashFlowIndicator,
+                SyntaxKind::PlainScalarStartsWithDashFlowIndicator,
+            ),
+            (G::TabInPlainScalar, SyntaxKind::TabInPlainScalar),
+            (
+                G::UnexpectedEndOfPlainScalar,
+                SyntaxKind::UnexpectedEndOfPlainScalar,
+            ),
+            (G::MappingKeyNotAllowed, SyntaxKind::MappingKeyNotAllowed),
+            (
+                G::FlowMappingValueAdjacentCollection,
+                SyntaxKind::FlowMappingValueAdjacentCollection,
+            ),
+            (
+                G::InvalidMappingValueWhitespace,
+                SyntaxKind::InvalidMappingValueWhitespace,
+            ),
+            (G::InvalidColonPlacement, SyntaxKind::InvalidColonPlacement),
+            (
+                G::MappingValueNotAllowed,
+                SyntaxKind::MappingValueNotAllowed,
+            ),
+        ];
+        assert_eq!(syntax_pairs.len(), SyntaxKind::ALL.len());
+        for (idx, (g, expected)) in syntax_pairs.iter().enumerate() {
+            assert_eq!(SyntaxKind::ALL[idx], *expected);
+            assert_eq!(syntax_kind(g), Some(*expected));
+        }
+
+        for non_syntax in [
+            G::UnknownAnchor,
+            G::UnsupportedYamlMajorVersion,
+            G::RecursionLimitExceeded,
+            G::InputIo {
+                error: InputIoError::from_message("io"),
+            },
+            G::InputDecoding {
+                message: "utf8".into(),
+            },
+            G::InputByteLimitExceeded { limit: 1 },
+            G::MissingIncludeResolver,
+            G::Custom("custom".into()),
+            G::MultipleDocumentsUnsupported,
+            G::InputOffsetsWithoutSlice,
+            G::InputSlicingUnavailable,
+        ] {
+            assert_eq!(syntax_kind(&non_syntax), None);
         }
     }
 }

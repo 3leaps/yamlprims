@@ -11,12 +11,15 @@ source spans, typed Serde conversion, canonical wire/error encoding and plain
 JSON projection. The core forbids unsafe code and performs no filesystem,
 environment or network access. Granit-parser 2.0.0 is the internal engine.
 
-The engine adapter translates backend events, styles, tags and locations into
-private internal types. The iterative builder owns tree construction, anchor
-lifecycle, merges and node-span normalization; a separate budget module owns
-cumulative logical charges and copy metrics. Raw input admission remains ahead
-of parsing. Production parsing is strict-only in both passes. Compatibility
-experiments are outside the package; no lenient feature is exported.
+The engine adapter translates backend events, styles, tags, locations and
+scanner/parser syntax errors (`ErrorKind::Syntax(SyntaxKind)`, `SyntaxKind::ALL`,
+81 closed syntax codes mapped explicitly without `Debug`-name reflection) into
+owned types. The iterative
+builder owns tree construction, anchor lifecycle, merges and node-span
+normalization; a separate budget module owns cumulative logical charges and copy
+metrics. Raw input admission remains ahead of parsing. Production parsing is
+strict-only in both passes. Compatibility experiments are outside the package;
+no lenient feature is exported.
 
 Included validation covers contract regressions, revision 1.2/1.3 additions,
 truth tables, wire snapshots, Error compile probes and parser-created trees on
@@ -98,8 +101,9 @@ broader M1 release gates below.
   equality, formatting and conversion. New caller-tree guarantees are deferred.
 - Every open M1 item in [the design review](design-review.md): error precedence,
   construction-time error bounds, anchor-cache accounting, checked construction,
-  closed syntax vocabulary, wire decoding, metadata ranges, enum source-style
-  handling and nested provenance.
+  wire decoding, metadata ranges, enum source-style handling and nested provenance
+  (the closed 81-code `SyntaxKind` parser vocabulary is implemented and unit-tested
+  in `crates/yamlprims`).
 - A contract-to-test matrix for every implemented MUST and reviewed disposition
   of uncovered cases. Existing passing tests do not settle those design questions.
 - Independent review and freeze of CLI behavior: stdin, cardinality, I/O limits,
@@ -113,7 +117,11 @@ five-target MSRV/stable matrix, contained stress with original resource budgets,
 bounded fuzz/mutation/Miri, phase-specific memory/time measurements, dependency
 and license audit, and package/downstream qualification. Logical weight limits
 are not RSS limits. The current Rust workflow is baseline coverage on Linux;
-documentation CI is not runtime qualification. Bindings have separate M2 gates.
+documentation CI is not runtime qualification. The planned M1 `Profile B` pure-Go
+twin (`yaml/` in root `go.mod`, `CGO_ENABLED=0`, standard library only) and M2
+language bindings (`bindings/typescript/` WASM and `bindings/python/` `PyO3/maturin`)
+have separate conformance and crosscheck gates
+([build specification](build-spec.md), [ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
 
 The working specification is a new draft; tagged specifications remain at their
 immutable baselines. Historical draft-status prose inside those tags does not
