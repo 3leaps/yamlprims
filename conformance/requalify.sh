@@ -4,11 +4,26 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 prefix_only=false
-if [ "${1:-}" = --prefix-only ]; then
+pin="$root/conformance/pins/pin-c8b7421.json"
+if [ "${1:-}" = --prefix-only ] && [ "$#" -eq 1 ]; then
   prefix_only=true
-elif [ "$#" -ne 3 ]; then
-  echo "usage: bash conformance/requalify.sh CORPUS HYDRATED OUTPUT_DIR" >&2
-  exit 2
+else
+  if [ "${1:-}" = --pin ]; then
+    if [ "$#" -lt 2 ] || [ -z "${2:-}" ]; then
+      echo "usage: bash conformance/requalify.sh [--pin PIN.json] CORPUS HYDRATED OUTPUT_DIR" >&2
+      exit 2
+    fi
+    pin=$2
+    shift 2
+  fi
+  if [ "$#" -ne 3 ]; then
+    echo "usage: bash conformance/requalify.sh [--pin PIN.json] CORPUS HYDRATED OUTPUT_DIR" >&2
+    exit 2
+  fi
+  if [ ! -f "$pin" ]; then
+    echo "pin file does not exist: $pin" >&2
+    exit 2
+  fi
 fi
 
 cargo +1.89.0 test --locked --workspace -- --test-threads=1
@@ -31,9 +46,11 @@ if out == root or root in out.parents:
 out.mkdir(parents=True, exist_ok=False)
 PY
 driver="${CARGO_TARGET_DIR:-$root/target}/release/examples/structcorpus"
-pin="$root/conformance/pins/pin-400ae34.json"
 "$python" -I conformance/scripts/structcorpus_gate.py "$pin" "$hydrated" "$corpus" "$driver" --record "$out/gate.json"
 "$python" -I conformance/scripts/structcorpus_probes_v13.py "$corpus" "$driver" > "$out/probes-v13.tsv"
+if [ -f "$corpus/manifests/profiles/yamlprims-core-depth128.r1.json" ]; then
+  "$python" -I conformance/scripts/structcorpus_probes_v14.py "$corpus" "$driver" > "$out/probes-v14.tsv"
+fi
 "$python" -I conformance/scripts/structcorpus_gate_probes.py "$pin" "$hydrated" "$corpus" "$driver" > "$out/gate-probes.tsv"
 "$python" -I conformance/scripts/node_selectors.py "$corpus" "$driver" "$out/selectors.json"
 echo "Pinned conformance gate and driver controls passed."

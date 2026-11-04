@@ -13,15 +13,18 @@
 //! profile file used is read from `SOURCE_DIR/manifests/profiles/` and its `policy` must
 //! equal the policy this driver implements for it, so a changed or unknown profile fails
 //! rather than running under the wrong options. A profile with explicit `limits`
-//! (`yamlprims-core-limits`, `yamlprims-core-stress`) runs with exactly those twelve §6
-//! limits; the driver requires all twelve names and no others, and the values must pass
-//! `Options::validate`. A profile without `limits` runs with the defaults.
+//! (`yamlprims-core-limits`, `yamlprims-core-stress`, `yamlprims-core-depth128`,
+//! `yamlprims-core-entries2`) runs with exactly those twelve §6 limits; the driver requires
+//! all twelve names and no others, and the values must pass `Options::validate`. A profile
+//! without `limits` runs with the defaults.
 //!
 //! Row status:
-//! - `target`: revision 3 profiles, `yamlprims-core-limits` r2 and `yamlprims-core-stress` r1
-//!   cite spec 1.3; revision 2 profiles and `yamlprims-core-limits` r1 cite spec 1.1. The
-//!   candidate implements 1.3, which restates 1.1 apart from the anchors, values and input
-//!   rules that only 1.3-bound records carry (profile bindings).
+//! - `target`: revision 4 policy profiles, `yamlprims-core-depth128` r1 and
+//!   `yamlprims-core-entries2` r1 cite spec 1.4; revision 3 profiles,
+//!   `yamlprims-core-limits` r2 and `yamlprims-core-stress` r1 cite spec 1.3; revision 2
+//!   profiles and `yamlprims-core-limits` r1 cite spec 1.1. The candidate implements 1.4,
+//!   which restates 1.3 and 1.1 apart from the profile-bound records that exercise the newer
+//!   revisions.
 //! - `historical`: revision 1 profiles cite spec 1.0 (lenient flow indentation). The driver
 //!   runs them under the current strict target: they are historical expectations checked
 //!   against the candidate, not a qualified 1.0 configuration.
@@ -208,6 +211,55 @@ fn profiles() -> Vec<Profile> {
             "reject",
             true,
         ),
+        // Spec 1.4 (DDR-0010, DDR-0011).
+        p(
+            "yamlprims-core",
+            4,
+            "target",
+            MergeKeys::Reject,
+            "reject",
+            true,
+        ),
+        p(
+            "yamlprims-core-stream",
+            4,
+            "target",
+            MergeKeys::Reject,
+            "reject",
+            false,
+        ),
+        p(
+            "yamlprims-core-merge-apply",
+            4,
+            "target",
+            MergeKeys::Apply,
+            "apply",
+            true,
+        ),
+        p(
+            "yamlprims-core-merge-as-key",
+            4,
+            "target",
+            MergeKeys::AsKey,
+            "plain-key",
+            true,
+        ),
+        p(
+            "yamlprims-core-depth128",
+            1,
+            "target",
+            MergeKeys::Reject,
+            "reject",
+            true,
+        ),
+        p(
+            "yamlprims-core-entries2",
+            1,
+            "target",
+            MergeKeys::Reject,
+            "reject",
+            true,
+        ),
     ]
 }
 
@@ -222,7 +274,12 @@ const SPEC_1_3: &[(&str, u64)] = &[
 ];
 
 /// Profiles whose file carries exactly the twelve §6 limits.
-const LIMITS_PROFILES: &[&str] = &["yamlprims-core-limits", "yamlprims-core-stress"];
+const LIMITS_PROFILES: &[&str] = &[
+    "yamlprims-core-limits",
+    "yamlprims-core-stress",
+    "yamlprims-core-depth128",
+    "yamlprims-core-entries2",
+];
 
 /// The only profiles the driver may skip, and why (the reason is for readers of this table).
 const EXCLUDED: &[(&str, u64, &str)] = &[(
@@ -280,7 +337,7 @@ fn main() -> ExitCode {
         .enumerate()
         .filter(|(_, l)| !l.trim().is_empty())
     {
-        let case: J = match serde_json::from_str(line) {
+        let case: J = match parse_json(line) {
             Ok(c) => c,
             Err(e) => {
                 problems.push(format!("case line {}: {e}", n + 1));
@@ -526,6 +583,120 @@ fn main() -> ExitCode {
         println!("result\tFAIL\t{} problems", problems.len());
         ExitCode::FAILURE
     }
+}
+
+/// Parse a JSON record, allowing up to 512 levels of container nesting so 128-deep
+/// `yaml-value/1` expectations in `yamlprims-core-depth128` r1 do not trip `serde_json`'s
+/// default 128-level deserializer recursion cap.
+fn parse_json(s: &str) -> Result<J, String> {
+    match serde_json::from_str(s) {
+        Ok(v) => Ok(v),
+        Err(e) if e.to_string().contains("recursion limit exceeded") => {
+            let mut rest = trim_json(s);
+            let v = parse_deep_json(&mut rest, 0)?;
+            if !trim_json(rest).is_empty() {
+                return Err("trailing characters after JSON value".into());
+            }
+            Ok(v)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn is_json_ws(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r')
+}
+
+fn trim_json(s: &str) -> &str {
+    s.trim_matches(is_json_ws)
+}
+
+fn trim_json_start(s: &str) -> &str {
+    s.trim_start_matches(is_json_ws)
+}
+
+fn parse_deep_json(s: &mut &str, depth: usize) -> Result<J, String> {
+    if depth > 512 {
+        return Err("JSON nesting exceeds 512".into());
+    }
+    *s = trim_json_start(s);
+    match s.as_bytes().first().copied() {
+        None => Err("unexpected EOF".into()),
+        Some(b'{') => {
+            *s = trim_json_start(&s[1..]);
+            let mut map = serde_json::Map::new();
+            if let Some(after) = s.strip_prefix('}') {
+                *s = after;
+                return Ok(J::Object(map));
+            }
+            loop {
+                let k = parse_json_str(s)?;
+                *s = trim_json_start(s);
+                *s = s.strip_prefix(':').ok_or("expected ':'")?;
+                let v = parse_deep_json(s, depth + 1)?;
+                map.insert(k, v);
+                *s = trim_json_start(s);
+                if let Some(after) = s.strip_prefix(',') {
+                    *s = trim_json_start(after);
+                } else if let Some(after) = s.strip_prefix('}') {
+                    *s = after;
+                    return Ok(J::Object(map));
+                } else {
+                    return Err("expected ',' or '}'".into());
+                }
+            }
+        }
+        Some(b'[') => {
+            *s = trim_json_start(&s[1..]);
+            let mut items = Vec::new();
+            if let Some(after) = s.strip_prefix(']') {
+                *s = after;
+                return Ok(J::Array(items));
+            }
+            loop {
+                items.push(parse_deep_json(s, depth + 1)?);
+                *s = trim_json_start(s);
+                if let Some(after) = s.strip_prefix(',') {
+                    *s = trim_json_start(after);
+                } else if let Some(after) = s.strip_prefix(']') {
+                    *s = after;
+                    return Ok(J::Array(items));
+                } else {
+                    return Err("expected ',' or ']'".into());
+                }
+            }
+        }
+        Some(b'"') => parse_json_str(s).map(J::String),
+        Some(_) => {
+            let end = s
+                .find(|c: char| matches!(c, ',' | ']' | '}' | ' ' | '\t' | '\n' | '\r'))
+                .unwrap_or(s.len());
+            let (tok, rest) = s.split_at(end);
+            *s = rest;
+            serde_json::from_str(tok).map_err(|e| e.to_string())
+        }
+    }
+}
+
+fn parse_json_str(s: &mut &str) -> Result<String, String> {
+    *s = trim_json_start(s);
+    if !s.starts_with('"') {
+        return Err("expected string".into());
+    }
+    let bytes = s.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'"' => {
+                let (tok, rest) = s.split_at(i + 1);
+                *s = rest;
+                return serde_json::from_str(tok).map_err(|e| e.to_string());
+            }
+            _ => i += 1,
+        }
+    }
+    Err("unterminated string".into())
 }
 
 /// The profile file must exist and its `policy` must be exactly what the driver implements.
