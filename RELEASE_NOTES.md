@@ -1,4 +1,6 @@
-# spec-v1.4 — unreleased specification draft
+# spec-v1.4 — tagged draft specification
+
+Revision 1.4 is available at the signed `spec-v1.4` tag.
 
 - `1.4/E-1`: source collection levels, completed-subtree height and alias
   placement, including final post-merge metrics and preserved source charges.
@@ -10,21 +12,21 @@
 - `1.4/E-4`: the existing error-key nesting metric named separately from loader
   collection height, without changing encoder preflight expectations.
 
-These are proposed contracts pending review and maintainer acceptance. New
-caller-tree APIs and general stack-safety guarantees are deferred. CLI freeze
+New caller-tree APIs and general stack-safety guarantees are deferred. CLI freeze
 and the other open M1 items remain separate.
 
-The signed `spec-v1.3` tag and earlier tags remain immutable. New expectations
+The signed `spec-v1.4` tag and earlier tags (`spec-v1.0` through `spec-v1.3`) remain immutable. New expectations
 require their own specification/profile pins; historical depth observations and
 event-only ladders are not promoted to normative load-boundary expectations.
 The wire grammar remains version 1. The subtree-weight formula and String-only
 scalar text charge are unchanged; correcting implementations of that formula
 does not require new semantics.
 
-The source tree includes an in-development Rust core and CLI. A specification
+The source tree includes a Rust core and CLI. A specification
 tag identifies that source snapshot but does not publish a package or claim
-runtime conformance. See [implementation status](docs/implementation.md) for
-known gaps. Specification acceptance, independent oracle review and qualification
+runtime conformance. Code releases use `v<VERSION>` tags and per-version release
+notes under `docs/releases/v<VERSION>.md`. See [implementation status](docs/implementation.md) for
+current status. Specification acceptance, independent oracle review and qualification
 of the actual implementation remain separate gates.
 
 ## spec-v1.3 — tagged draft specification

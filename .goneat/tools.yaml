@@ -1,0 +1,14 @@
+# yamlprims Tooling Configuration
+# Managed by goneat doctor / sfetch
+version: v1.0.0
+bin_dir: ./bin
+scope:
+  include:
+    - rust
+    - github-actions
+    - shell
+    - yaml
+    - markdown
+    - security
+  exclude: []
+overrides: {}

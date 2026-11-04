@@ -67,12 +67,10 @@ native nesting guards with headroom for the pinned scanner's simple-key
 lookahead. Focused controls cover depth boundaries, native and adapter error
 precedence, coordinates, pass counts and the native resource fallback.
 
-## Revision 1.4 proposal and implementation gaps
+## Revision 1.4 status and implementation gaps
 
-The working specification proposes revision 1.4; these source packages are not
-qualified against it. Historical specification tags and conformance pins retain
-their exact bindings. The following gaps require separately reviewed source
-changes and detecting tests:
+Specification revision 1.4 is tagged at `spec-v1.4`. Historical specification tags and conformance pins retain
+their exact bindings. The following areas track revision 1.4 conformance and remaining qualification items:
 
 | Proposed or existing rule | Current gap / required qualification |
 | --- | --- |

@@ -24,11 +24,11 @@ environment interpolation or network access.
 
 ## Status and participation
 
-Current tagged specification: [**spec-v1.3**](https://github.com/3leaps/yamlprims/tree/spec-v1.3),
-a draft contract. The working [revision 1.4 proposal](docs/spec/yamlprims-spec.md)
+Current tagged specification: [**spec-v1.4**](https://github.com/3leaps/yamlprims/tree/spec-v1.4),
+a draft contract. [Revision 1.4](docs/spec/yamlprims-spec.md)
 defines loader depth, anchor-cache accounting, bounded error precedence and
 entry/copy/key admission. Caller-tree guarantees remain deferred.
-Earlier specification tags and their file digests remain immutable, including
+Earlier specification tags (`spec-v1.0` through `spec-v1.3`) and their file digests remain immutable, including
 historical draft-status wording. A specification tag may include in-development
 Rust source; it does not imply a crate release, API freeze or conformance of
 that source to every requirement.
@@ -36,7 +36,7 @@ Existing corpus profiles remain bound to their cited specification revision.
 GitHub release publication is separate from specification tagging.
 See [the roadmap and acceptance gates](docs/build-spec.md#delivery-gates) and
 [open design items](docs/design-review.md).
-The [release procedure](docs/releases.md) covers signed specification tags and
+The [release procedure](docs/releases.md) covers signed specification and code release tags and
 package-publication timing.
 
 Feedback on examples, semantic boundaries and acceptance criteria is welcome.
@@ -52,5 +52,5 @@ make test-rust  # runs the included core, truth, wire and stack regressions
 ## License
 
 Code and general documentation: [MIT](LICENSE-MIT) OR
-[Apache-2.0](LICENSE-APACHE). The normative specification under `docs/spec/` is
+[Apache-2.0](LICENSE-APACHE) (with [NOTICE](NOTICE)). The normative specification under `docs/spec/` is
 [CC0-1.0](docs/spec/LICENSE). Upstream material retains its own notices.

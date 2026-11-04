@@ -50,16 +50,19 @@ def main():
         parser.exit(1, "Could not check goneat: " + str(exc) + "\n")
     first_line = result.stdout.splitlines()[0] if result.stdout else ""
     expected = "goneat v" + pin
-    if result.returncode or first_line != expected:
+    match = re.match(r"^goneat v([0-9]+)\.([0-9]+)\.([0-9]+)(?:\s|$)", first_line)
+    pin_tuple = tuple(int(part) for part in pin.split("."))
+    got_tuple = tuple(int(part) for part in match.groups()) if match else ()
+    if result.returncode or not match or got_tuple < pin_tuple:
         parser.exit(
             1,
             "Expected "
             + expected
-            + "; got "
+            + " (or newer); got "
             + repr(first_line)
             + ". See CONTRIBUTING.md.\n",
         )
-    print(expected + " verified")
+    print(first_line + " verified (minimum " + expected + ")")
     return 0
 
 

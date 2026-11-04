@@ -5,8 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "Owned YAML values, strict parsing, typed conversion and bounded wire encoding"
+documentation = "https://docs.rs/yamlprims"
 readme = "README.md"
+keywords = ["yaml", "parser", "serde"]
+categories = ["parser-implementations", "encoding"]
+build = false
 publish = false
 
 [dependencies]

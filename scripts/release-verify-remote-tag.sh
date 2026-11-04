@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# After a push: each remote tag must be the same annotated object as the local
+# verified tag. Signatures are then re-checked against the committed pin.
 set -euo pipefail
-script_dir="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=scripts/release-tag-common.sh
-source "$script_dir/release-tag-common.sh"
-cd "$(release_repo_root)"
-release_validate_verification_env
-release_assert_checkout
-release_verify_local_tag
-local_sha="$(git rev-parse "refs/tags/$YAMLPRIMS_RELEASE_TAG")"
-ref="$(gh api "repos/3leaps/yamlprims/git/ref/tags/$YAMLPRIMS_RELEASE_TAG")"
-jq -e --arg sha "$local_sha" '.object.type == "tag" and .object.sha == $sha' <<<"$ref" >/dev/null
-object="$(gh api "repos/3leaps/yamlprims/git/tags/$local_sha")"
-jq -e --arg tag "$YAMLPRIMS_RELEASE_TAG" --arg commit "$YAMLPRIMS_RELEASE_COMMIT" \
-	--arg name "$YAMLPRIMS_TAGGER_NAME" --arg email "$YAMLPRIMS_TAGGER_EMAIL" '
-	.tag == $tag and .object.type == "commit" and .object.sha == $commit and
-	.tagger.name == $name and .tagger.email == $email and
-	.verification.verified == true and .verification.reason == "valid"
-' <<<"$object" >/dev/null
-echo '[ok] GitHub reports the same verified tag object and release commit'
+source "$(dirname "$0")/release-tag-common.sh"
+# shellcheck source=scripts/release-decernor.sh
+source "$(dirname "$0")/release-decernor.sh"
+cd "$tag_root"
+tag_version
+resolve_release_decernor
+export RELEASE_DECERNOR_BIN
+tag_load_set
+for tag in ${tag_names[@]+"${tag_names[@]}"}; do
+	local_object="$(git rev-parse --verify --quiet "refs/tags/$tag")" || tag_die "local tag $tag is absent"
+	remote_object="$(git ls-remote --tags origin "refs/tags/$tag" | awk -v ref="refs/tags/$tag" '$2==ref {print $1}')"
+	[[ -n "$remote_object" ]] || tag_die "remote tag $tag is absent"
+	[[ "$remote_object" == "$local_object" ]] || tag_die "remote tag $tag differs from the local verified object"
+done
+"$tag_root/scripts/verify-pinned-tag.sh" --published
+echo '[ok] remote tags match the verified local tags'
