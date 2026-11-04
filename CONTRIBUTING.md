@@ -21,13 +21,16 @@ Run `make test-docs` for regression tests using temporary synthetic documents.
 CI runs documentation checks and these tests on Linux x64/ARM64, macOS ARM64 and Windows
 x64/ARM64. Fork pull requests run the three standard runner cells; the two
 custom ARM64 cells run for same-repository changes. A separate Linux cell tests
-the minimum supported Python 3.9. Workflow lint and synthetic
+the minimum supported Python 3.11. Workflow lint and synthetic
 signed-tag controls run on Linux. These checks do not establish parser support
 or runtime conformance. The signing-control test requires Unix and uses only
 disposable keys. Run it locally with `make test-release-tag-controls`.
 
-The documentation check requires Python 3.9+ and Make; select another Python
-executable with `make check PYTHON=python`. Run `make lint-workflows` after workflow edits.
+The documentation check requires Python 3.11+ (standard library only; no third-party
+packages) and Make; select another Python executable with `make check PYTHON=python3.11`
+(for example on macOS hosts where `/usr/bin/python3` from Xcode Command Line Tools is
+Python 3.9). Install Python 3.11+ via a system package manager (`brew`, `apt`, `dnf`,
+`winget`, `scoop`), `uv`, `pyenv` or python.org. Run `make lint-workflows` after workflow edits.
 For release-script changes, run `make lint-shell` (Bash and ShellCheck required)
 and `make test-release-tag-controls`. CI runs ShellCheck 0.11.0 before the
 synthetic signing tests. YAML configuration uses two-space indentation, enforced by `.yamlfmt` and
@@ -43,15 +46,20 @@ signed-tag controls. Full prepush requires Linux or macOS: the signing tests use
 Python's Unix-only `pty` module. Windows contributors can run `make check test-docs`
 and the individual lint targets; full prepush still needs a Unix host or CI.
 
-Install Python 3.9+, Make, Bash, Git, GnuPG, actionlint, ShellCheck, yamlfmt,
-yamllint and **goneat v0.6.4** (or newer) before full prepush. `.goneat-version` records the
+Install Python 3.11+, Make, Bash, Git, GnuPG, actionlint, ShellCheck, yamlfmt,
+yamllint and **goneat v0.6.4** (or newer) before full prepush. Repository scripts
+use only the Python 3.11+ standard library except the release-workflow digest and
+AST pin checks (`make workflow-pin`, `make prepush` and `make release-tooling-test`),
+which import `PyYAML`; provide `PyYAML` via a system package (`python3-yaml`), a
+virtual environment, or `scripts/ci-install-pyyaml.sh python3 --user` (which copies
+the SHA-256-verified pure-Python source archive without `pip`). `.goneat-version` records the
 minimum goneat version; `make check-tooling` rejects older versions. Obtain goneat
 from its [release](https://github.com/fulmenhq/goneat/releases/tag/v0.6.4).
 The workflow-lint container is the digest-pinned fulmen-toolbox **v0.5.10**
 `goneat-tools-runner-glibc` image and verifies this same goneat pin.
-These targets do not install or upgrade tools. Executable paths can be selected
+These targets do not install or upgrade tools automatically. Executable paths can be selected
 with `PYTHON`, `ACTIONLINT`, `GONEAT`, `SHELLCHECK`, `YAMLFMT` and `YAMLLINT` Make
-variables. `make check` and `make test-docs` do not require goneat or lint tools.
+variables. `make check` and `make test-docs` do not require goneat, `PyYAML` or lint tools.
 
 Full prepush also checks Rust formatting, all targets, the core tests and
 qualification-script failure propagation. Install a Rust toolchain meeting the

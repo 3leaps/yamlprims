@@ -10,7 +10,6 @@ scanned rather than followed. Unlike `git archive`, export-ignore and other
 attributes are not honoured. Prints the number of files written.
 """
 
-import os
 import sys
 from pathlib import Path
 

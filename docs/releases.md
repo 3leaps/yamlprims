@@ -33,7 +33,7 @@ The maintainer configures these environment variables in their signing terminal:
 | `YAMLPRIMS_MINISIGN_KEY`            | External Minisign secret key path (for `v<VERSION>` asset signs) |
 | `YAMLPRIMS_MINISIGN_PUB`            | Repository Minisign public key (`docs/security/yamlprims-minisign.pub`) |
 
-Prerequisites: Bash, Git, GnuPG, Minisign, Python 3.9+ and Make. GitHub verification and release asset staging also
+Prerequisites: Bash, Git, GnuPG, Minisign, Python 3.11+ (with `PyYAML` for workflow pin checks; see `scripts/ci-install-pyyaml.sh`) and Make. GitHub verification and release asset staging also
 require authenticated `gh` and `jq`. Use the intended repository's `origin`.
 The checkout must be clean on `main`; HEAD and freshly fetched `origin/main`
 must both equal the explicit release commit.

@@ -57,6 +57,10 @@ fi
 work_root="$PROJECT_ROOT"
 if [[ "${YAMLPRIMS_RELEASE_TAG:-}" != v* && "${GITHUB_REF:-}" != refs/tags/v* && "${YAMLPRIMS_REQUIRE_PUBLISH_TRUE:-0}" != 1 ]]; then
     if grep -Eq '^publish[[:space:]]*=[[:space:]]*false' "$PROJECT_ROOT/crates/yamlprims/Cargo.toml"; then
+        if [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=normal)" ]]; then
+            echo 'error: working tree must be clean before pre-release package check (HEAD is archived)' >&2
+            exit 1
+        fi
         work_root="$package_target/src"
         mkdir -p "$work_root"
         git -C "$PROJECT_ROOT" archive HEAD | tar -x -C "$work_root"

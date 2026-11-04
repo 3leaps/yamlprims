@@ -27,7 +27,12 @@ import os  # noqa: E402
 
 _untrusted = {os.path.realpath(p) for p in (os.path.dirname(os.path.abspath(__file__)), os.getcwd())}
 sys.path[:] = [p for p in sys.path if p not in ("", ".") and os.path.realpath(p) not in _untrusted]
-import yaml  # noqa: E402
+try:
+    import yaml  # noqa: E402
+except ModuleNotFoundError:
+    sys.exit(
+        "error: the workflow pin check needs PyYAML (install python3-yaml or run: scripts/ci-install-pyyaml.sh python3 --user)"
+    )
 
 PIN = "config/release/release-workflow.sha256"
 WORKFLOWS = ".github/workflows/"

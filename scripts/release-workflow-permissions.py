@@ -18,7 +18,12 @@ import os  # noqa: E402
 
 _untrusted = {os.path.realpath(p) for p in (os.path.dirname(os.path.abspath(__file__)), os.getcwd())}
 sys.path[:] = [p for p in sys.path if p not in ("", ".") and os.path.realpath(p) not in _untrusted]
-import yaml  # noqa: E402
+try:
+    import yaml  # noqa: E402
+except ModuleNotFoundError:
+    sys.exit(
+        "error: the workflow permission check needs PyYAML (install python3-yaml or run: scripts/ci-install-pyyaml.sh python3 --user)"
+    )
 
 ACTIONS = {"actions/checkout", "actions/upload-artifact", "dtolnay/rust-toolchain"}
 RUNNERS = {"ubuntu-24.04", "macos-15", "windows-2025", "ubuntu-latest-arm64-s", "windows-latest-arm64-s"}
@@ -586,7 +591,7 @@ def check(text, profile):
         if label == "${{ matrix.runner }}":
             include = ((job.get("strategy") or {}).get("matrix") or {}).get("include") or []
             labels = [entry.get("runner") for entry in include if isinstance(entry, dict)]
-            if not labels or len(labels) != len(include) or any(l not in RUNNERS for l in labels):
+            if not labels or len(labels) != len(include) or any(lbl not in RUNNERS for lbl in labels):
                 fail(f"{name}: moving or unreviewed runner image")
         elif label not in RUNNERS:
             fail(f"{name}: moving or unreviewed runner image")

@@ -10,7 +10,7 @@ mkdir -p "$tmp/bin"
 cat >"$tmp/floors.txt" <<'EOF'
 rustc=1.88.0
 cargo=1.88.0
-python3=3.9.0
+python3=3.11.0
 git=2.39.0
 bash=3.2.0
 make=3.81.0

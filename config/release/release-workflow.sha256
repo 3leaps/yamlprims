@@ -1,5 +1,5 @@
 eebaa9738ae4c313fb82a7246546d2385f9bc0e86a7ad4d9e3a6fe0489d52266  .github/actions/check-docs/action.yml
-6d6b2c686e4ad0daea68713abf4af8eb2eade5a09f90aff6531ef845a513064b  .github/workflows/check.yml
+9c4481f4bb1f58997e59473a046a2b9f37935b151fee092b073e7aa5dfa2a7f7  .github/workflows/check.yml
 07f93e52a817fb18ff0b6678e79400bebbef8499bdb8553abaf7357bade8b10d  .github/workflows/crates-verify.yml
 9ffa26c3030ab880aec177cb427c5a75d4f911888f7487b45e77a79b2aa4a4e4  .github/workflows/release.yml
 deee87f9601e4e8dd4d575956c50bd1c29c6d703ef4026cd88254efe92f8bd2e  .github/workflows/rust.yml
