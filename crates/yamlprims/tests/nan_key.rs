@@ -635,7 +635,7 @@ fn source_syntax_before_nan() {
         ".nan: [\n",
         &options,
         false,
-        ErrorKind::Syntax("unclosed_flow_collection".into()),
+        ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection),
         Location {
             byte_offset: 6,
             line: 1,

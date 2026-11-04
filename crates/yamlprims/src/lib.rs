@@ -17,7 +17,7 @@ mod value;
 mod wire;
 
 pub use error::{
-    Error, ErrorDetail, ErrorKind, LimitKind, PathSegment, Related, RelatedRole, Site,
+    Error, ErrorDetail, ErrorKind, LimitKind, PathSegment, Related, RelatedRole, Site, SyntaxKind,
 };
 pub use options::{Limits, MergeKeys, Options, UnknownTags};
 pub use protocol::{Spanned, TaggedValue};

@@ -8,38 +8,53 @@ document defines package boundaries, implementation order and acceptance.
 
 ## Workspace and dependency direction
 
-Use the virtual Cargo workspace with its working core and CLI crates; add native
-boundary crates when their milestones begin.
+`yamlprims` follows the `Profile B` repository architecture (`.fulmen/repo.yaml`):
+a `#![forbid(unsafe_code)]` Rust workspace (`crates/yamlprims`, `crates/yamlprims-cli`)
+and a parallel pure-Go twin (`yaml/` in root `go.mod`, `CGO_ENABLED=0`, standard
+library only) locked to the same `yamlprims-value/1` wire format and `structcorpus`
+conformance pins, accompanied by a universal zero-import `wasm32-unknown-unknown`
+TypeScript binding (`bindings/typescript/`) and a standalone `PyO3/maturin`
+(`abi3-py310`) Python binding (`bindings/python/`).
 
-| Package          | Path                     | Responsibility                                                                | First milestone |
-| ---------------- | ------------------------ | ----------------------------------------------------------------------------- | --------------- |
-| `yamlprims`      | `crates/yamlprims/`      | Owned model, event adapter, resolution, budgets, Serde conversion, wire codec | M1              |
-| `yamlprims-cli`  | `crates/yamlprims-cli/`  | Binary `yamlprims`; file/stdin handling, diagnostics, `check` and `dump`      | M1              |
-| `yamlprims-ffi`  | `crates/yamlprims-ffi/`  | C ABI, versioned header, buffer ownership and panic boundary                  | M2              |
-| `yamlprims-node` | `crates/yamlprims-node/` | Node-API addon and conversion boundary; native npm artifacts                  | M2              |
+| Package / Surface        | Path                     | Responsibility                                                                                       | First milestone |
+| ------------------------ | ------------------------ | ---------------------------------------------------------------------------------------------------- | --------------- |
+| `yamlprims` (Rust)       | `crates/yamlprims/`      | Owned model, event adapter, Core Schema resolution, budgets, closed `SyntaxKind`, Serde, wire codecs | M1              |
+| `yamlprims-cli` (Rust)   | `crates/yamlprims-cli/`  | Binary `yamlprims`; file/stdin handling, diagnostics, `check` and `dump`                             | M1              |
+| `yaml` (Go twin)         | `yaml/` (`go.mod`)       | Pure-Go twin (`github.com/3leaps/yamlprims/yaml`, `CGO_ENABLED=0`, stdlib-only); locked wire parity  | M1              |
+| `@3leaps/yamlprims` (TS) | `bindings/typescript/`   | Universal `wasm32-unknown-unknown` module (zero imports) and typed TypeScript host model             | M2              |
+| `yamlprims` (Python)     | `bindings/python/`       | Standalone `PyO3/maturin` (`abi3-py310`, `#![forbid(unsafe_code)]`) binding (`CARGO_TARGET_DIR=target/python`) | M2 |
 
-`yamlprims-cli`, `yamlprims-ffi` and `yamlprims-node` depend on `yamlprims`.
-The Go module in `bindings/go/` consumes the C ABI. The TypeScript package in
-`bindings/typescript/` consumes Node-API. Neither binding independently parses
-YAML or reimplements scalar/merge policy. The Node addon does not need to pass
-through the C ABI merely to call the Rust core.
+`yamlprims-cli` depends on `yamlprims`. `bindings/typescript` and `bindings/python`
+are separate Cargo manifests outside the root `[workspace]` that depend on
+`../../crates/yamlprims` by path, keeping WASM and `pyo3` dependencies out of the
+root `Cargo.lock` and the `crates.io` source-archive verification closure.
+The Go module (`github.com/3leaps/yamlprims/yaml`) is a pure-Go twin (`CGO_ENABLED=0`,
+standard library only) verified against the 19-row `structcorpus` conformance lock
+and `make crosscheck`. This `Profile B` + WASM + `PyO3` architecture supersedes
+the earlier M2 draft for a C ABI crate (`crates/yamlprims-ffi` + `cgo`) and a
+native Node-API addon (`crates/yamlprims-node`) in `spec-v1.4` §11.5 without
+mutating the signed `spec-v1.4` specification file bytes (see
+[ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
+Go, TypeScript and Python remain marked planned/unqualified until each surface's
+conformance and parity receipts land.
 
-Keep `Value`, `Node`, `Integer`, `Mapping`, `Options`, `Error` and codecs in the
-core package initially. Modules provide internal boundaries; extra published
-model, engine and wire crates would impose additional compatibility surfaces
-without an established consumer. The production graph has one selected backend,
-not a runtime backend-plugin system. Alternative engines belong in qualification
-tools, outside consumer dependency closures.
+Keep `Value`, `Node`, `Integer`, `Mapping`, `Options`, `Error`, `SyntaxKind` and
+codecs in the core package initially. Modules provide internal boundaries; extra
+published model, engine and wire crates would impose additional compatibility
+surfaces without an established consumer. The Rust production graph has one
+selected backend (`granit-parser`), not a runtime backend-plugin system.
+Alternative engines belong in qualification tools, outside consumer dependency
+closures.
 
 Planned tree (directories are created only when they contain working material):
 
 ```text
-Cargo.toml / Cargo.lock / VERSION / SPEC_VERSION
+Cargo.toml / Cargo.lock / go.mod / VERSION / SPEC_VERSION
 crates/yamlprims/src/
   lib.rs                 public facade and operation entrypoints
   value.rs               owned model and checked mutation
   options.rs             validated policies and limits
-  error.rs               error kinds, locations and provenance
+  error.rs               error kinds, closed SyntaxKind, locations and provenance
   engine/                only module importing granit-parser
   resolve.rs             Core scalar/tag rules
   build.rs               owned-tree construction, anchors and merge
@@ -47,10 +62,10 @@ crates/yamlprims/src/
   de.rs                  shared-tree Serde conversion
   wire.rs                canonical wire/error encoding and plain projection
 crates/yamlprims-cli/src/main.rs
-crates/yamlprims-ffi/     later: include/yamlprims.h, native tests
-crates/yamlprims-node/    later: Node-API boundary
-bindings/go/             later: module, typed model and tests
-bindings/typescript/     later: package, typed model and tests
+yaml/                    pure-Go twin (github.com/3leaps/yamlprims/yaml, CGO_ENABLED=0, stdlib-only)
+cmd/yamlprims-go/        internal Go conformance and crosscheck harness
+bindings/typescript/     universal wasm32-unknown-unknown module (zero imports) and @3leaps/yamlprims package
+bindings/python/         standalone PyO3/maturin (abi3-py310) binding for PyPI yamlprims
 tests/                   small public synthetic contract regressions
 conformance/             corpus/profile lock and consumer driver
 fuzz/                    bounded explicit fuzz targets
@@ -58,19 +73,22 @@ docs/spec/               versioned behavioral contract
 docs/decisions/          architecture, data, security and process records
 ```
 
-`src/build.rs` above is an ordinary module, not a Cargo build script. The core
-must not require native compilation, code generation or network access at build
-time. Specification releases do not publish packages or authorize placeholder crates.
+`src/build.rs` above is an ordinary module, not a Cargo build script. The Rust core
+and pure-Go twin must not require C/C++ compilation, code generation or network
+access at build time. Specification releases do not publish packages or authorize
+placeholder crates.
 
-## Rust and dependency policy
+## Rust, Go and dependency policy
 
 - Proposed MSRV: Rust 1.88, edition 2021, workspace resolver 2. Confirm with an
   actual locked build/test on 1.88; current stable is a separate test cell.
-- Initial engine qualification pin: `granit-parser =2.0.0`, defaults off,
+- Initial Rust engine qualification pin: `granit-parser =2.0.0`, defaults off,
   `std,error_messages` on, using the unmodified release. Inspect the shipped archive and complete dependency
   closure before the first code release. A pin is not qualification evidence.
-- Rust core and CLI forbid unsafe code. Native boundaries, generated glue and
-  their dependency closures have their own review obligations.
+- Rust core, CLI, and Python binding forbid unsafe code (`#![forbid(unsafe_code)]`).
+  The pure-Go twin (`yaml/`) enforces `CGO_ENABLED=0` and zero third-party Go
+  module dependencies (`scripts/deps-check.sh`). The TypeScript WASM module
+  (`bindings/typescript/`) enforces zero WASM imports.
 - Commit the workspace lockfile for CI/CLI reproducibility. Cargo consumers do
   not inherit that lockfile: audit supported resolved configurations too.
 - Start with Serde owned deserialization as a supported core capability. Feature
@@ -256,20 +274,33 @@ same inventory and migration fixtures as part of qualification of the new strict
 Report every suite ID whose verdict changes. Format-level syntax expectations,
 including 9C9N, remain independent of any historical lenient profile.
 
-### M1 — Rust implementation and thin CLI
+### M1 — Profile B Rust and pure-Go twin implementations and thin CLI
 
-Port the qualified behavior in reviewable slices:
+Port the qualified behavior in reviewable slices across the Rust workspace
+(`crates/yamlprims`, `crates/yamlprims-cli`) and the `Profile B` pure-Go twin
+(`yaml/` in root `go.mod`, `github.com/3leaps/yamlprims/yaml`, `CGO_ENABLED=0`,
+standard library only):
 
-1. Owned types, canonical integers, ordered mappings, equality/hashing, checked
-   mutation, options, located errors and source/synthetic provenance.
-2. Input gate and isolated engine adapter; original-byte coordinates and explicit
+1. Owned types, canonical integers (in Go, an immutable 128-bit `Integer` value
+   struct with `Int64`/`Uint64`/defensive-copy `BigInt`/`String` accessors per
+   [ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md) §2),
+   ordered mappings with `KeyEq`, equality/hashing, checked mutation, options,
+   located errors (`ErrorKind::Syntax(SyntaxKind)` over the closed 81-code
+   `SyntaxKind` vocabulary) and source/synthetic provenance.
+2. Input gate and isolated engine adapter (or ported pure-Go scanner/parser in
+   `yaml/internal/engine` with upstream `granit-parser` / `saphyr-parser` /
+   `yaml-rust` attribution in `NOTICE`); original-byte coordinates and explicit
    source-span convention. No backend aliases in public signatures.
 3. Shared resolver/builder, tag wrappers, anchor lifecycle, alias/merge preflight,
    monotonic accounting and duplicate rejection.
-4. Serde conversion through that same tree, including source-aware failures,
-   direct foreign scalar/collection visits, wrapper nesting and reentrancy.
-5. Canonical wire and error codecs, explicit plain projection, output budgets;
-   then CLI over the same entrypoints.
+4. Typed conversion through that same tree (Rust `serde::Deserialize` via
+   `from_str`/`from_str_with`/`from_node`, and Go `Unmarshal`/`UnmarshalWith`/`UnmarshalNode`
+   plus checked narrow and 128-bit typed conversion helpers), including
+   source-aware failures, wrapper nesting and reentrancy.
+5. Canonical wire and error codecs (`Encode`, `EncodeError`, `DecodeWire`),
+   explicit plain projection (`encode_plain` / `EncodePlain`, plus Go `ToPlain`
+   `int64`-or-error projection), output budgets, differential `make crosscheck`
+   between Rust and Go, and the Rust CLI over the same entrypoints.
 
 Keep any metadata needed for the documented local-enum re-resolution exception
 private; it must not invent behavior when reconstructing a tree from wire data.
@@ -288,7 +319,11 @@ M1 acceptance adds:
 - Exact wire goldens for success and failure; differential errors retain their
   categories and locations rather than collapsing to a generic failure.
 - Pinned yaml-test-suite coverage with reviewed exclusions, plus the selected
-  structcorpus profile. Small regressions run offline from a pinned local subset.
+  structcorpus profile (`conformance/pins/pin-c8b7421.json`, all 19 manifest rows)
+  and byte-for-byte `make crosscheck` parity across Rust and the pure-Go twin
+  (with separate `CGO_ENABLED=0` build/test and `CGO_ENABLED=1 go test -race`
+  gates) before `.fulmen/repo.yaml` flips `profile_status` from `bootstrapping`
+  to `locked`. Small regressions run offline from a pinned local subset.
 - Tests on MSRV and stable; bounded fuzz/Miri/mutation evidence with exact scope,
   time, skips and toolchains. Actual fuzz duration includes overhead reporting.
 - Per-category memory and latency measurements. Logical weights are not a
@@ -327,24 +362,55 @@ Wire `dump` and `check` use the specification's multi-document semantics. The
 plain-output representation for zero or multiple documents still needs an
 explicit CLI contract.
 
-### M2 — native boundaries and language packages
+### M2 — Isolated WASM and PyO3 language bindings
 
-Freeze the C pointer/buffer/failure protocol separately from the wire grammar.
-Add ABI ownership, alignment, length, zero-input, repeat-free-on-zero, failure and
-unwind tests. Invalid foreign pointers are caller violations, not recoverable
-input errors. Decide how an unavailable or too-large error envelope is reported.
+Per [ADR-0002](decisions/ADR-0002-library-first-workspace.md),
+[ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md) and
+[SecDR-0001](decisions/SecDR-0001-resource-and-native-boundaries.md), `yamlprims`
+supersedes the earlier C ABI (`crates/yamlprims-ffi` + `cgo`) and native Node-API
+(`crates/yamlprims-node`) draft in `spec-v1.4` §11.5. With the `Profile B` pure-Go
+twin delivered in M1 (`v0.1.0`), M2 (`v0.2.0`) adds the isolated TypeScript and
+Python bindings:
 
-Implement Go and TypeScript lossless host models, exact integers, float bits,
-ordered arbitrary-key entries, tags, optional source locations and structured
-paths. Run each language's independent assertions before canonical re-encoding.
-Document that Rust typed enum re-resolution is not a binding guarantee.
+1. **TypeScript WASM binding (`bindings/typescript/`, `@3leaps/yamlprims`):**
+   - Compiles `crates/yamlprims` to a single universal `wasm32-unknown-unknown`
+     module with zero WASM imports and an owned-reserve ABI (`options_reserve`,
+     `input_reserve`, `load_wire`, `load_all_wire`, `encode_plain`, `output_ptr`,
+     `output_len`, `dispose` / `release`). Configured `Options`/`Limits` are
+     validated before input reservation; `options_reserve` and `input_reserve`
+     enforce configured `max_input_bytes` and hard WASM linear-memory ceilings
+     before allocating and invalidate `STATE.input`, `STATE.options`, and
+     `STATE.output` on any reserve failure.
+   - Enforces single-owner, non-reentrant execution, status `0`/`1`/`2`
+     non-recursive error fallback, `Uint8Array` view reacquisition after WASM
+     memory growth, and `panic=abort` trapped-instance replacement (discarding
+     and recreating a trapped `WebAssembly.Instance` without calling `release()`
+     in `finally`), decoding `yamlprims-value/1` strictly into a lossless
+     TypeScript host model (`bigint` integers, restored `NaN`/`±Infinity` floats,
+     ordered mappings, and O(N) `utf16Offset` computation).
+   - Verified via `make ts-check` against the conformance suite and Rust/Go cores.
 
-Distribute only platform/architecture combinations with executed native tests.
-Record shared-library ABI, Node-API floor, Go/Node floors, artifact checksums and
-runtime loading behavior. No implicit download on library import. Package Rust
-libraries before their dependents; npm (`@3leaps/yamlprims`), PyPI (`yamlprims`) and Go (`github.com/3leaps/yamlprims/bindings/go`) publication follows native/WASM artifacts
-and binding tests. `yamlprims-node` can remain `publish = false` on crates.io if
-the supported distribution is solely npm; it need not occupy a crate name.
+2. **Python `PyO3/maturin` binding (`bindings/python/`, `yamlprims` on PyPI):**
+   - Standalone Cargo workspace (`abi3-py310`, `#![forbid(unsafe_code)]`,
+     `CARGO_TARGET_DIR=target/python`) exposing `load`, `load_with`, `load_bytes`,
+     `load_all`, `load_all_with`, `load_all_bytes`, `encode`, `encode_error`,
+     `decode_wire`, `encode_plain`, and `to_plain` with lossless Python host
+     types (`int` for 128-bit integers, `float` with `NaN`/`±inf` bit
+     preservation, immutable ordered `Mapping` preserving distinct
+     `bool`/`int`/`float` keys via `key_eq`, and typed `YamlprimsError`
+     diagnostics).
+   - Verified via `make python-check` against the conformance suite and Rust/Go cores.
+
+Keep synthetic locations absent (`nil` / `null` / `None`) in Go, TypeScript, and
+Python host models rather than fabricating zero coordinates. Document that Rust
+`serde::Deserialize` local-tag enum re-resolution is a Rust-specific typed
+conversion rule and not a wire or host-model guarantee.
+
+Distribute only platform/architecture combinations with executed tests. No
+implicit network download on library import. Release tags (`vX.Y.Z`) publish the
+root Go module (`github.com/3leaps/yamlprims/yaml`) and Rust crates (`yamlprims`,
+`yamlprims-cli`), followed by npm (`@3leaps/yamlprims`) and PyPI (`yamlprims`)
+with post-publish registry byte verification (`make release-verify-registries`).
 
 ### M3 — demand-driven additions
 

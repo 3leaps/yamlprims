@@ -2,10 +2,17 @@
 id: ADR-0002
 title: Library-first workspace with an internal event engine
 status: proposed
+superseded_in_part_by: ADR-0004
 date: 2026-10-14
 ---
 
 # ADR-0002: Library-first workspace with an internal event engine
+
+> **Note:** The M2 native-boundary delivery mechanisms in this record (`yamlprims-ffi`
+> C ABI for Go and `yamlprims-node` Node-API for TypeScript) are superseded by
+> accepted [ADR-0004](ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md). The
+> library-first Rust core (`yamlprims`, `yamlprims-cli`) and isolated internal
+> `granit-parser` event engine remain in effect.
 
 ## Decision
 

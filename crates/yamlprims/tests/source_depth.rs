@@ -2237,7 +2237,7 @@ fn duplicate_late_syntax() {
         options,
         false,
         1,
-        Some(ErrorKind::Syntax("unclosed_flow_collection".into())),
+        Some(ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection)),
         Some(Location {
             byte_offset: 13,
             line: 3,
@@ -2294,7 +2294,7 @@ fn materialized_depth_late_syntax() {
         options,
         false,
         1,
-        Some(ErrorKind::Syntax("unclosed_flow_collection".into())),
+        Some(ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection)),
         Some(Location {
             byte_offset: 22,
             line: 3,
@@ -2314,7 +2314,7 @@ fn key_budget_late_syntax() {
         options,
         false,
         1,
-        Some(ErrorKind::Syntax("unclosed_flow_collection".into())),
+        Some(ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection)),
         Some(Location {
             byte_offset: 7,
             line: 2,
@@ -2334,7 +2334,7 @@ fn rejected_tag_late_syntax() {
         options,
         false,
         1,
-        Some(ErrorKind::Syntax("unclosed_flow_collection".into())),
+        Some(ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection)),
         Some(Location {
             byte_offset: 11,
             line: 2,
@@ -2353,7 +2353,7 @@ fn recursive_late_syntax() {
         options,
         true,
         1,
-        Some(ErrorKind::Syntax("unclosed_flow_collection".into())),
+        Some(ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection)),
         Some(Location {
             byte_offset: 12,
             line: 3,
@@ -2372,7 +2372,7 @@ fn syntax_before_depth() {
         options,
         true,
         1,
-        Some(ErrorKind::Syntax("misplaced_flow_collection_end".into())),
+        Some(ErrorKind::Syntax(SyntaxKind::MisplacedFlowCollectionEnd)),
         Some(Location {
             byte_offset: 0,
             line: 1,
@@ -2454,7 +2454,7 @@ fn lookahead_mismatch() {
         options,
         false,
         1,
-        Some(ErrorKind::Syntax("mismatched_flow_collection_end".into())),
+        Some(ErrorKind::Syntax(SyntaxKind::MismatchedFlowCollectionEnd)),
         Some(Location {
             byte_offset: 2,
             line: 1,
@@ -2473,7 +2473,7 @@ fn unclosed_native_opener() {
         options,
         false,
         1,
-        Some(ErrorKind::Syntax("unclosed_flow_collection".into())),
+        Some(ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection)),
         Some(Location {
             byte_offset: 0,
             line: 1,

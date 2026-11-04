@@ -258,19 +258,6 @@ fn preflight(e: &Error, l: &Limits) -> Result<(), Error> {
             what,
         )
     };
-    if let ErrorKind::Syntax(k) = &e.kind {
-        let code = !k.is_empty()
-            && k.len() <= 64
-            && k.bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-        if !code {
-            return Err(Error::not_source(
-                ErrorKind::Internal,
-                None,
-                "error not encodable: syntax_kind is not a snake_case code",
-            ));
-        }
-    }
     if e.path.len() > l.max_depth {
         return Err(limit(
             LimitKind::MaxDepth,
@@ -352,7 +339,7 @@ pub(crate) fn encode_error(e: &Error, l: &Limits) -> Result<String, Error> {
         },
         ErrorKind::Syntax(k) => {
             o.push("{\"syntax_kind\":")?;
-            o.string(k)?;
+            o.string(k.as_str())?;
             o.push("}")?
         }
         ErrorKind::LimitExceeded { limit, configured } => {

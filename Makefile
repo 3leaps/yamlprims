@@ -116,11 +116,11 @@ test-docs:
 lint: check lint-shell lint-yaml
 
 lint-yaml:
-	$(YAMLFMT) -dstar -lint .yamlfmt .yamllint '.github/**/*.yml' '.github/**/*.yaml' '.goneat/**/*.yaml'
-	$(YAMLLINT) --strict -c .yamllint .yamlfmt .yamllint .github .goneat
+	$(YAMLFMT) -dstar -lint .yamlfmt .yamllint .fulmen/repo.yaml '.github/**/*.yml' '.github/**/*.yaml' '.goneat/**/*.yaml'
+	$(YAMLLINT) --strict -c .yamllint .yamlfmt .yamllint .fulmen/repo.yaml .github .goneat
 
 fmt-yaml:
-	$(YAMLFMT) -dstar .yamlfmt .yamllint '.github/**/*.yml' '.github/**/*.yaml' '.goneat/**/*.yaml'
+	$(YAMLFMT) -dstar .yamlfmt .yamllint .fulmen/repo.yaml '.github/**/*.yml' '.github/**/*.yaml' '.goneat/**/*.yaml'
 
 lint-shell:
 	@set -e; for script in $(SHELL_SOURCES); do bash -n "$$script"; done

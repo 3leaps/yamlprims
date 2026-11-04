@@ -3762,7 +3762,7 @@ fn syntax_before_registration() {
         options(191, 128, 64, 16, 16, UnknownTags::Preserve),
         Mode::All,
         Expected::Error(
-            ErrorKind::Syntax("unclosed_flow_collection".into()),
+            ErrorKind::Syntax(SyntaxKind::UnclosedFlowCollection),
             Location {
                 byte_offset: 0,
                 line: 1,

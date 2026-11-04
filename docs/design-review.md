@@ -94,7 +94,7 @@ build specification. Diagnostic differences alone do not qualify compatibility.
 | Accounting scope           | Review and accept the 1.4 cache/depth proposal; qualify registration, final post-merge metrics and monotonic source/copy charges independently. Existing green corpus results do not establish the new boundaries. |
 | Error storage and encoding | Complete the remaining ErrorKind payloads and bound `engine_detail`, related spans and structured paths before constructing large errors. Revision 1.2 specifies owned Type descriptions and encoder revalidation; construction-time allocation bounds and detecting evidence remain required. |
 | Public operations          | Complete the plain encoder and checked constructors/accessors needed to create Document/Tagged/Tag values without exposing invariant-bearing fields. Compile the selected Error constructors, error encoder and `load_all_bytes` API in the candidate driver; illustrative signatures alone are not API evidence. |
-| Syntax error vocabulary    | Name and test the closed `SyntaxKind` set before wire version 1 is frozen; a backend's message text is not a stable taxonomy.                                                                                                                                                                                     |
+| Syntax error vocabulary    | `ErrorKind::Syntax(SyntaxKind)` (`SyntaxKind::ALL`, 81 codes) is defined in `crates/yamlprims/src/error.rs` and mapped explicitly without backend `Debug`-name reflection in `crates/yamlprims/src/engine/mod.rs`; keep the pure-Go twin (`yaml/`) and `yamlprims-value/1` wire consumers locked to this closed set. |
 | Wire decoding              | Specify integer range, location/order validation, duplicate JSON members, unknown fields, canonical NaN bits and whether noncanonical JSON is rejected or normalized. Byte-identical round trip applies to canonical producer output.                                                                             |
 | Metadata integer ranges    | Rust limits use usize and wire metadata uses at most 2^53−1. Define rejection for out-of-range options/coordinates, including 32-bit hosts; never truncate.                                                                                                                                                       |
 | Synthetic trees            | Clarify the guarantee for arbitrarily deep hand-built trees and foreign deserializers. Private invariant fields alone do not bound recursion, destructor stack use or caller allocations.                                                                                                                         |
@@ -141,21 +141,38 @@ the exact new inventory remain separate qualification requirements.
 
 ## M2 boundary freeze
 
-- Define pointer validity, lifetime, alignment and non-overlap for input, options
-  and output. Require a fresh/zeroed output buffer and never overwrite a live
-  allocation without an explicit ownership operation.
-- Resolve output-budget exhaustion separately from allocation failure. The draft
-  promise of a wire envelope on every ordinary failure is incompatible with an
-  arbitrary one-byte output budget unless the protocol defines a fallback.
-- Define behavior when `out` is null or options bytes are malformed UTF-8, and
-  what status can be returned without writing through an invalid pointer.
-- State allocation-failure limits honestly: `catch_unwind` does not contain
-  allocator aborts, invalid foreign memory or stack overflow.
-- Keep synthetic locations absent in Go/TypeScript, rather than fabricating zero
-  coordinates. Define how UTF-16 offsets remain computable when a host receives
-  only wire output and not the original input; require source context where needed.
-- Qualify generated Node-API glue and native dependencies as part of the unsafe
-  boundary. A safe core does not imply an entirely unsafe-free native distribution.
+Per [ADR-0002](decisions/ADR-0002-library-first-workspace.md),
+[ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md) and
+[SecDR-0001](decisions/SecDR-0001-resource-and-native-boundaries.md), `yamlprims`
+replaces the earlier C ABI (`crates/yamlprims-ffi` + `cgo`) and native Node-API
+(`crates/yamlprims-node`) plan with a `Profile B` pure-Go twin (`yaml/` in root
+`go.mod`, `CGO_ENABLED=0`, standard library only), a zero-import
+`wasm32-unknown-unknown` TypeScript binding (`bindings/typescript/`,
+`@3leaps/yamlprims`), and a standalone `PyO3/maturin` (`abi3-py310`,
+`#![forbid(unsafe_code)]`) Python binding (`bindings/python/`, `yamlprims`):
+
+- Enforce `CGO_ENABLED=0` and zero third-party Go module dependencies in `yaml/`
+  (`scripts/deps-check.sh`), locking the M1 pure-Go twin to the 19-row `structcorpus`
+  conformance pin and differential `make crosscheck` against the Rust core.
+- Define owned-reserve linear-memory buffer admission (`options_reserve`,
+  `input_reserve`, `load_wire`, `load_all_wire`, `encode_plain`, `output_ptr`,
+  `output_len`, `dispose` / `release`), pre-copy option/limit validation,
+  reserve-failure state invalidation (`STATE.input`, `STATE.options`,
+  `STATE.output`), single-owner non-reentrant execution, `panic=abort`
+  trapped-instance replacement, and zero WASM host imports for the
+  `wasm32-unknown-unknown` module in `bindings/typescript/`.
+- Resolve output-budget exhaustion (`max_output_bytes`) separately from WASM
+  linear-memory capacity, returning status `2` with a static non-recursive
+  fallback when even the `output_limit_exceeded` error envelope cannot fit in
+  `max_output_bytes`.
+- Keep synthetic locations absent (`nil` / `null` / `None`) in Go, TypeScript,
+  and Python host models rather than fabricating zero coordinates. Compute
+  TypeScript `utf16Offset` values in the JS/TS host wrapper from the caller's
+  input string or UTF-8 byte buffer; leave `utf16Offset` unset when decoding
+  standalone wire JSON without source bytes.
+- Isolate `bindings/python/` (`PyO3/maturin`, `abi3-py310`, `#![forbid(unsafe_code)]`)
+  in its own Cargo workspace (`CARGO_TARGET_DIR=target/python`) with independent
+  `cargo deny` and wheel verification (`make python-check`).
 
 Updates resolve these items in the specification and a matching test/profile
 revision. Acceptance belongs to the maintainers; proposed records do not imply
