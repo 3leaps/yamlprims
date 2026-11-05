@@ -18,6 +18,7 @@ DEFAULT_FLOORS = ROOT / "config/doctor-versions.txt"
 COMMANDS: dict[str, tuple[str, ...]] = {
     "rustc": ("rustc", "--version"),
     "cargo": ("cargo", "--version"),
+    "go": ("go", "version"),
     "python3": ("python3", "--version"),
     "git": ("git", "--version"),
     "bash": ("bash", "--version"),
@@ -38,6 +39,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
 RELEASE_REQUIRED = (
     "rustc",
     "cargo",
+    "go",
     "python3",
     "git",
     "bash",
@@ -52,6 +54,7 @@ RELEASE_REQUIRED = (
 CORE_REQUIRED = (
     "rustc",
     "cargo",
+    "go",
     "python3",
     "git",
     "bash",

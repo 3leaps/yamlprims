@@ -58,6 +58,12 @@ if [[ -f go.mod ]]; then
     echo "deps-check: go.mod must have no require or replace directives" >&2
     fail=1
   fi
+  for forbidden_path in go.sum go.work vendor; do
+    if [[ -e "${forbidden_path}" ]]; then
+      echo "deps-check: ${forbidden_path} must not exist in a zero-dependency Go module" >&2
+      fail=1
+    fi
+  done
   own='github.com/3leaps/yamlprims(/[A-Za-z0-9_./-]*)?'
   own_line="^${own}(\.test)?( \[${own}\.test\])?$"
   for platform in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64 windows/arm64; do
