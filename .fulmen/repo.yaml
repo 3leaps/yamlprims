@@ -4,7 +4,7 @@
 schema: "contract:taxonomy/v0/repo-declaration.schema.json"
 class: prims
 profile: B  # locked parallel pure-Go and Rust implementations
-profile_status: bootstrapping  # flips to locked once the Go twin passes the conformance pin and make crosscheck
+profile_status: locked  # both Rust and Go trees pass conformance/pins/pin-c8b7421.json and make crosscheck
 leaf: true  # depends on no other prim; scripts/deps-check.sh enforces it
 category: library
 env_prefix: YAMLPRIMS_
@@ -12,7 +12,7 @@ umbrella_prefix: null
 surfaces: [library, cli]
 bindings:
   rust: planned  # crates/yamlprims (working tree in this repo; unpublished on crates.io until v0.1.0)
-  go: planned  # github.com/3leaps/yamlprims/yaml (pure-Go twin, CGO_ENABLED=0, stdlib-only)
+  go: shipped  # github.com/3leaps/yamlprims/yaml (in-tree pure-Go twin, CGO_ENABLED=0; module tag on v0.1.0)
   typescript: planned  # @3leaps/yamlprims (npm), bindings/typescript (wasm32, no imports)
   python: planned  # yamlprims (PyPI), bindings/python (PyO3/maturin, abi3)
 target_registries: [crates_io, go_proxy, npm, pypi]

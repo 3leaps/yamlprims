@@ -29,6 +29,8 @@ fi
 cargo +1.89.0 test --locked --workspace -- --test-threads=1
 cargo +1.88.0 test --release --locked --workspace -- --test-threads=1
 cargo +1.89.0 build --release --locked -p yamlprims --example structcorpus
+CGO_ENABLED=0 go test ./yaml/... ./cmd/...
+CGO_ENABLED=0 go build -o "${CARGO_TARGET_DIR:-$root/target}/release/structcorpus-driver-go" ./cmd/structcorpus-driver
 if "$prefix_only"; then
   echo "Test/build prefix passed; corpus qualification was not run."
   exit 0
@@ -53,4 +55,13 @@ if [ -f "$corpus/manifests/profiles/yamlprims-core-depth128.r1.json" ]; then
 fi
 "$python" -I conformance/scripts/structcorpus_gate_probes.py "$pin" "$hydrated" "$corpus" "$driver" > "$out/gate-probes.tsv"
 "$python" -I conformance/scripts/node_selectors.py "$corpus" "$driver" "$out/selectors.json"
+
+go_driver="${CARGO_TARGET_DIR:-$root/target}/release/structcorpus-driver-go"
+"$python" -I conformance/scripts/structcorpus_gate.py "$pin" "$hydrated" "$corpus" "$go_driver" --record "$out/go-gate.json"
+"$python" -I conformance/scripts/structcorpus_probes_v13.py "$corpus" "$go_driver" > "$out/go-probes-v13.tsv"
+if [ -f "$corpus/manifests/profiles/yamlprims-core-depth128.r1.json" ]; then
+  "$python" -I conformance/scripts/structcorpus_probes_v14.py "$corpus" "$go_driver" > "$out/go-probes-v14.tsv"
+fi
+"$python" -I conformance/scripts/structcorpus_gate_probes.py "$pin" "$hydrated" "$corpus" "$go_driver" > "$out/go-gate-probes.tsv"
+"$python" -I conformance/scripts/node_selectors.py "$corpus" "$go_driver" "$out/go-selectors.json"
 echo "Pinned conformance gate and driver controls passed."

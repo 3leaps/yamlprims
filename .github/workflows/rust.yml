@@ -31,5 +31,11 @@ jobs:
           if [ "$PROFILE" = release ]; then flags+=(--release); fi
           cargo +"$TOOLCHAIN" test --locked --workspace "${flags[@]}" -- --test-threads=1
           cargo +"$TOOLCHAIN" build --locked -p yamlprims --example structcorpus "${flags[@]}"
+      - name: Check and test pure-Go twin and differential parity
+        run: |
+          make check-go
+          make test-go
+          make test-go-race
+          make crosscheck
       - name: Check qualification failure propagation
         run: python3 -B -m unittest discover -s conformance -p 'test_*.py'

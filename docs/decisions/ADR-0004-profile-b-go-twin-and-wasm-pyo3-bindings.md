@@ -32,20 +32,23 @@ core and wire contracts together with this record:
 | M2 TypeScript delivery (`crates/yamlprims-node` Node-API) | Proposed / unfrozen in [ADR-0002](ADR-0002-library-first-workspace.md) | **Superseded** — `crates/yamlprims-node` is retired; TypeScript (`@3leaps/yamlprims`) ships in M2 (`v0.2.0`) via an isolated `wasm32-unknown-unknown` module (`bindings/typescript/`) over the `yamlprims-value/1` wire bridge with pre-copy memory bounds |
 | M2 Python delivery (`bindings/python/` — `yamlprims` on PyPI) | Not specified in `spec-v1.4 §11.2–§11.3` | **New Host Contract** — isolated `PyO3/maturin` (`abi3-py310`) workspace (`bindings/python/`) with an ordered `Node`/`Mapping` host representation preserving distinct `bool`/`int`/`float` keys and an explicit `to_plain()` loss matrix |
 
-All four language surfaces (`rust`, `go`, `typescript`, `python`) remain marked
-`planned` in `.fulmen/repo.yaml` (`profile_status: bootstrapping`) until each
-surface's implementation, conformance, and differential parity receipts land and
+The pure-Go twin (`github.com/3leaps/yamlprims/yaml`, consumed directly from
+this repository's root `go.mod`) is marked `shipped` in `.fulmen/repo.yaml`
+(`profile_status: locked`) once its 19-row `structcorpus` conformance and
+`make crosscheck` parity receipts pass; `rust` (`crates.io`), `typescript`
+(`npm`), and `python` (`PyPI`) remain marked `planned` until each surface's
+implementation, conformance, and differential parity receipts land and registry
 packages are published.
 
 ## Surface contracts
 
-At the time this record is accepted, only the Rust workspace (`crates/yamlprims`,
-`crates/yamlprims-cli`, unpublished with `publish = false`) is present in the
-repository tree. Sections 2–4 below specify the target contracts and acceptance
-obligations that the pure-Go twin (`yaml/`), TypeScript WASM binding
-(`bindings/typescript/`), and Python binding (`bindings/python/`) must satisfy
-when they land and before `profile_status` flips from `bootstrapping` to `locked`
-or any binding flips from `planned` to `shipped`.
+The Rust workspace (`crates/yamlprims`, `crates/yamlprims-cli`, unpublished on
+`crates.io` with `publish = false`) and the pure-Go twin (`yaml/` and
+`cmd/structcorpus-driver`, qualified against `pin-c8b7421.json` and
+`make crosscheck`) are present in the repository tree. Sections 2–4 below
+specify the contracts and acceptance obligations that the pure-Go twin
+(`yaml/`), TypeScript WASM binding (`bindings/typescript/`), and Python binding
+(`bindings/python/`) satisfy or must satisfy before registry publication.
 
 ### 1. Rust core and CLI (`crates/yamlprims`, `crates/yamlprims-cli`)
 

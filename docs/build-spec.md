@@ -1,6 +1,6 @@
 # yamlprims build specification
 
-Status: implementation plan with a working Rust core and initial CLI. Published releases
+Status: implementation plan with a working Rust core, pure-Go twin, and initial CLI. Published releases
 remain specification-only. See [implementation status](implementation.md) for the
 current code surface and qualification limits.
 The [behavioral specification](spec/yamlprims-spec.md) defines semantics; this
@@ -35,7 +35,7 @@ the earlier M2 draft for a C ABI crate (`crates/yamlprims-ffi` + `cgo`) and a
 native Node-API addon (`crates/yamlprims-node`) in `spec-v1.4` §11.5 without
 mutating the signed `spec-v1.4` specification file bytes (see
 [ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
-Go, TypeScript and Python remain marked planned/unqualified until each surface's
+TypeScript and Python remain marked planned/unqualified until each surface's
 conformance and parity receipts land.
 
 Keep `Value`, `Node`, `Integer`, `Mapping`, `Options`, `Error`, `SyntaxKind` and
@@ -63,7 +63,7 @@ crates/yamlprims/src/
   wire.rs                canonical wire/error encoding and plain projection
 crates/yamlprims-cli/src/main.rs
 yaml/                    pure-Go twin (github.com/3leaps/yamlprims/yaml, CGO_ENABLED=0, stdlib-only)
-cmd/yamlprims-go/        internal Go conformance and crosscheck harness
+cmd/structcorpus-driver/ Go conformance and crosscheck harness
 bindings/typescript/     universal wasm32-unknown-unknown module (zero imports) and @3leaps/yamlprims package
 bindings/python/         standalone PyO3/maturin (abi3-py310) binding for PyPI yamlprims
 tests/                   small public synthetic contract regressions

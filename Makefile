@@ -18,7 +18,7 @@ SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
 
 .PHONY: all help prepush precommit pr-final check-tooling lint-workflows
 .PHONY: check test-docs lint lint-shell lint-yaml fmt-yaml fmt fmt-check
-.PHONY: test-rust check-rust msrv-check check-go test-go test-go-race test-conformance-tools build clean
+.PHONY: test-rust check-rust msrv-check check-go test-go test-go-race crosscheck test-conformance-tools build clean
 .PHONY: version spec-version version-check check-packages deps-check deny
 .PHONY: workflow-pin jq-portability content-check host-path-check surface-scan doctor
 .PHONY: test-release-tag-controls release-tooling-test release-check release-github-preflight
@@ -35,6 +35,7 @@ all: check
 
 help:
 	@echo "make check-rust test-rust Check and test the Rust baseline"
+	@echo "make check-go test-go test-go-race crosscheck Check, test, and crosscheck the pure-Go twin"
 	@echo "make test-conformance-tools Test qualification failure propagation"
 	@echo "make prepush Run full local gates (Unix, installed tools required)"
 	@echo "make check-tooling Verify the pinned goneat version"
@@ -60,15 +61,18 @@ msrv-check:
 	$(CARGO) +$(MSRV) test --locked --workspace -- --test-threads=1
 
 check-go:
-	@out="$$(gofmt -l yaml)"; if [ -n "$$out" ]; then echo "gofmt: $$out"; exit 1; fi
-	$(GOENV) $(GO) vet ./yaml/...
-	$(GOENV) $(GO) build ./yaml/...
+	@out="$$(gofmt -l yaml cmd)"; if [ -n "$$out" ]; then echo "gofmt: $$out"; exit 1; fi
+	$(GOENV) $(GO) vet ./yaml/... ./cmd/...
+	$(GOENV) $(GO) build ./yaml/... ./cmd/...
 
 test-go:
-	$(GOENV) $(GO) test -count=1 ./yaml/...
+	$(GOENV) $(GO) test -count=1 ./yaml/... ./cmd/...
 
 test-go-race:
-	$(GOENV_RACE) $(GO) test -race -count=1 ./yaml/...
+	$(GOENV_RACE) $(GO) test -race -count=1 ./yaml/... ./cmd/...
+
+crosscheck:
+	bash scripts/crosscheck.sh
 
 test-conformance-tools:
 	$(PYTHON) -B -m unittest discover -s conformance -p 'test_*.py'
@@ -83,7 +87,7 @@ prepush:
 		--require "$(SHELLCHECK)" --require bash --require git --require gpg --require "$(GO)" --require "$(MAKE)"
 	$(MAKE) lint test-docs lint-workflows
 	$(MAKE) deps-check content-check jq-portability version-check workflow-pin
-	$(MAKE) check-rust test-rust check-go test-go test-go-race test-conformance-tools
+	$(MAKE) check-rust test-rust check-go test-go test-go-race crosscheck test-conformance-tools
 	$(MAKE) surface-scan
 
 pr-final: prepush
@@ -142,12 +146,12 @@ lint-shell:
 
 fmt:
 	$(CARGO) fmt --all
-	gofmt -w yaml
+	gofmt -w yaml cmd
 	@echo "Markdown uses UTF-8, LF and no trailing whitespace; make check verifies these rules."
 
 fmt-check:
 	$(CARGO) fmt --all -- --check
-	@out="$$(gofmt -l yaml)"; if [ -n "$$out" ]; then echo "gofmt: $$out"; exit 1; fi
+	@out="$$(gofmt -l yaml cmd)"; if [ -n "$$out" ]; then echo "gofmt: $$out"; exit 1; fi
 
 version:
 	@cat SPEC_VERSION
