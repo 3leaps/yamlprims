@@ -3,6 +3,9 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 CARGO ?= cargo
+GO ?= go
+GOENV := GOWORK=off CGO_ENABLED=0
+GOENV_RACE := GOWORK=off CGO_ENABLED=1
 PYTHON ?= python3
 YAMLFMT ?= yamlfmt
 YAMLLINT ?= yamllint
@@ -15,7 +18,7 @@ SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
 
 .PHONY: all help prepush precommit pr-final check-tooling lint-workflows
 .PHONY: check test-docs lint lint-shell lint-yaml fmt-yaml fmt fmt-check
-.PHONY: test-rust check-rust msrv-check test-conformance-tools build clean
+.PHONY: test-rust check-rust msrv-check check-go test-go test-go-race test-conformance-tools build clean
 .PHONY: version spec-version version-check check-packages deps-check deny
 .PHONY: workflow-pin jq-portability content-check host-path-check surface-scan doctor
 .PHONY: test-release-tag-controls release-tooling-test release-check release-github-preflight
@@ -56,6 +59,17 @@ check-rust:
 msrv-check:
 	$(CARGO) +$(MSRV) test --locked --workspace -- --test-threads=1
 
+check-go:
+	@out="$$(gofmt -l yaml)"; if [ -n "$$out" ]; then echo "gofmt: $$out"; exit 1; fi
+	$(GOENV) $(GO) vet ./yaml/...
+	$(GOENV) $(GO) build ./yaml/...
+
+test-go:
+	$(GOENV) $(GO) test -count=1 ./yaml/...
+
+test-go-race:
+	$(GOENV_RACE) $(GO) test -race -count=1 ./yaml/...
+
 test-conformance-tools:
 	$(PYTHON) -B -m unittest discover -s conformance -p 'test_*.py'
 
@@ -66,10 +80,10 @@ precommit: fmt-check lint
 prepush:
 	$(PYTHON) scripts/check-tooling.py --prepush --goneat "$(GONEAT)" \
 		--require "$(ACTIONLINT)" --require "$(YAMLFMT)" --require "$(YAMLLINT)" \
-		--require "$(SHELLCHECK)" --require bash --require git --require gpg --require "$(MAKE)"
+		--require "$(SHELLCHECK)" --require bash --require git --require gpg --require "$(GO)" --require "$(MAKE)"
 	$(MAKE) lint test-docs lint-workflows
 	$(MAKE) deps-check content-check jq-portability version-check workflow-pin
-	$(MAKE) check-rust test-rust test-conformance-tools
+	$(MAKE) check-rust test-rust check-go test-go test-go-race test-conformance-tools
 	$(MAKE) surface-scan
 
 pr-final: prepush
@@ -128,10 +142,12 @@ lint-shell:
 
 fmt:
 	$(CARGO) fmt --all
+	gofmt -w yaml
 	@echo "Markdown uses UTF-8, LF and no trailing whitespace; make check verifies these rules."
 
 fmt-check:
 	$(CARGO) fmt --all -- --check
+	@out="$$(gofmt -l yaml)"; if [ -n "$$out" ]; then echo "gofmt: $$out"; exit 1; fi
 
 version:
 	@cat SPEC_VERSION

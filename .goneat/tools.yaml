@@ -5,6 +5,7 @@ bin_dir: ./bin
 scope:
   include:
     - rust
+    - go
     - github-actions
     - shell
     - yaml

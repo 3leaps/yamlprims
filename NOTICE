@@ -3,3 +3,10 @@ Copyright 2026 3 Leaps, LLC
 
 This product includes software developed at 3 Leaps, LLC
 (https://3leaps.net/).
+
+The pure-Go YAML 1.2.2 lexical scanner and event state-machine parser in
+yaml/internal/engine/ are ported from granit-parser 2.0.0, which is derived
+from saphyr-parser and yaml-rust:
+- granit-parser, Copyright (c) 2026 Bourumir Wyngs (MIT OR Apache-2.0)
+- saphyr-parser, Copyright (c) 2023 Ethiraric (MIT OR Apache-2.0)
+- yaml-rust, Copyright (c) 2015 Chen Yuheng (MIT OR Apache-2.0)
