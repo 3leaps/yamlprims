@@ -1,7 +1,10 @@
-# Rust implementation status
+# Rust and Go implementation status
 
-The workspace contains a working `yamlprims` core and a thin `yamlprims-cli`
-consumer. Both are initial packages with publication disabled and their public
+The workspace contains a working Rust `yamlprims` core, a `Profile B` pure-Go
+twin (`yaml/` in root `go.mod`, `github.com/3leaps/yamlprims/yaml`,
+`CGO_ENABLED=0`, standard library only) with its conformance and crosscheck
+driver (`cmd/structcorpus-driver`), and a thin `yamlprims-cli` consumer. Both
+Rust crates are initial packages with publication disabled and their public
 surfaces still under development.
 Package versions, specification tags and wire versions are separate namespaces.
 
@@ -117,11 +120,15 @@ five-target MSRV/stable matrix, contained stress with original resource budgets,
 bounded fuzz/mutation/Miri, phase-specific memory/time measurements, dependency
 and license audit, and package/downstream qualification. Logical weight limits
 are not RSS limits. The current Rust workflow is baseline coverage on Linux;
-documentation CI is not runtime qualification. The planned M1 `Profile B` pure-Go
-twin (`yaml/` in root `go.mod`, `CGO_ENABLED=0`, standard library only) and M2
-language bindings (`bindings/typescript/` WASM and `bindings/python/` `PyO3/maturin`)
-have separate conformance and crosscheck gates
-([build specification](build-spec.md), [ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
+documentation CI is not runtime qualification. The `Profile B` pure-Go twin (`yaml/` in root `go.mod`, `CGO_ENABLED=0`,
+standard library only) and its conformance driver (`cmd/structcorpus-driver`)
+are qualified against all 19 manifest rows of `conformance/pins/pin-c8b7421.json`
+(`conformance/requalify.sh`) and verified for byte-for-byte wire, `DecodeWire`
+round-trip, and plain-JSON parity with the Rust core via `make crosscheck`. The
+planned M2 language bindings (`bindings/typescript/` WASM and
+`bindings/python/` `PyO3/maturin`) have separate conformance and crosscheck
+gates ([build specification](build-spec.md),
+[ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
 
 The working specification is a new draft; tagged specifications remain at their
 immutable baselines. Historical draft-status prose inside those tags does not

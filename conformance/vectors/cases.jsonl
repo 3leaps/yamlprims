@@ -1,0 +1,154 @@
+{"id": "merge.reject.basic", "input": "base: &b {a: 1, b: 2}\nout: {<<: *b, b: 20}\n", "single": true, "merge": "reject", "check_plain": true}
+{"id": "merge.apply.single", "input": "base: &b {a: 1, b: 2}\nout: {x: 0, <<: *b, b: 20, z: 3}\n", "single": true, "merge": "apply", "check_plain": true}
+{"id": "merge.apply.sequence-precedence", "input": "m1: &m1 {a: 1, b: 2}\nm2: &m2 {b: 20, c: 30}\nout: {<<: [*m1, *m2], a: 100}\n", "single": true, "merge": "apply", "check_plain": true}
+{"id": "merge.apply.bad-source-scalar", "input": "{<<: 42}\n", "single": true, "merge": "apply", "check_plain": true}
+{"id": "merge.apply.bad-source-seq-item", "input": "m: &m {a: 1}\nout: {<<: [*m, 99]}\n", "single": true, "merge": "apply", "check_plain": true}
+{"id": "merge.apply.second-directive", "input": "m1: &m1 {a: 1}\nm2: &m2 {b: 2}\nout: {<<: *m1, <<: *m2}\n", "single": true, "merge": "apply", "check_plain": true}
+{"id": "merge.as-key.basic", "input": "base: &b {a: 1}\nout: {<<: *b, b: 2}\n", "single": true, "merge": "as-key", "check_plain": true}
+{"id": "tags.preserve.local", "input": "item: !custom payload\nseq: !seqtag [1, 2]\nmap: !maptag {k: v}\n", "single": true, "unknown_tags": "preserve", "check_plain": true}
+{"id": "tags.reject.local", "input": "item: !custom payload\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.preserve.verbatim-and-handle", "input": "%TAG !e! tag:example.com,2026:\n---\n- !<tag:example.com,2026:verbatim> hello\n- !e!widget world\n- ! 42\n", "single": true, "unknown_tags": "preserve", "check_plain": true}
+{"id": "tags.core.float-exact-int", "input": "- !!float 9007199254740992\n- !!float -9007199254740992\n- !!float 0x10\n", "single": true, "check_plain": true}
+{"id": "tags.core.float-inexact-int", "input": "!!float 9007199254740993\n", "single": true, "check_plain": true}
+{"id": "tags.core.kind-mismatch-int-on-seq", "input": "!!int [1, 2]\n", "single": true, "check_plain": true}
+{"id": "tags.core.kind-mismatch-seq-on-scalar", "input": "!!seq hello\n", "single": true, "check_plain": true}
+{"id": "tags.core.value-mismatch-bool", "input": "!!bool maybe\n", "single": true, "check_plain": true}
+{"id": "int.boundaries.valid", "input": "i64_min: -9223372036854775808\ni64_max: 9223372036854775807\nu64_max: 18446744073709551615\ni128_min: -170141183460469231731687303715884105728\ni128_max: 170141183460469231731687303715884105727\nu128_max: 340282366920938463463374607431768211455\nhex_u128_max: 0xffffffffffffffffffffffffffffffff\noct_i128_min: -0o2000000000000000000000000000000000000000000\n", "single": true, "check_plain": true}
+{"id": "int.overflow.above-u128-max", "input": "340282366920938463463374607431768211456\n", "single": true, "check_plain": true}
+{"id": "int.overflow.below-i128-min", "input": "-170141183460469231731687303715884105729\n", "single": true, "check_plain": true}
+{"id": "int.overflow.hex", "input": "0x100000000000000000000000000000000\n", "single": true, "check_plain": true}
+{"id": "int.overflow.oct", "input": "0o4000000000000000000000000000000000000000000\n", "single": true, "check_plain": true}
+{"id": "float.specials", "input": "neg_zero: -0.0\npos_zero: 0.0\nnan1: .nan\nnan2: .NaN\npos_inf: .inf\nneg_inf: -.inf\nsci: 1.25e-5\n", "single": true, "check_plain": true}
+{"id": "float.overflow.pos", "input": "1e400\n", "single": true, "check_plain": true}
+{"id": "float.overflow.neg", "input": "-1e400\n", "single": true, "check_plain": true}
+{"id": "coords.bom-crlf-cr-utf8", "input_hex": "efbbbf613a2022c3a9f09f9982220d0a623a0d20202d20310d20202d20320d0a", "single": true, "check_plain": true}
+{"id": "utf8.invalid.single-byte", "input_hex": "613a20ff0a", "single": true, "check_plain": true}
+{"id": "utf8.invalid.two-byte", "input_hex": "613a20e282280a", "single": true, "check_plain": true}
+{"id": "utf8.invalid.eof-truncated", "input_hex": "613a20e282", "single": true, "check_plain": true}
+{"id": "spans.block-scalars", "input": "lit_clip: |\n  hello\n  world\n\n  # trailing comment\nlit_strip: |-\n  hello\n\nlit_keep: |+\n  hello\n\nfold_clip: >\n  folded\n  line\n\n", "single": true, "check_plain": true}
+{"id": "spans.settle-empty-and-anchors", "input": "a:\n  &e\nb: *e\nc:\n  - &s\n  - *s\n", "single": true, "check_plain": true}
+{"id": "spans.empty-documents-stream", "input": "---\n...\n---\n# comment\n---\n", "single": false, "check_plain": false}
+{"id": "spans.empty-single-doc", "input": "# only comment\n", "single": true, "check_plain": true}
+{"id": "keys.duplicate.scalar", "input": "{a: 1, a: 2}\n", "single": true, "check_plain": true}
+{"id": "keys.duplicate.zero-sign", "input": "{0.0: 1, -0.0: 2}\n", "single": true, "check_plain": true}
+{"id": "keys.duplicate.composite-map", "input": "? {a: 1, b: 2}\n: first\n? {b: 2, a: 1}\n: second\n", "single": true, "check_plain": true}
+{"id": "keys.invalid.nan-direct", "input": "{.nan: 1}\n", "single": true, "check_plain": true}
+{"id": "keys.invalid.nan-nested", "input": "? [1, .nan]\n: bad\n", "single": true, "check_plain": true}
+{"id": "keys.non-string-plain-loss", "input": "{1: one, 2: two}\n", "single": true, "check_plain": true}
+{"id": "structure.unknown-anchor", "input": "[*missing]\n", "single": true, "check_plain": true}
+{"id": "structure.recursive-alias", "input": "&a [*a]\n", "single": true, "check_plain": true}
+{"id": "structure.multiple-documents", "input": "---\n1\n---\n2\n", "single": true, "check_plain": false}
+{"id": "version.unsupported-major", "input": "%YAML 2.0\n---\n1\n", "single": true, "check_plain": true}
+{"id": "limit.max_input_bytes", "input": "hello: world\n", "single": true, "limits": {"max_input_bytes": 4}, "check_plain": true}
+{"id": "limit.max_depth.source", "input": "[[[1]]]\n", "single": true, "limits": {"max_depth": 2}, "check_plain": true}
+{"id": "limit.max_depth.alias", "input": "a: &a [1]\nb: &b [*a]\nc: [*b]\n", "single": true, "limits": {"max_depth": 3}, "check_plain": true}
+{"id": "limit.max_nodes", "input": "[1, 2, 3, 4]\n", "single": true, "limits": {"max_nodes": 3}, "check_plain": true}
+{"id": "limit.max_expanded_nodes", "input": "- &a [1, 2, 3]\n- *a\n", "single": true, "limits": {"max_expanded_nodes": 2}, "check_plain": true}
+{"id": "limit.max_alias_events", "input": "- &a 1\n- *a\n- *a\n", "single": true, "limits": {"max_alias_events": 1}, "check_plain": true}
+{"id": "limit.max_owned_bytes", "input": "[1, 2, 3, 4]\n", "single": true, "limits": {"max_owned_bytes": 128, "max_scalar_bytes": 64, "max_key_bytes": 64}, "check_plain": true}
+{"id": "limit.max_scalar_bytes", "input": "\"abcdefghij\"\n", "single": true, "limits": {"max_scalar_bytes": 5}, "check_plain": true}
+{"id": "limit.max_key_bytes", "input": "long_key_name: 1\n", "single": true, "limits": {"max_key_bytes": 64}, "check_plain": true}
+{"id": "limit.max_mapping_entries", "input": "{a: 1, b: 2, c: 3}\n", "single": true, "limits": {"max_mapping_entries": 2}, "check_plain": true}
+{"id": "limit.max_documents", "input": "---\n1\n---\n2\n---\n3\n", "single": false, "limits": {"max_documents": 2}, "check_plain": false}
+{"id": "limit.max_output_bytes", "input": "a: [1, 2, 3, 4, 5]\n", "single": true, "limits": {"max_output_bytes": 32}, "check_plain": true}
+{"id": "syntax.unclosed_flow_seq", "input": "[1, 2\n", "single": true, "check_plain": true}
+{"id": "syntax.unclosed_flow_map", "input": "{a: 1\n", "single": true, "check_plain": true}
+{"id": "syntax.mismatched_flow", "input": "[1, 2}\n", "single": true, "check_plain": true}
+{"id": "syntax.misplaced_flow_end", "input": "]\n", "single": true, "check_plain": true}
+{"id": "syntax.tab_in_block_indent", "input": "a:\n\tb: 1\n", "single": true, "check_plain": true}
+{"id": "syntax.unclosed_single_quote", "input": "'unclosed\n", "single": true, "check_plain": true}
+{"id": "syntax.unclosed_double_quote", "input": "\"unclosed\n", "single": true, "check_plain": true}
+{"id": "syntax.unknown_escape", "input": "\"\\q\"\n", "single": true, "check_plain": true}
+{"id": "syntax.bad_hex_escape", "input": "\"\\xZZ\"\n", "single": true, "check_plain": true}
+{"id": "syntax.duplicate_yaml_directive", "input": "%YAML 1.2\n%YAML 1.2\n---\n1\n", "single": true, "check_plain": true}
+{"id": "syntax.undeclared_tag_handle", "input": "!undef!foo bar\n", "single": true, "check_plain": true}
+{"id": "syntax.unclosed_verbatim_tag", "input": "!<tag:example.com foo\n", "single": true, "check_plain": true}
+{"id": "syntax.zero_block_scalar_indent", "input": "|0\n  hi\n", "single": true, "check_plain": true}
+{"id": "syntax.bom_inside_document", "input_hex": "613a20310aefbbbf623a20320a", "single": true, "check_plain": true}
+{"id": "syntax_code.unexpected_eof_flow_sequence", "syntax_code": "unexpected_eof_flow_sequence"}
+{"id": "syntax_code.unexpected_eof_flow_mapping", "syntax_code": "unexpected_eof_flow_mapping"}
+{"id": "syntax_code.unexpected_eof_implicit_flow_mapping", "syntax_code": "unexpected_eof_implicit_flow_mapping"}
+{"id": "syntax_code.unexpected_eof_block_sequence", "syntax_code": "unexpected_eof_block_sequence"}
+{"id": "syntax_code.unexpected_eof_block_mapping", "syntax_code": "unexpected_eof_block_mapping"}
+{"id": "syntax_code.unexpected_eof", "syntax_code": "unexpected_eof"}
+{"id": "syntax_code.expected_stream_start", "syntax_code": "expected_stream_start"}
+{"id": "syntax_code.duplicate_version_directive", "syntax_code": "duplicate_version_directive"}
+{"id": "syntax_code.duplicate_tag_directive", "syntax_code": "duplicate_tag_directive"}
+{"id": "syntax_code.expected_document_start", "syntax_code": "expected_document_start"}
+{"id": "syntax_code.missing_document_end_before_directive", "syntax_code": "missing_document_end_before_directive"}
+{"id": "syntax_code.anchor_count_overflow", "syntax_code": "anchor_count_overflow"}
+{"id": "syntax_code.expected_node_content", "syntax_code": "expected_node_content"}
+{"id": "syntax_code.expected_block_mapping_key", "syntax_code": "expected_block_mapping_key"}
+{"id": "syntax_code.expected_flow_mapping_separator", "syntax_code": "expected_flow_mapping_separator"}
+{"id": "syntax_code.expected_flow_sequence_separator", "syntax_code": "expected_flow_sequence_separator"}
+{"id": "syntax_code.expected_block_sequence_entry", "syntax_code": "expected_block_sequence_entry"}
+{"id": "syntax_code.undeclared_tag_handle", "syntax_code": "undeclared_tag_handle"}
+{"id": "syntax_code.expected_tag_bang", "syntax_code": "expected_tag_bang"}
+{"id": "syntax_code.expected_tag_directive_bang", "syntax_code": "expected_tag_directive_bang"}
+{"id": "syntax_code.invalid_global_tag_character", "syntax_code": "invalid_global_tag_character"}
+{"id": "syntax_code.simple_key_expected", "syntax_code": "simple_key_expected"}
+{"id": "syntax_code.invalid_simple_key", "syntax_code": "invalid_simple_key"}
+{"id": "syntax_code.invalid_document_end", "syntax_code": "invalid_document_end"}
+{"id": "syntax_code.invalid_indentation", "syntax_code": "invalid_indentation"}
+{"id": "syntax_code.bom_inside_document", "syntax_code": "bom_inside_document"}
+{"id": "syntax_code.unexpected_character", "syntax_code": "unexpected_character"}
+{"id": "syntax_code.tab_not_allowed", "syntax_code": "tab_not_allowed"}
+{"id": "syntax_code.tab_in_block_indentation", "syntax_code": "tab_in_block_indentation"}
+{"id": "syntax_code.comment_intercepted_scalar", "syntax_code": "comment_intercepted_scalar"}
+{"id": "syntax_code.expected_whitespace", "syntax_code": "expected_whitespace"}
+{"id": "syntax_code.comment_not_separated", "syntax_code": "comment_not_separated"}
+{"id": "syntax_code.invalid_directive_terminator", "syntax_code": "invalid_directive_terminator"}
+{"id": "syntax_code.missing_yaml_version_separator", "syntax_code": "missing_yaml_version_separator"}
+{"id": "syntax_code.missing_directive_name", "syntax_code": "missing_directive_name"}
+{"id": "syntax_code.invalid_directive_name", "syntax_code": "invalid_directive_name"}
+{"id": "syntax_code.directive_byte_limit_exceeded", "syntax_code": "directive_byte_limit_exceeded"}
+{"id": "syntax_code.too_many_reserved_directive_params", "syntax_code": "too_many_reserved_directive_params"}
+{"id": "syntax_code.yaml_version_too_long", "syntax_code": "yaml_version_too_long"}
+{"id": "syntax_code.missing_yaml_version", "syntax_code": "missing_yaml_version"}
+{"id": "syntax_code.invalid_tag_directive_terminator", "syntax_code": "invalid_tag_directive_terminator"}
+{"id": "syntax_code.invalid_tag_terminator", "syntax_code": "invalid_tag_terminator"}
+{"id": "syntax_code.missing_tag_uri", "syntax_code": "missing_tag_uri"}
+{"id": "syntax_code.unclosed_verbatim_tag", "syntax_code": "unclosed_verbatim_tag"}
+{"id": "syntax_code.invalid_tag_escape", "syntax_code": "invalid_tag_escape"}
+{"id": "syntax_code.invalid_tag_utf8_leading_byte", "syntax_code": "invalid_tag_utf8_leading_byte"}
+{"id": "syntax_code.invalid_tag_utf8_trailing_byte", "syntax_code": "invalid_tag_utf8_trailing_byte"}
+{"id": "syntax_code.invalid_tag_utf8", "syntax_code": "invalid_tag_utf8"}
+{"id": "syntax_code.missing_anchor_or_alias_name", "syntax_code": "missing_anchor_or_alias_name"}
+{"id": "syntax_code.misplaced_flow_collection_end", "syntax_code": "misplaced_flow_collection_end"}
+{"id": "syntax_code.mismatched_flow_collection_end", "syntax_code": "mismatched_flow_collection_end"}
+{"id": "syntax_code.unclosed_flow_collection", "syntax_code": "unclosed_flow_collection"}
+{"id": "syntax_code.block_entry_in_flow_collection", "syntax_code": "block_entry_in_flow_collection"}
+{"id": "syntax_code.block_sequence_entry_not_allowed", "syntax_code": "block_sequence_entry_not_allowed"}
+{"id": "syntax_code.invalid_block_entry_whitespace", "syntax_code": "invalid_block_entry_whitespace"}
+{"id": "syntax_code.zero_block_scalar_indent", "syntax_code": "zero_block_scalar_indent"}
+{"id": "syntax_code.invalid_block_scalar_header", "syntax_code": "invalid_block_scalar_header"}
+{"id": "syntax_code.tab_at_block_scalar_start", "syntax_code": "tab_at_block_scalar_start"}
+{"id": "syntax_code.invalid_block_scalar_indent", "syntax_code": "invalid_block_scalar_indent"}
+{"id": "syntax_code.document_indicator_in_quoted_scalar", "syntax_code": "document_indicator_in_quoted_scalar"}
+{"id": "syntax_code.unclosed_quoted_scalar", "syntax_code": "unclosed_quoted_scalar"}
+{"id": "syntax_code.tab_in_indentation", "syntax_code": "tab_in_indentation"}
+{"id": "syntax_code.invalid_quoted_scalar_indent", "syntax_code": "invalid_quoted_scalar_indent"}
+{"id": "syntax_code.invalid_trailing_single_quoted_scalar", "syntax_code": "invalid_trailing_single_quoted_scalar"}
+{"id": "syntax_code.invalid_trailing_double_quoted_scalar", "syntax_code": "invalid_trailing_double_quoted_scalar"}
+{"id": "syntax_code.unknown_quoted_scalar_escape", "syntax_code": "unknown_quoted_scalar_escape"}
+{"id": "syntax_code.invalid_quoted_scalar_hex_escape", "syntax_code": "invalid_quoted_scalar_hex_escape"}
+{"id": "syntax_code.invalid_low_surrogate_hex_escape", "syntax_code": "invalid_low_surrogate_hex_escape"}
+{"id": "syntax_code.invalid_low_surrogate", "syntax_code": "invalid_low_surrogate"}
+{"id": "syntax_code.missing_low_surrogate", "syntax_code": "missing_low_surrogate"}
+{"id": "syntax_code.unpaired_low_surrogate", "syntax_code": "unpaired_low_surrogate"}
+{"id": "syntax_code.invalid_unicode_escape", "syntax_code": "invalid_unicode_escape"}
+{"id": "syntax_code.invalid_flow_scalar_indent", "syntax_code": "invalid_flow_scalar_indent"}
+{"id": "syntax_code.plain_scalar_starts_with_dash_flow_indicator", "syntax_code": "plain_scalar_starts_with_dash_flow_indicator"}
+{"id": "syntax_code.tab_in_plain_scalar", "syntax_code": "tab_in_plain_scalar"}
+{"id": "syntax_code.unexpected_end_of_plain_scalar", "syntax_code": "unexpected_end_of_plain_scalar"}
+{"id": "syntax_code.mapping_key_not_allowed", "syntax_code": "mapping_key_not_allowed"}
+{"id": "syntax_code.flow_mapping_value_adjacent_collection", "syntax_code": "flow_mapping_value_adjacent_collection"}
+{"id": "syntax_code.invalid_mapping_value_whitespace", "syntax_code": "invalid_mapping_value_whitespace"}
+{"id": "syntax_code.invalid_colon_placement", "syntax_code": "invalid_colon_placement"}
+{"id": "syntax_code.mapping_value_not_allowed", "syntax_code": "mapping_value_not_allowed"}
+{"id": "limit.max_owned_bytes.mapping_exact_pass", "input": "a: b\nc: d\n", "single": true, "limits": {"max_owned_bytes": 372, "max_scalar_bytes": 256, "max_key_bytes": 256}, "check_plain": true}
+{"id": "limit.max_owned_bytes.mapping_exact_fail", "input": "a: b\nc: d\n", "single": true, "limits": {"max_owned_bytes": 371, "max_scalar_bytes": 256, "max_key_bytes": 256}, "check_plain": true}
+{"id": "limit.max_owned_bytes.tagged_exact_pass", "input": "!tk key: !tv val\n", "single": true, "unknown_tags": "preserve", "limits": {"max_owned_bytes": 362, "max_scalar_bytes": 256, "max_key_bytes": 256}, "check_plain": true}
+{"id": "limit.max_owned_bytes.tagged_exact_fail", "input": "!tk key: !tv val\n", "single": true, "unknown_tags": "preserve", "limits": {"max_owned_bytes": 361, "max_scalar_bytes": 256, "max_key_bytes": 256}, "check_plain": true}
+{"id": "limit.max_owned_bytes.merge_exact_pass", "input": "src: &s\n  k: hello\ndst:\n  <<: *s\n", "single": true, "merge": "apply", "limits": {"max_owned_bytes": 1224, "max_scalar_bytes": 256, "max_key_bytes": 256}, "check_plain": true}
+{"id": "limit.max_owned_bytes.merge_exact_fail", "input": "src: &s\n  k: hello\ndst:\n  <<: *s\n", "single": true, "merge": "apply", "limits": {"max_owned_bytes": 1223, "max_scalar_bytes": 256, "max_key_bytes": 256}, "check_plain": true}

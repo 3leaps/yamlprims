@@ -53,11 +53,12 @@
 use serde_json::{json, Value as J};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use yamlprims::{
-    from_node, load_all_bytes, load_bytes, Error, ErrorKind, LimitKind, Limits, MergeKeys, Node,
-    NodeSpan, Options, Value,
+    encode, encode_error, encode_plain, from_node, load_all_bytes, load_bytes, Error, ErrorKind,
+    LimitKind, Limits, MergeKeys, Node, NodeSpan, Options, UnknownTags, Value,
 };
 
 struct Profile {
@@ -290,6 +291,12 @@ const EXCLUDED: &[(&str, u64, &str)] = &[(
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--stdin") {
+        return run_stdin(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("--crosscheck-jsonl") {
+        return run_crosscheck_jsonl();
+    }
     let (hyd, src) = match &args[..] {
         [h, s, ..] => (PathBuf::from(h), PathBuf::from(s)),
         _ => {
@@ -1092,4 +1099,271 @@ fn matches(got: &J, want: &J) -> bool {
         (None, None) => got == want,
         _ => false,
     }
+}
+
+fn run_stdin(args: &[String]) -> ExitCode {
+    let mut format = "wire";
+    let mut single = false;
+    let mut opts = Options::default();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--format" if i + 1 < args.len() => {
+                format = args[i + 1].as_str();
+                i += 1;
+            }
+            "--single" => {
+                single = true;
+            }
+            "--merge" if i + 1 < args.len() => {
+                opts.merge_keys = match args[i + 1].as_str() {
+                    "apply" => MergeKeys::Apply,
+                    "as-key" | "plain-key" => MergeKeys::AsKey,
+                    _ => MergeKeys::Reject,
+                };
+                i += 1;
+            }
+            "--unknown-tags" if i + 1 < args.len() => {
+                opts.unknown_tags = match args[i + 1].as_str() {
+                    "reject" => UnknownTags::Reject,
+                    _ => UnknownTags::Preserve,
+                };
+                i += 1;
+            }
+            "--limits" if i + 1 < args.len() => {
+                for kv in args[i + 1].split(',') {
+                    let Some((k, v)) = kv.split_once('=') else {
+                        continue;
+                    };
+                    let Ok(n) = v.parse::<usize>() else {
+                        return ExitCode::from(2);
+                    };
+                    match k {
+                        "max_input_bytes" => opts.limits.max_input_bytes = n,
+                        "max_depth" => opts.limits.max_depth = n,
+                        "max_nodes" => opts.limits.max_nodes = n,
+                        "max_expanded_nodes" => opts.limits.max_expanded_nodes = n,
+                        "max_alias_events" => opts.limits.max_alias_events = n,
+                        "max_owned_bytes" => opts.limits.max_owned_bytes = n,
+                        "max_scalar_bytes" => opts.limits.max_scalar_bytes = n,
+                        "max_key_bytes" => opts.limits.max_key_bytes = n,
+                        "max_mapping_entries" => opts.limits.max_mapping_entries = n,
+                        "max_documents" => opts.limits.max_documents = n,
+                        "max_output_bytes" => opts.limits.max_output_bytes = n,
+                        "max_warnings" => opts.limits.max_warnings = n,
+                        _ => {}
+                    }
+                }
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let mut input = Vec::new();
+    if let Err(e) = std::io::stdin().read_to_end(&mut input) {
+        eprintln!("{e}");
+        return ExitCode::from(2);
+    }
+
+    let def_opts = Options::default();
+    match format {
+        "wire" => {
+            let loaded = if single {
+                load_bytes(&input, &opts).map(|d| vec![d])
+            } else {
+                load_all_bytes(&input, &opts)
+            };
+            match loaded {
+                Err(e) => match encode_error(&e, &def_opts) {
+                    Ok(out) => {
+                        println!("{out}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e2) => {
+                        eprintln!("{e2}");
+                        ExitCode::from(2)
+                    }
+                },
+                Ok(docs) => match encode(&docs, &opts) {
+                    Ok(out) => {
+                        println!("{out}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(enc_err) => match encode_error(&enc_err, &def_opts) {
+                        Ok(out) => {
+                            println!("{out}");
+                            ExitCode::SUCCESS
+                        }
+                        Err(e2) => {
+                            eprintln!("{e2}");
+                            ExitCode::from(2)
+                        }
+                    },
+                },
+            }
+        }
+        "plain" => match load_bytes(&input, &opts) {
+            Err(e) => match encode_error(&e, &def_opts) {
+                Ok(out) => {
+                    println!("{out}");
+                    ExitCode::SUCCESS
+                }
+                Err(e2) => {
+                    eprintln!("{e2}");
+                    ExitCode::from(2)
+                }
+            },
+            Ok(doc) => match encode_plain(doc.root(), &opts) {
+                Ok(out) => {
+                    println!("{out}");
+                    ExitCode::SUCCESS
+                }
+                Err(perr) => match encode_error(&perr, &def_opts) {
+                    Ok(out) => {
+                        println!("{out}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e2) => {
+                        eprintln!("{e2}");
+                        ExitCode::from(2)
+                    }
+                },
+            },
+        },
+        _ => {
+            eprintln!("unknown format {format}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn decode_hex(hex: &str) -> Result<Vec<u8>, String> {
+    if hex.len() % 2 != 0 {
+        return Err("odd hex length".into());
+    }
+    let mut out = Vec::with_capacity(hex.len() / 2);
+    for i in (0..hex.len()).step_by(2) {
+        let b = u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| e.to_string())?;
+        out.push(b);
+    }
+    Ok(out)
+}
+
+fn run_crosscheck_jsonl() -> ExitCode {
+    let mut text = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut text) {
+        eprintln!("{e}");
+        return ExitCode::from(2);
+    }
+    let def_opts = Options::default();
+    for (n, line) in text.split('\n').enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let rec: J = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("line {}: {e}", n + 1);
+                return ExitCode::from(2);
+            }
+        };
+        let id = rec["id"].as_str().unwrap_or("");
+        if let Some(code) = rec["syntax_code"].as_str() {
+            let Some(sk) = yamlprims::SyntaxKind::from_code(code) else {
+                eprintln!("{id}: unknown syntax_code {code}");
+                return ExitCode::from(2);
+            };
+            let err = Error::new(
+                ErrorKind::syntax(sk),
+                yamlprims::Site::Source(yamlprims::Location {
+                    byte_offset: 0,
+                    line: 1,
+                    column: 1,
+                }),
+                format!("syntax error: {code}"),
+            );
+            let wire = encode_error(&err, &def_opts).expect("encode syntax error");
+            println!("{}", json!({"id": id, "wire": wire, "plain": ""}));
+            continue;
+        }
+        let input = if let Some(hex) = rec["input_hex"].as_str() {
+            match decode_hex(hex) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("{id}: {e}");
+                    return ExitCode::from(2);
+                }
+            }
+        } else if let Some(s) = rec["input"].as_str() {
+            s.as_bytes().to_vec()
+        } else {
+            eprintln!("{id}: missing input or input_hex");
+            return ExitCode::from(2);
+        };
+        let single = rec["single"].as_bool().unwrap_or(false);
+        let check_plain = rec["check_plain"].as_bool().unwrap_or(false);
+        let mut opts = Options::default();
+        if let Some(m) = rec["merge"].as_str() {
+            opts.merge_keys = match m {
+                "apply" => MergeKeys::Apply,
+                "as-key" | "plain-key" => MergeKeys::AsKey,
+                _ => MergeKeys::Reject,
+            };
+        }
+        if let Some(u) = rec["unknown_tags"].as_str() {
+            opts.unknown_tags = match u {
+                "reject" => UnknownTags::Reject,
+                _ => UnknownTags::Preserve,
+            };
+        }
+        if let Some(lim_obj) = rec.get("limits").and_then(|l| l.as_object()) {
+            for (k, v) in lim_obj {
+                let Some(n) = v.as_u64().map(|x| x as usize) else {
+                    continue;
+                };
+                match k.as_str() {
+                    "max_input_bytes" => opts.limits.max_input_bytes = n,
+                    "max_depth" => opts.limits.max_depth = n,
+                    "max_nodes" => opts.limits.max_nodes = n,
+                    "max_expanded_nodes" => opts.limits.max_expanded_nodes = n,
+                    "max_alias_events" => opts.limits.max_alias_events = n,
+                    "max_owned_bytes" => opts.limits.max_owned_bytes = n,
+                    "max_scalar_bytes" => opts.limits.max_scalar_bytes = n,
+                    "max_key_bytes" => opts.limits.max_key_bytes = n,
+                    "max_mapping_entries" => opts.limits.max_mapping_entries = n,
+                    "max_documents" => opts.limits.max_documents = n,
+                    "max_output_bytes" => opts.limits.max_output_bytes = n,
+                    "max_warnings" => opts.limits.max_warnings = n,
+                    _ => {}
+                }
+            }
+        }
+        let loaded = if single {
+            load_bytes(&input, &opts).map(|d| vec![d])
+        } else {
+            load_all_bytes(&input, &opts)
+        };
+        let wire = match &loaded {
+            Err(e) => encode_error(e, &def_opts).expect("encode_error"),
+            Ok(docs) => match encode(docs, &opts) {
+                Ok(out) => out,
+                Err(enc_err) => encode_error(&enc_err, &def_opts).expect("encode_error"),
+            },
+        };
+        let plain = if check_plain {
+            match load_bytes(&input, &opts) {
+                Err(e) => encode_error(&e, &def_opts).expect("encode_error"),
+                Ok(doc) => match encode_plain(doc.root(), &opts) {
+                    Ok(out) => out,
+                    Err(perr) => encode_error(&perr, &def_opts).expect("encode_error"),
+                },
+            }
+        } else {
+            String::new()
+        };
+        println!("{}", json!({"id": id, "wire": wire, "plain": plain}));
+    }
+    ExitCode::SUCCESS
 }
