@@ -1,0 +1,29 @@
+[package]
+name = "yamlprims-wasm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/3leaps/yamlprims"
+homepage = "https://github.com/3leaps/yamlprims"
+description = "Internal WebAssembly module for @3leaps/yamlprims"
+publish = false
+build = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+yamlprims = { path = "../../crates/yamlprims" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[workspace]

@@ -24,6 +24,7 @@ source "$root/scripts/release-common.sh"
 source "$root/scripts/release-decernor.sh"
 
 tag="$(release_tag "${1:-${YAMLPRIMS_RELEASE_TAG:-}}")"
+version="${tag#v}"
 out_dir="${2:-dist/published}"
 [[ ! -e "$out_dir" && ! -L "$out_dir" ]] || die "$out_dir already exists; clean explicitly first"
 
@@ -90,6 +91,50 @@ compare_blob "docs/releases/$tag.md" "$stage/release-notes-$tag.md"
 "$root/scripts/verify-public-keys.sh" "$stage"
 "$root/scripts/verify-signatures.sh" "$stage"
 YAMLPRIMS_RELEASE_TAG="$tag" "$root/scripts/verify-checksums.sh" "$stage"
+
+python3 -I - "$stage" "$version" <<'PY'
+import json
+import pathlib
+import sys
+import tarfile
+import zipfile
+
+stage = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+
+wheels = sorted(stage.glob(f"yamlprims-{version}-cp310-abi3-*.whl"))
+if len(wheels) != 5:
+    sys.exit(f"error: expected 5 wheels for {version}, found {len(wheels)}")
+for wheel in wheels:
+    meta_name = f"yamlprims-{version}.dist-info/METADATA"
+    with zipfile.ZipFile(wheel) as zf:
+        if meta_name not in zf.namelist():
+            sys.exit(f"error: {wheel.name} missing {meta_name}")
+        lines = zf.read(meta_name).decode("utf-8").splitlines()
+    headers = {}
+    for line in lines:
+        if not line.strip():
+            break
+        key, sep, val = line.partition(": ")
+        if sep and key not in headers:
+            headers[key] = val
+    if headers.get("Name") != "yamlprims" or headers.get("Version") != version:
+        sys.exit(f"error: {wheel.name} metadata mismatch: {headers}")
+
+tgz = stage / f"3leaps-yamlprims-{version}.tgz"
+with tarfile.open(tgz, "r:gz") as tf:
+    member = tf.extractfile("package/package.json")
+    if member is None:
+        sys.exit(f"error: {tgz.name} missing package/package.json")
+    pkg = json.loads(member.read().decode("utf-8"))
+repo_url = (pkg.get("repository") or {}).get("url")
+if (
+    pkg.get("name") != "@3leaps/yamlprims"
+    or pkg.get("version") != version
+    or repo_url != "git+https://github.com/3leaps/yamlprims.git"
+):
+    sys.exit(f"error: {tgz.name} package.json mismatch: {pkg}")
+PY
 
 printf 'tag=%s\nobject=%s\ncommit=%s\n' "$tag" "$object" "$commit" >"$stage.anchor"
 mkdir -p "$(dirname "$out_dir")"

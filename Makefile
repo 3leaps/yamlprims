@@ -14,11 +14,13 @@ ACTIONLINT ?= actionlint
 GONEAT ?= goneat
 MSRV := $(shell sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
 VERSION := $(shell tr -d ' \t\r\n' < VERSION)
+PY_BINDING := bindings/python
+TS_BINDING := bindings/typescript
 SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
 
 .PHONY: all help prepush precommit pr-final check-tooling lint-workflows
 .PHONY: check test-docs lint lint-shell lint-yaml fmt-yaml fmt fmt-check
-.PHONY: test-rust check-rust msrv-check check-go test-go test-go-race crosscheck test-conformance-tools build clean
+.PHONY: test-rust check-rust msrv-check check-go test-go test-go-race crosscheck python-check ts-check test-conformance-tools build clean
 .PHONY: version spec-version version-check check-packages deps-check deny
 .PHONY: workflow-pin jq-portability content-check host-path-check surface-scan doctor
 .PHONY: test-release-tag-controls release-tooling-test release-check release-github-preflight
@@ -29,7 +31,7 @@ SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
 .PHONY: release-crates-clean release-clean release-download release-fetch-ci-artifacts
 .PHONY: release-notes release-stage-public release-checksums release-create-draft release-stage
 .PHONY: release-sign release-verify release-upload release-publish release
-.PHONY: release-stage-published release-verify-published
+.PHONY: release-stage-published release-verify-published release-pack-npm-redirector
 
 all: check
 
@@ -55,7 +57,11 @@ test-rust:
 
 check-rust:
 	$(CARGO) fmt --all --check
+	$(CARGO) fmt --manifest-path $(PY_BINDING)/Cargo.toml --check
+	$(CARGO) fmt --manifest-path $(TS_BINDING)/Cargo.toml --check
 	$(CARGO) check --locked --workspace --all-targets
+	CARGO_TARGET_DIR=$(CURDIR)/target/python $(CARGO) check --manifest-path $(PY_BINDING)/Cargo.toml --locked --all-targets
+	CARGO_TARGET_DIR=$(CURDIR)/target/wasm RUSTFLAGS="-Clink-arg=--max-memory=134217728" $(CARGO) check --manifest-path $(TS_BINDING)/Cargo.toml --target wasm32-unknown-unknown --locked
 
 msrv-check:
 	$(CARGO) +$(MSRV) test --locked --workspace -- --test-threads=1
@@ -74,6 +80,12 @@ test-go-race:
 crosscheck:
 	bash scripts/crosscheck.sh
 
+python-check:
+	@scripts/python-check.sh
+
+ts-check:
+	@scripts/ts-check.sh
+
 test-conformance-tools:
 	$(PYTHON) -B -m unittest discover -s conformance -p 'test_*.py'
 
@@ -84,10 +96,10 @@ precommit: fmt-check lint
 prepush:
 	$(PYTHON) scripts/check-tooling.py --prepush --goneat "$(GONEAT)" \
 		--require "$(ACTIONLINT)" --require "$(YAMLFMT)" --require "$(YAMLLINT)" \
-		--require "$(SHELLCHECK)" --require bash --require git --require gpg --require "$(GO)" --require "$(MAKE)"
+		--require "$(SHELLCHECK)" --require bash --require git --require gpg --require "$(GO)" --require npm --require "$(MAKE)"
 	$(MAKE) lint test-docs lint-workflows
 	$(MAKE) deps-check content-check jq-portability version-check workflow-pin
-	$(MAKE) check-rust test-rust check-go test-go test-go-race crosscheck test-conformance-tools
+	$(MAKE) check-rust test-rust check-go test-go test-go-race crosscheck ts-check python-check test-conformance-tools
 	$(MAKE) surface-scan
 
 pr-final: prepush
@@ -112,6 +124,8 @@ deps-check:
 
 deny:
 	$(CARGO) deny --locked check
+	$(CARGO) deny --manifest-path $(PY_BINDING)/Cargo.toml --locked check
+	$(CARGO) deny --manifest-path $(TS_BINDING)/Cargo.toml --locked check
 
 workflow-pin:
 	$(PYTHON) -B -E scripts/release-workflow-pin.py check
@@ -146,11 +160,15 @@ lint-shell:
 
 fmt:
 	$(CARGO) fmt --all
+	$(CARGO) fmt --manifest-path $(PY_BINDING)/Cargo.toml
+	$(CARGO) fmt --manifest-path $(TS_BINDING)/Cargo.toml
 	gofmt -w yaml cmd
 	@echo "Markdown uses UTF-8, LF and no trailing whitespace; make check verifies these rules."
 
 fmt-check:
 	$(CARGO) fmt --all -- --check
+	$(CARGO) fmt --manifest-path $(PY_BINDING)/Cargo.toml -- --check
+	$(CARGO) fmt --manifest-path $(TS_BINDING)/Cargo.toml -- --check
 	@out="$$(gofmt -l yaml cmd)"; if [ -n "$$out" ]; then echo "gofmt: $$out"; exit 1; fi
 
 version:
@@ -161,6 +179,10 @@ spec-version:
 
 version-check:
 	@test "$(VERSION)" = "$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" || { echo "VERSION and Cargo.toml differ"; exit 1; }
+	@test "$(VERSION)" = "$$(sed -n 's/^version = "\(.*\)"/\1/p' $(PY_BINDING)/Cargo.toml | head -1)" || { echo "VERSION and $(PY_BINDING)/Cargo.toml differ"; exit 1; }
+	@test "$(VERSION)" = "$$(sed -n 's/^version = "\(.*\)"/\1/p' $(PY_BINDING)/pyproject.toml | head -1)" || { echo "VERSION and $(PY_BINDING)/pyproject.toml differ"; exit 1; }
+	@test "$(VERSION)" = "$$(sed -n 's/^version = "\(.*\)"/\1/p' $(TS_BINDING)/Cargo.toml | head -1)" || { echo "VERSION and $(TS_BINDING)/Cargo.toml differ"; exit 1; }
+	@test "$(VERSION)" = "$$($(PYTHON) -c 'import json; print(json.load(open("$(TS_BINDING)/package.json"))["version"])')" || { echo "VERSION and $(TS_BINDING)/package.json differ"; exit 1; }
 	@echo "[ok] version-check"
 
 build:
@@ -344,3 +366,6 @@ release-stage-published:
 	scripts/release-stage-published.sh "$(YAMLPRIMS_RELEASE_TAG)" "$(DIST_PUBLISHED)"
 
 release-verify-published: release-stage-published
+
+release-pack-npm-redirector:
+	@scripts/pack-npm-redirector.sh "$(DIST_RELEASE)"

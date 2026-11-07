@@ -1,0 +1,33 @@
+[build-system]
+requires = ["maturin>=1.15,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "yamlprims"
+version = "0.1.0"
+description = "YAML 1.2.2 Core Schema value loader, strict wire decoder and canonical encoder (yamlprims-value/1)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE"]
+keywords = ["yaml", "yaml-1.2", "parser", "strict"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/3leaps/yamlprims"
+
+[tool.maturin]
+python-source = "python"
+module-name = "yamlprims._yamlprims"
+features = []
+
+# maturin's Rust SBOM records path dependencies as absolute file:// URLs of
+# the build host. The release ships its own SBOM (sbom-<version>.cdx.json) for
+# the tagged commit, so the wheel carries none.
+[tool.maturin.sbom]
+rust = false

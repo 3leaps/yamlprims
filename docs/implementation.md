@@ -1,11 +1,14 @@
-# Rust and Go implementation status
+# Rust, Go and binding implementation status
 
 The workspace contains a working Rust `yamlprims` core, a `Profile B` pure-Go
 twin (`yaml/` in root `go.mod`, `github.com/3leaps/yamlprims/yaml`,
 `CGO_ENABLED=0`, standard library only) with its conformance and crosscheck
-driver (`cmd/structcorpus-driver`), and a thin `yamlprims-cli` consumer. Both
-Rust crates are initial packages with publication disabled and their public
-surfaces still under development.
+driver (`cmd/structcorpus-driver`), isolated TypeScript WASM
+([`bindings/typescript/`](../bindings/typescript/README.md), `@3leaps/yamlprims`)
+and Python `PyO3/maturin` ([`bindings/python/`](../bindings/python/README.md),
+`yamlprims`) bindings, and a thin `yamlprims-cli` consumer. The Rust crates and
+language bindings have not been published to package registries yet, and their
+public surfaces remain under development until release qualification is complete.
 Package versions, specification tags and wire versions are separate namespaces.
 
 Available operations include single-document and stream loading from UTF-8,
@@ -125,9 +128,11 @@ standard library only) and its conformance driver (`cmd/structcorpus-driver`)
 are qualified against all 19 manifest rows of `conformance/pins/pin-c8b7421.json`
 (`conformance/requalify.sh`) and verified for byte-for-byte wire, `DecodeWire`
 round-trip, and plain-JSON parity with the Rust core via `make crosscheck`. The
-planned M2 language bindings (`bindings/typescript/` WASM and
-`bindings/python/` `PyO3/maturin`) have separate conformance and crosscheck
-gates ([build specification](build-spec.md),
+isolated M2 language bindings (`bindings/typescript/` zero-import WASM module
+and `bindings/python/` `PyO3/maturin` `abi3-py310` wheel) are verified in-tree
+against `conformance/vectors/cases.jsonl` and `structcorpus --crosscheck-jsonl`
+via `make ts-check` and `make python-check`, and remain marked `planned` in
+`.fulmen/repo.yaml` until package publication ([build specification](build-spec.md),
 [ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
 
 The working specification is a new draft; tagged specifications remain at their

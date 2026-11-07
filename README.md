@@ -5,7 +5,7 @@ starting with the contract.**
 
 The repository contains the [specification](docs/spec/yamlprims-spec.md),
 [build specification](docs/build-spec.md), [decision records](docs/decisions/README.md)
-and working Rust and pure-Go (`github.com/3leaps/yamlprims/yaml`) cores with an initial [CLI](crates/yamlprims-cli/README.md). No library package, CLI or binding has been
+and working Rust (`crates/yamlprims`) and pure-Go (`github.com/3leaps/yamlprims/yaml`) cores, isolated TypeScript WASM (`bindings/typescript/`, `@3leaps/yamlprims`) and Python `PyO3/maturin` (`bindings/python/`, `yamlprims`) bindings, and an initial [CLI](crates/yamlprims-cli/README.md). No library package, CLI or binding has been
 published to a package registry yet. See [implementation status](docs/implementation.md) for current coverage
 and remaining work.
 
@@ -15,11 +15,11 @@ and remaining work.
 - **Explicit duplicate-key, `NaN`-key and merge policies:** Duplicate mapping keys are always rejected (`ErrorKind::DuplicateKey` with `RelatedRole::FirstDefinition`), `NaN` keys are rejected (`ErrorKind::InvalidKey`), and `<<` merge directives default to `MergeKeys::Reject` with explicit opt-in `MergeKeys::Apply` or `MergeKeys::AsKey` ([ADR-0001](docs/decisions/ADR-0001-explicit-merge-policy.md)).
 - **Source locations, provenance and closed syntax taxonomy:** Byte/line/column spans, `Via::Alias` and `Via::Merge` provenance, boxed `Error` ownership ([DDR-0002](docs/decisions/DDR-0002-boxed-error-ownership.md)), and a closed 81-code `SyntaxKind` vocabulary shared across generic loading, typed `serde::Deserialize` (`from_str`, `from_str_with`, `from_node`), and canonical `yamlprims-value/1` wire output.
 - **Finite resource budgets before materialization:** 12 validated resource limits (`Limits`), including combined source collection depth, bytes-only anchor registration, capacity-before-copy merge admission, and output-byte preflight ([SecDR-0001](docs/decisions/SecDR-0001-resource-and-native-boundaries.md)).
-- **Memory-safe `Profile B` implementations and planned bindings ([ADR-0002](docs/decisions/ADR-0002-library-first-workspace.md), [ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)):**
+- **Memory-safe `Profile B` implementations and isolated M2 bindings ([ADR-0002](docs/decisions/ADR-0002-library-first-workspace.md), [ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)):**
   - **Rust (`crates/yamlprims`, `crates/yamlprims-cli`):** `#![forbid(unsafe_code)]` library and thin CLI (`check`, `dump`), backed by safe-Rust `granit-parser =2.0.0`.
   - **Go (`yaml/` in root `go.mod`, `github.com/3leaps/yamlprims/yaml`):** Pure-Go twin (`CGO_ENABLED=0`, standard library only, zero `cgo`) locked to the same `yamlprims-value/1` wire contract and `structcorpus` conformance pin.
-  - **TypeScript (`bindings/typescript/`, `@3leaps/yamlprims`, planned M2):** Isolated `wasm32-unknown-unknown` WebAssembly module with zero WASM imports and pre-copy linear-memory bounds (no native Node-API addons).
-  - **Python (`bindings/python/`, `yamlprims`, planned M2):** Standalone `PyO3/maturin` (`abi3-py310`, `#![forbid(unsafe_code)]` in crate, crossing CPython's C-extension ABI via `PyO3`) binding isolated from the root Cargo workspace.
+  - **TypeScript ([`bindings/typescript/`](bindings/typescript/README.md), `@3leaps/yamlprims`):** Isolated `wasm32-unknown-unknown` WebAssembly module with zero WASM imports and pre-copy linear-memory bounds (no native Node-API addons).
+  - **Python ([`bindings/python/`](bindings/python/README.md), `yamlprims`):** Standalone `PyO3/maturin` (`abi3-py310`, `#![forbid(unsafe_code)]` in crate, crossing CPython's C-extension ABI via `PyO3`) binding isolated from the root Cargo workspace.
 
 The Rust implementation uses `granit-parser` as its internal event source; the pure-Go twin implements its own standard-library scanner/parser and resolver against the applicable `spec-v1.4` semantics and [ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md). `yamlprims` owns the value, policy and error contract; it does not expose backend types or promise drop-in compatibility with YAML 1.1 or `unsafe-libyaml`-backed loaders. Current M1/M2 scope covers loading, validation, typed deserialization, canonical `yamlprims-value/1` wire encoding/decoding and plain JSON projection (`encode_plain` / `to_plain`); YAML text emission and the fused M3 iterator/linter remain M3 scope. It performs no includes, environment interpolation or network access.
 
@@ -46,10 +46,12 @@ change. We will qualify the implementation against pinned, independently reviewe
 test material, including [structcorpus](https://github.com/3leaps/structcorpus).
 
 ```sh
-make check       # checks the specification release; no Rust toolchain required
-make test-rust   # runs the included core, truth, wire and stack regressions
-make test-go     # runs the pure-Go twin unit, admission, truth and wire tests
-make crosscheck  # verifies Rust and Go byte-for-byte wire, round-trip and plain parity
+make check         # checks the specification release; no Rust toolchain required
+make test-rust     # runs the included core, truth, wire and stack regressions
+make test-go       # runs the pure-Go twin unit, admission, truth and wire tests
+make crosscheck    # verifies Rust and Go byte-for-byte wire, round-trip and plain parity
+make ts-check      # builds and tests the @3leaps/yamlprims WASM package and verifies corpus parity
+make python-check  # builds and tests the yamlprims abi3 wheel and verifies corpus parity
 ```
 
 ## License
