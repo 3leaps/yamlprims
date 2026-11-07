@@ -39,3 +39,66 @@ jobs:
           make crosscheck
       - name: Check qualification failure propagation
         run: python3 -B -m unittest discover -s conformance -p 'test_*.py'
+  typescript:
+    name: typescript (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.20.2", "22.23.4"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # reviewed 2026-08-04 commit
+        with:
+          toolchain: "1.88.0"
+          targets: wasm32-unknown-unknown
+      - name: TypeScript binding
+        run: make ts-check
+  python:
+    name: python (${{ matrix.target }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            python: "3.10"
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            python: "3.14"
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            python: "3.14"
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            python: "3.14"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # reviewed 2026-08-04 commit
+        with:
+          toolchain: "1.88.0"
+      - name: Python binding
+        run: make python-check PYTHON=python

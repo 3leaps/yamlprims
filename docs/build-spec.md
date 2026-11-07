@@ -1,6 +1,6 @@
 # yamlprims build specification
 
-Status: implementation plan with a working Rust core, pure-Go twin, and initial CLI. Published releases
+Status: implementation plan with working Rust and pure-Go twin cores, isolated TypeScript WASM and Python `PyO3/maturin` bindings, and an initial CLI. Published releases
 remain specification-only. See [implementation status](implementation.md) for the
 current code surface and qualification limits.
 The [behavioral specification](spec/yamlprims-spec.md) defines semantics; this

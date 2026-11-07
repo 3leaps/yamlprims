@@ -1,0 +1,24 @@
+# The Python extension module. A workspace of its own, outside crates/, so it
+# is never a release crate: pyo3 stays out of the published crates' graph and
+# the release-source checks see only crates/.
+[package]
+name = "yamlprims-py"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/3leaps/yamlprims"
+publish = false
+
+[lib]
+name = "_yamlprims"
+crate-type = ["cdylib"]
+
+[dependencies]
+yamlprims = { path = "../../crates/yamlprims" }
+pyo3 = { version = "=0.30.1", default-features = false, features = ["macros", "extension-module", "abi3-py310"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

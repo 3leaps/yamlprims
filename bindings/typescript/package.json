@@ -1,0 +1,43 @@
+{
+  "name": "@3leaps/yamlprims",
+  "version": "0.1.0",
+  "description": "YAML 1.2.2 Core Schema value loader, strict wire decoder and canonical encoder (yamlprims-value/1)",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/3leaps/yamlprims.git",
+    "directory": "bindings/typescript"
+  },
+  "keywords": [
+    "yaml",
+    "yaml-1.2",
+    "parser",
+    "strict",
+    "wasm"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/wasm.js",
+    "dist/wasm.d.ts",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "NOTICE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

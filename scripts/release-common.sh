@@ -49,6 +49,20 @@ release_base_assets() {
         [[ "$platform" == windows-* ]] && ext=zip
         printf 'yamlprims-%s-%s.%s\n' "$version" "$platform" "$ext"
     done
+    release_binding_assets "$version"
+}
+
+release_binding_assets() {
+    local version="$1" tag
+    for tag in \
+        manylinux_2_17_x86_64.manylinux2014_x86_64 \
+        manylinux_2_17_aarch64.manylinux2014_aarch64 \
+        macosx_11_0_arm64 \
+        win_amd64 \
+        win_arm64; do
+        printf 'yamlprims-%s-cp310-abi3-%s.whl\n' "$version" "$tag"
+    done
+    printf '3leaps-yamlprims-%s.tgz\n' "$version"
 }
 
 # The source archive of a commit: git archive of the whole tree under a

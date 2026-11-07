@@ -10,7 +10,10 @@ fail=0
 
 # No dependency of any kind (normal, dev, build, target-specific) on another
 # *prims crate or on rsfulmen, by package name, in any workspace manifest.
-if ! python3 -I - Cargo.toml crates/*/Cargo.toml <<'PY'
+shopt -s nullglob
+manifests=(Cargo.toml crates/*/Cargo.toml bindings/*/Cargo.toml)
+shopt -u nullglob
+if ! python3 -I - ${manifests[@]+"${manifests[@]}"} <<'PY'
 import re, sys, tomllib
 forbidden = re.compile(r"^(?:[a-z0-9_-]*prims|rsfulmen)(?:[-_][a-z0-9_-]*)?$")
 KEYS = ("dependencies", "dev-dependencies", "dev_dependencies", "build-dependencies", "build_dependencies")
@@ -39,19 +42,24 @@ then
   fail=1
 fi
 # The resolved graph (every edge kind). Failing to read it fails the check.
-if ! metadata="$(cargo metadata --locked --format-version 1 2>/dev/null)"; then
-  echo "deps-check: cargo metadata failed; the dependency graph was not checked" >&2
-  fail=1
-elif ! printf '%s' "$metadata" | python3 -I -c '
+shopt -s nullglob
+meta_manifests=(Cargo.toml bindings/*/Cargo.toml)
+shopt -u nullglob
+for manifest in ${meta_manifests[@]+"${meta_manifests[@]}"}; do
+  if ! metadata="$(cargo metadata --manifest-path "${manifest}" --locked --format-version 1 2>/dev/null)"; then
+    echo "deps-check: cargo metadata failed; the dependency graph was not checked" >&2
+    fail=1
+  elif ! printf '%s' "$metadata" | python3 -I -c '
 import json, re, sys
 forbidden = re.compile(r"^(?:[a-z0-9_-]*prims|rsfulmen)(?:[-_][a-z0-9_-]*)?$")
 names = {p["name"].lower() for p in json.load(sys.stdin)["packages"]}
 bad = sorted(n for n in names if forbidden.match(n) and not n.startswith("yamlprims-") and n != "yamlprims")
 print("\n".join(bad))
 sys.exit(1 if bad else 0)'; then
-  echo "deps-check: a prim or rsfulmen appears in the resolved dependency graph, or the graph could not be read" >&2
-  fail=1
-fi
+    echo "deps-check: a prim or rsfulmen appears in the resolved dependency graph, or the graph could not be read" >&2
+    fail=1
+  fi
+done
 
 if [[ -f go.mod ]]; then
   if grep -nE '^[[:space:]]*(require|replace)\b' go.mod; then
