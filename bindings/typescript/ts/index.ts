@@ -19,6 +19,7 @@ export const MAX_OPTIONS_BYTES = 64 * 1024;
 export const MAX_WASM_INPUT_CEILING = 64 * 1024 * 1024;
 export const MAX_WASM_MEMORY_BYTES = 128 * 1024 * 1024;
 export const MAX_WASM_MEMORY_PAGES = 2048;
+export const WASM_HIGH_WATER_RECYCLE_BYTES = 16 * 1024 * 1024;
 export const MAX_SAFE_METADATA_INT = 9_007_199_254_740_991; // 2^53 - 1
 export const I128_MIN = -170141183460469231731687303715884105728n;
 export const I128_MAX = 170141183460469231731687303715884105727n;
@@ -809,15 +810,14 @@ function runWasmLoad(
     if (!localTrapped && !instanceTrapped && activeInstance !== null) {
       exports.release();
       releaseCallCount += 1;
+      if (exports.memory.buffer.byteLength > WASM_HIGH_WATER_RECYCLE_BYTES) {
+        activeInstance = null;
+      }
     }
   }
 }
 
-/**
- * Internal diagnostic & negative-control test hook for verifying WASM module
- * zero-imports, raw reservation invalidation, and trap/recreate recovery.
- */
-export function _wasmTestHarness(): {
+function createWasmTestHarness(): {
   module: WebAssembly.Module;
   createRawInstance: () => WasmExports;
   getActiveMemory: () => WebAssembly.Memory;
@@ -2728,3 +2728,12 @@ export function loadPlain(input: string | Uint8Array, options?: OptionsInput): s
   }
   return text;
 }
+
+// Internal-only hook for in-repo linear-memory and trap tests (not part of the
+// public TypeScript declarations or supported package surface).
+Object.defineProperty(load, Symbol.for("yamlprims.internal.wasmTestHarness"), {
+  value: createWasmTestHarness,
+  enumerable: false,
+  configurable: false,
+  writable: false,
+});

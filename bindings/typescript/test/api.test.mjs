@@ -365,3 +365,10 @@ test("encodeError and encode enforce caller-side bounds and reject fabricated sy
   assert.ok(enc(decodedErr.error.message).byteLength <= 4096);
   assert.ok(decodedErr.error.message.endsWith("…"));
 });
+
+test("public package root surface excludes internal _wasmTestHarness hook", async () => {
+  const pkg = await import("@3leaps/yamlprims");
+  assert.equal("_wasmTestHarness" in pkg, false);
+  assert.equal(Object.keys(pkg).includes("_wasmTestHarness"), false);
+  assert.equal(Object.getOwnPropertyNames(pkg).includes("_wasmTestHarness"), false);
+});

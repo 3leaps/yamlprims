@@ -31,7 +31,7 @@ SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
 .PHONY: release-crates-clean release-clean release-download release-fetch-ci-artifacts
 .PHONY: release-notes release-stage-public release-checksums release-create-draft release-stage
 .PHONY: release-sign release-verify release-upload release-publish release
-.PHONY: release-stage-published release-verify-published release-pack-npm-redirector
+.PHONY: release-stage-published release-verify-published release-verify-registries release-pack-npm-redirector
 
 all: check
 
@@ -366,6 +366,10 @@ release-stage-published:
 	scripts/release-stage-published.sh "$(YAMLPRIMS_RELEASE_TAG)" "$(DIST_PUBLISHED)"
 
 release-verify-published: release-stage-published
+
+release-verify-registries:
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-verify-registries.sh "$(DIST_PUBLISHED)" $(or $(REGISTRY),all)
 
 release-pack-npm-redirector:
 	@scripts/pack-npm-redirector.sh "$(DIST_RELEASE)"

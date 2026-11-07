@@ -11,15 +11,15 @@ import {
   MAX_WASM_INPUT_CEILING,
   MAX_WASM_MEMORY_BYTES,
   MAX_WASM_MEMORY_PAGES,
+  WASM_HIGH_WATER_RECYCLE_BYTES,
   YamlprimsError,
-  _wasmTestHarness,
   load,
   loadAll,
   loadPlain,
   toPlain,
 } from "@3leaps/yamlprims";
 
-const harness = _wasmTestHarness();
+const harness = load[Symbol.for("yamlprims.internal.wasmTestHarness")]();
 const encoder = new TextEncoder();
 
 test("WASM module has zero imports, reports ABI version 1, and enforces hard 128 MiB (2048-page) linear-memory ceiling", () => {
@@ -223,4 +223,29 @@ test("real WASM linear-memory exhaustion on input_reserve and in-flight load_wir
   const afterRealRecovery = harness.stats();
   assert.equal(afterRealRecovery.instanceTrapped, false);
   assert.equal(afterRealRecovery.recreateCount, beforeOom.recreateCount + 1);
+});
+
+test("active WebAssembly.Instance is recycled after release() when linear memory exceeds WASM_HIGH_WATER_RECYCLE_BYTES", () => {
+  assert.deepEqual({ ...toPlain(load("init: 1\n")) }, { init: 1 });
+  const initialMem = harness.getActiveMemory();
+  assert.ok(initialMem.buffer.byteLength < WASM_HIGH_WATER_RECYCLE_BYTES);
+
+  // Grow active linear memory just above the 16 MiB high-water threshold (257 pages = 16,842,752 bytes).
+  const curPages = initialMem.buffer.byteLength / 65536;
+  const targetPages = WASM_HIGH_WATER_RECYCLE_BYTES / 65536 + 1;
+  initialMem.grow(targetPages - curPages);
+  assert.ok(initialMem.buffer.byteLength > WASM_HIGH_WATER_RECYCLE_BYTES);
+
+  const beforeLoad = harness.stats();
+  // Normal load completes, calls release(), and recycles the high-water instance in finally.
+  assert.deepEqual({ ...toPlain(load("after_high_water: 2\n")) }, { after_high_water: 2 });
+  const afterLoad = harness.stats();
+  assert.equal(afterLoad.releaseCallCount, beforeLoad.releaseCallCount + 1);
+  assert.equal(afterLoad.instanceTrapped, false);
+
+  // Next call instantiates a fresh WebAssembly.Instance with small linear memory (< 16 MiB).
+  assert.deepEqual({ ...toPlain(load("fresh_instance: 3\n")) }, { fresh_instance: 3 });
+  const afterFresh = harness.stats();
+  assert.equal(afterFresh.recreateCount, beforeLoad.recreateCount + 1);
+  assert.ok(harness.getActiveMemory().buffer.byteLength < WASM_HIGH_WATER_RECYCLE_BYTES);
 });

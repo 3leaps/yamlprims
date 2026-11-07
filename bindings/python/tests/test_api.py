@@ -334,6 +334,15 @@ class TestApi(unittest.TestCase):
             encode([Document(root=bypass_outer)])
         self.assertEqual(cm_enc.exception.kind, "internal")
 
+    def test_native_status_3_maps_to_internal_yamlprims_error(self) -> None:
+        import yamlprims as yp
+
+        with self.assertRaises(YamlprimsError) as cm:
+            yp._handle_native_status(3, "native panic in yamlprims", default_options())
+        self.assertEqual(cm.exception.kind, "internal")
+        self.assertEqual(cm.exception.message, "native panic in yamlprims")
+        self.assertIsNone(cm.exception.location())
+
 
 if __name__ == "__main__":
     unittest.main()
