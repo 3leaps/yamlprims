@@ -6,9 +6,8 @@ twin (`yaml/` in root `go.mod`, `github.com/3leaps/yamlprims/yaml`,
 driver (`cmd/structcorpus-driver`), isolated TypeScript WASM
 ([`bindings/typescript/`](../bindings/typescript/README.md), `@3leaps/yamlprims`)
 and Python `PyO3/maturin` ([`bindings/python/`](../bindings/python/README.md),
-`yamlprims`) bindings, and a thin `yamlprims-cli` consumer. The Rust crates and
-language bindings have not been published to package registries yet, and their
-public surfaces remain under development until release qualification is complete.
+`yamlprims`) bindings, and a thin `yamlprims-cli` consumer (`v0.1.0`; see
+[docs/releases/v0.1.0.md](releases/v0.1.0.md)).
 Package versions, specification tags and wire versions are separate namespaces.
 
 Available operations include single-document and stream loading from UTF-8,
@@ -131,8 +130,8 @@ round-trip, and plain-JSON parity with the Rust core via `make crosscheck`. The
 isolated M2 language bindings (`bindings/typescript/` zero-import WASM module
 and `bindings/python/` `PyO3/maturin` `abi3-py310` wheel) are verified in-tree
 against `conformance/vectors/cases.jsonl` and `structcorpus --crosscheck-jsonl`
-via `make ts-check` and `make python-check`, and remain marked `planned` in
-`.fulmen/repo.yaml` until package publication ([build specification](build-spec.md),
+via `make ts-check` and `make python-check`, and ship as signed release assets
+for npm (`@3leaps/yamlprims`) and PyPI (`yamlprims`) ([build specification](build-spec.md),
 [ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
 
 The working specification is a new draft; tagged specifications remain at their

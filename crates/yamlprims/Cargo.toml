@@ -13,7 +13,7 @@ readme = "README.md"
 keywords = ["yaml", "parser", "serde"]
 categories = ["parser-implementations", "encoding"]
 build = false
-publish = false
+publish = true
 
 [dependencies]
 granit-parser.workspace = true

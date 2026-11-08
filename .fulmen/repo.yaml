@@ -11,10 +11,10 @@ env_prefix: YAMLPRIMS_
 umbrella_prefix: null
 surfaces: [library, cli]
 bindings:
-  rust: planned  # crates/yamlprims (working tree in this repo; unpublished on crates.io until v0.1.0)
-  go: shipped  # github.com/3leaps/yamlprims/yaml (in-tree pure-Go twin, CGO_ENABLED=0; module tag on v0.1.0)
-  typescript: planned  # @3leaps/yamlprims (npm), bindings/typescript (wasm32, no imports; unpublished on npm)
-  python: planned  # yamlprims (PyPI), bindings/python (PyO3/maturin, abi3; unpublished on PyPI)
+  rust: shipped  # yamlprims (crates.io)
+  go: shipped  # github.com/3leaps/yamlprims/yaml (in-tree pure-Go twin, CGO_ENABLED=0)
+  typescript: shipped  # @3leaps/yamlprims (npm), bindings/typescript (wasm32, no imports)
+  python: shipped  # yamlprims (PyPI), bindings/python (PyO3/maturin, abi3)
 target_registries: [crates_io, go_proxy, npm, pypi]
 extensions:
   - id: typescript-wasm-binding

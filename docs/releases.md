@@ -1,8 +1,7 @@
 # Specification and code releases
 
 Specification tags use `spec-v<SPEC_VERSION>` (governed by `SPEC_VERSION` and [RELEASE_NOTES.md](../RELEASE_NOTES.md)). Code and CLI releases use `v<VERSION>` (governed by `VERSION` and `docs/releases/v<VERSION>.md`).
-Tags `spec-v1.0` through `spec-v1.4` exist (`SPEC_VERSION` is `1.4`). The current code release line is `0.1.0` (`VERSION` is `0.1.0`), targeting `v0.1.0` for the first Rust core crate (`yamlprims`) and multi-platform CLI (`yamlprims-cli`) release after M1 qualification gates close.
-Native bindings and downstream language packages (`@3leaps/yamlprims` on npm, `yamlprims` on PyPI, and `github.com/3leaps/yamlprims/bindings/go`) follow M2; see [the build specification](build-spec.md).
+Tags `spec-v1.0` through `spec-v1.4` exist (`SPEC_VERSION` is `1.4`). The current code release line is `0.1.0` (`VERSION` is `0.1.0`), shipping the Rust core crate (`yamlprims` on crates.io), the pure-Go twin (`github.com/3leaps/yamlprims/yaml`), the TypeScript WebAssembly package (`@3leaps/yamlprims` on npm), the Python `abi3` wheels (`yamlprims` on PyPI), and the multi-platform CLI (`yamlprims`); see [docs/releases/v0.1.0.md](releases/v0.1.0.md) and [the build specification](build-spec.md).
 
 The immutable `spec-v1.1`, `spec-v1.2`, `spec-v1.3` and `spec-v1.4` specifications retain their original
 "Unreleased draft" wording inside the tagged specification file. Status updates on `main` do not replace those

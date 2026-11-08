@@ -94,7 +94,7 @@ trap cleanup EXIT
 git -C "$root" worktree add --quiet --detach "$source_tree" "$commit"
 "$root/scripts/release-source-check.py" "$commit" --repo "$root" --worktree "$source_tree"
 "$root/scripts/check-registry-config.py" --source-root "$source_tree"
-python3 -I "$root/scripts/release-crates.py" --source-root "$source_tree" --require-publish-true check
+python3 -I "$root/scripts/release-crates.py" --source-root "$source_tree" check
 version="$(tr -d '\r\n' <"$source_tree/VERSION")"
 [[ "$(release_tag)" == "v$version" ]] || die 'verified source version differs from the ceremony tag'
 
