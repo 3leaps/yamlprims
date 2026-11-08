@@ -53,11 +53,10 @@ make release-crate-publish-dry-run
 
 The registries receive **exact signed files from the published GitHub release**; nothing is rebuilt.
 
-### 5a. crates.io (`yamlprims`, then `yamlprims-cli`)
+### 5a. crates.io (`yamlprims`)
 
-For each crate in `make release-crates-list` order (`yamlprims`, then `yamlprims-cli`):
+For each crate in `make release-crates-list` order (`yamlprims`; `yamlprims-cli` remains `publish = false` and ships as signed release binaries):
 
-- For `yamlprims-cli`, dispatch the `Crate verification` workflow on the release tag after `yamlprims` is on crates.io (`gh workflow run crates-verify.yml --ref v<VERSION> -f crate=yamlprims-cli`).
 - Fetch, verify, and publish through the isolated credential provider (`scripts/release-cargo-provider.py`):
 
 ```sh

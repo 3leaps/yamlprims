@@ -46,7 +46,7 @@ commit="$(git rev-parse --verify "refs/tags/$tag^{commit}")"
 [[ -z "$(git status --porcelain --untracked-files=all)" ]] || { echo 'error: clean checkout required' >&2; exit 1; }
 # The release source is inert for Cargo before anything compiles it.
 python3 -I scripts/release-source-check.py "$commit"
-python3 -I scripts/release-crates.py --require-publish-true check
+python3 -I scripts/release-crates.py check
 msrv="$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)"
 # Every predecessor in the publication plan must already be on the index, so
 # the package resolves exactly as it will for consumers (no path patch).

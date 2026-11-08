@@ -57,9 +57,8 @@ for bad in ('yamlprims\n\nyamlprims-ffi\n', 'yamlprims\nyamlprims\n', ' yamlprim
         tmp.unlink(missing_ok=True)
 PY
 
-# A tagged tree whose crate version differs from VERSION is refused, and a
-# release-tag check requires publish = true even while the pre-M1 checkout keeps
-# publish = false.
+# A tagged tree whose crate version differs from VERSION or whose publishable
+# crate sets publish = false is refused.
 src="$fixture_dir/source"
 mkdir -p "$src/crates" "$src/config/release"
 cp "$fixture_root/Cargo.toml" "$fixture_root/Cargo.lock" "$fixture_root/VERSION" "$src/"
@@ -67,17 +66,20 @@ cp -R "$fixture_root/crates/." "$src/crates/"
 cp -R "$fixture_root/scripts" "$src/scripts"
 cp "$fixture_root/config/release/publishable-crates.txt" "$src/config/release/"
 PYTHONDONTWRITEBYTECODE=1 python3 "$src/scripts/release-crates.py" --source-root "$src" check
+python3 - "$src/crates/yamlprims/Cargo.toml" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+p.write_text(p.read_text().replace("publish = true", "publish = false"))
+PY
 expect_fail_with 'yamlprims must explicitly set publish = true' \
-	env PYTHONDONTWRITEBYTECODE=1 python3 "$src/scripts/release-crates.py" --source-root "$src" --require-publish-true check
-expect_fail_with 'yamlprims must explicitly set publish = true' \
-	env PYTHONDONTWRITEBYTECODE=1 YAMLPRIMS_RELEASE_TAG=v0.1.0 python3 "$src/scripts/release-crates.py" --source-root "$src" check
+	env PYTHONDONTWRITEBYTECODE=1 python3 "$src/scripts/release-crates.py" --source-root "$src" check
 python3 - "$src/crates/yamlprims/Cargo.toml" <<'PY'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 p.write_text(p.read_text().replace("publish = false", "publish = true"))
 PY
-PYTHONDONTWRITEBYTECODE=1 YAMLPRIMS_RELEASE_TAG=v0.1.0 python3 "$src/scripts/release-crates.py" --source-root "$src" check
 printf '9.9.9\n' >"$src/VERSION"
 expect_fail_with 'crate version differs from VERSION 9.9.9: yamlprims' \
 	env PYTHONDONTWRITEBYTECODE=1 python3 "$src/scripts/release-crates.py" --source-root "$src" check

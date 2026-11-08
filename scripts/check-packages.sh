@@ -54,27 +54,7 @@ if [[ "${CI:-}" != true ]]; then
     trap 'rc=$?; rm -rf "$package_target" "$cargo_home"; exit "$rc"' EXIT
     export CARGO_HOME="$cargo_home"
 fi
-work_root="$PROJECT_ROOT"
-if [[ "${YAMLPRIMS_RELEASE_TAG:-}" != v* && "${GITHUB_REF:-}" != refs/tags/v* && "${YAMLPRIMS_REQUIRE_PUBLISH_TRUE:-0}" != 1 ]]; then
-    if grep -Eq '^publish[[:space:]]*=[[:space:]]*false' "$PROJECT_ROOT/crates/yamlprims/Cargo.toml"; then
-        if [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain --untracked-files=normal)" ]]; then
-            echo 'error: working tree must be clean before pre-release package check (HEAD is archived)' >&2
-            exit 1
-        fi
-        work_root="$package_target/src"
-        mkdir -p "$work_root"
-        git -C "$PROJECT_ROOT" archive HEAD | tar -x -C "$work_root"
-        for crate in ${crates[@]+"${crates[@]}"}; do
-            python3 -I - "$work_root/crates/$crate/Cargo.toml" <<'PY'
-from pathlib import Path
-import re, sys
-p = Path(sys.argv[1])
-p.write_text(re.sub(r"(?m)^publish\s*=\s*false$", "publish = true", p.read_text()))
-PY
-        done
-    fi
-fi
-(cd "$work_root" && cargo "+$msrv" package ${package_args[@]+"${package_args[@]}"} ${verify_args[@]+"${verify_args[@]}"} --locked ${patch_args[@]+"${patch_args[@]}"})
+cargo "+$msrv" package ${package_args[@]+"${package_args[@]}"} ${verify_args[@]+"${verify_args[@]}"} --locked ${patch_args[@]+"${patch_args[@]}"}
 
 package_dir="$CARGO_TARGET_DIR/package"
 actual=()

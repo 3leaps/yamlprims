@@ -36,7 +36,7 @@ def read_plan(path=PLAN):
     return names
 
 
-def validate(packages, names, manifests, require_publish_true=True):
+def validate(packages, names, manifests):
     by_name = {p["name"]: p for p in packages}
     if len(by_name) != len(packages):
         raise ValueError("duplicate workspace package")
@@ -50,12 +50,8 @@ def validate(packages, names, manifests, require_publish_true=True):
             f"publishable workspace crate(s) missing from the list: {', '.join(extra)}"
         )
     for name in names:
-        pub = manifests[name]["package"].get("publish")
-        if require_publish_true:
-            if pub is not True:
-                raise ValueError(f"{name} must explicitly set publish = true")
-        elif not isinstance(pub, bool):
-            raise ValueError(f"{name} must explicitly set publish = true or false")
+        if manifests[name]["package"].get("publish") is not True:
+            raise ValueError(f"{name} must explicitly set publish = true")
         for dependency in by_name[name]["dependencies"]:
             dep = dependency["name"]
             if dep in by_name and dep not in names:
@@ -72,22 +68,11 @@ def validate(packages, names, manifests, require_publish_true=True):
 def main():
     args = sys.argv[1:]
     source_root = ROOT
-    require_publish_true = (
-        os.environ.get("YAMLPRIMS_RELEASE_TAG", "").startswith("v")
-        or os.environ.get("GITHUB_REF", "").startswith("refs/tags/v")
-        or os.environ.get("YAMLPRIMS_REQUIRE_PUBLISH_TRUE") == "1"
-    )
-    while args:
-        if args[0] == "--source-root":
-            if len(args) < 2:
-                raise ValueError("expected verified source root and mode")
-            source_root = pathlib.Path(args[1]).resolve()
-            args = args[2:]
-        elif args[0] == "--require-publish-true":
-            require_publish_true = True
-            args = args[1:]
-        else:
-            break
+    if args[:1] == ["--source-root"]:
+        if len(args) != 3:
+            raise ValueError("expected verified source root and mode")
+        source_root = pathlib.Path(args[1]).resolve()
+        args = args[2:]
     names = read_plan()
     command = ["cargo", "metadata", "--no-deps", "--format-version", "1", "--locked"]
     environment = None
@@ -131,7 +116,7 @@ def main():
         p["name"]: tomllib.loads(pathlib.Path(p["manifest_path"]).read_text())
         for p in packages
     }
-    validate(packages, names, manifests, require_publish_true=require_publish_true)
+    validate(packages, names, manifests)
     # Every published crate carries exactly the release version of its tree.
     version = (source_root / "VERSION").read_text().strip()
     by_name = {p["name"]: p for p in packages}
