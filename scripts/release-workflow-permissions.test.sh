@@ -13,7 +13,7 @@ python3 -c 'import yaml' 2>/dev/null || {
 # the semantic checks below are a second layer that explains why an edit
 # would be refused. The pin is the boundary.
 (cd "$root" && python3 -B -E scripts/release-workflow-pin.py check) >/dev/null
-for workflow in release crates-verify; do
+for workflow in release crates-verify registry-publish; do
 	PYTHONDONTWRITEBYTECODE=1 python3 "$root/scripts/release-workflow-permissions.py" mutations "$root/.github/workflows/$workflow.yml"
 done
 # Pin controls, on a scratch repository holding the real workflows and pin.
@@ -86,6 +86,16 @@ git -C "$repo" checkout -q -- .
 sed_in_place 's/^    timeout-minutes: 15$/    timeout-minutes: 15\n    permissions:\n      id-token: write/' "$repo/.github/workflows/release.yml"
 pin_with
 refused 'grants more than read' check
+git -C "$repo" checkout -q -- .
+# registry-publish.yml may grant id-token: write only on publish-pypi and
+# publish-npm when bound to their matching environments and workflow_dispatch.
+sed_in_place 's/^    environment: publish-pypi$/    environment: other-env/' "$repo/.github/workflows/registry-publish.yml"
+pin_with
+refused 'grants more than read' check
+git -C "$repo" checkout -q -- .
+sed_in_place 's/^  workflow_dispatch:$/  push:\n  workflow_dispatch:/' "$repo/.github/workflows/registry-publish.yml"
+pin_with
+refused 'must trigger on workflow_dispatch only' check
 git -C "$repo" checkout -q -- .
 pin check
 # A yaml.py beside either checker is never imported (a script's own directory

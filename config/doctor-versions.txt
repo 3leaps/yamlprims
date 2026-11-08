@@ -18,3 +18,5 @@ yamllint=1.35.0
 goneat=0.6.4
 gh=2.40.0
 cargo-deny=0.18.0
+npm=10.0.0
+uv=0.5.0

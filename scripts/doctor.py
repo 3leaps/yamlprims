@@ -34,6 +34,8 @@ COMMANDS: dict[str, tuple[str, ...]] = {
     "goneat": ("goneat", "version"),
     "gh": ("gh", "--version"),
     "cargo-deny": ("cargo", "deny", "--version"),
+    "npm": ("npm", "--version"),
+    "uv": ("uv", "--version"),
 }
 
 RELEASE_REQUIRED = (
@@ -49,6 +51,8 @@ RELEASE_REQUIRED = (
     "shasum",
     "minisign",
     "gh",
+    "npm",
+    "uv",
 )
 
 CORE_REQUIRED = (

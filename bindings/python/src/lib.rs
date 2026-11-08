@@ -74,8 +74,16 @@ fn finish_error(err: &Error, opts: &Options) -> (u32, String) {
     }
 }
 
+fn run_with_panic_guard<F: FnOnce() -> (u32, String)>(f: F) -> (u32, String) {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(res) => res,
+        Err(_) => (3, "native panic in yamlprims".to_owned()),
+    }
+}
+
 #[pyfunction]
 fn load_wire(
+    py: Python<'_>,
     input: &[u8],
     single_doc: bool,
     merge_keys: &str,
@@ -86,22 +94,27 @@ fn load_wire(
         Ok(o) => o,
         Err(e) => return finish_error(&e, &Options::default()),
     };
-    let loaded = if single_doc {
-        load_bytes(input, &opts).map(|doc| vec![doc])
-    } else {
-        load_all_bytes(input, &opts)
-    };
-    match loaded {
-        Ok(docs) => match encode(&docs, &opts) {
-            Ok(wire) => (0, wire),
-            Err(e) => finish_error(&e, &opts),
-        },
-        Err(e) => finish_error(&e, &opts),
-    }
+    py.detach(|| {
+        run_with_panic_guard(|| {
+            let loaded = if single_doc {
+                load_bytes(input, &opts).map(|doc| vec![doc])
+            } else {
+                load_all_bytes(input, &opts)
+            };
+            match loaded {
+                Ok(docs) => match encode(&docs, &opts) {
+                    Ok(wire) => (0, wire),
+                    Err(e) => finish_error(&e, &opts),
+                },
+                Err(e) => finish_error(&e, &opts),
+            }
+        })
+    })
 }
 
 #[pyfunction]
 fn load_plain(
+    py: Python<'_>,
     input: &[u8],
     merge_keys: &str,
     unknown_tags: &str,
@@ -111,12 +124,27 @@ fn load_plain(
         Ok(o) => o,
         Err(e) => return finish_error(&e, &Options::default()),
     };
-    match load_bytes(input, &opts) {
-        Ok(doc) => match encode_plain(doc.root(), &opts) {
-            Ok(json) => (0, json),
+    py.detach(|| {
+        run_with_panic_guard(|| match load_bytes(input, &opts) {
+            Ok(doc) => match encode_plain(doc.root(), &opts) {
+                Ok(json) => (0, json),
+                Err(e) => finish_error(&e, &opts),
+            },
             Err(e) => finish_error(&e, &opts),
-        },
-        Err(e) => finish_error(&e, &opts),
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_with_panic_guard;
+
+    #[test]
+    fn panic_guard_maps_unwind_to_status_3() {
+        let res = run_with_panic_guard(|| -> (u32, String) {
+            panic!("simulated native panic");
+        });
+        assert_eq!(res, (3, "native panic in yamlprims".to_owned()));
     }
 }
 
