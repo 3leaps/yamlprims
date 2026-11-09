@@ -85,6 +85,7 @@ test("conformance/vectors/cases.jsonl wire, round-trip, and plain parity", () =>
         ? hexToBytes(rec.input_hex)
         : new TextEncoder().encode(rec.input);
     const opts = buildOptions(rec);
+    const rtOpts = widenLimitsForRoundTrip(opts);
     const single = Boolean(rec.single);
     const checkPlain = Boolean(rec.check_plain);
 
@@ -95,14 +96,13 @@ test("conformance/vectors/cases.jsonl wire, round-trip, and plain parity", () =>
         wire = encode(docs, opts);
       } catch (encErr) {
         if (!(encErr instanceof YamlprimsError)) throw encErr;
-        wire = encodeError(encErr, defOpts);
+        wire = encodeError(encErr, rtOpts);
       }
     } catch (loadErr) {
       if (!(loadErr instanceof YamlprimsError)) throw loadErr;
-      wire = encodeError(loadErr, defOpts);
+      wire = encodeError(loadErr, rtOpts);
     }
 
-    const rtOpts = widenLimitsForRoundTrip(opts);
     const decoded = decodeWire(wire, rtOpts, inputBytes);
     const rt =
       decoded.kind === "documents"
@@ -125,7 +125,7 @@ test("conformance/vectors/cases.jsonl wire, round-trip, and plain parity", () =>
         plainViaHost = encodePlain(doc, opts);
       } catch (err) {
         if (!(err instanceof YamlprimsError)) throw err;
-        plainViaHost = encodeError(err, defOpts);
+        plainViaHost = encodeError(err, rtOpts);
       }
 
       let plainViaWasm;
@@ -133,7 +133,7 @@ test("conformance/vectors/cases.jsonl wire, round-trip, and plain parity", () =>
         plainViaWasm = loadPlain(inputBytes, opts);
       } catch (err) {
         if (!(err instanceof YamlprimsError)) throw err;
-        plainViaWasm = encodeError(err, defOpts);
+        plainViaWasm = encodeError(err, rtOpts);
       }
 
       assert.equal(

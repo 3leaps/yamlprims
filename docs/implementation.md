@@ -6,8 +6,8 @@ twin (`yaml/` in root `go.mod`, `github.com/3leaps/yamlprims/yaml`,
 driver (`cmd/structcorpus-driver`), isolated TypeScript WASM
 ([`bindings/typescript/`](../bindings/typescript/README.md), `@3leaps/yamlprims`)
 and Python `PyO3/maturin` ([`bindings/python/`](../bindings/python/README.md),
-`yamlprims`) bindings, and a thin `yamlprims-cli` consumer (`v0.1.0`; see
-[docs/releases/v0.1.0.md](releases/v0.1.0.md)).
+`yamlprims`) bindings, and a thin `yamlprims-cli` consumer (`v0.1.1`; see
+[docs/releases/v0.1.1.md](releases/v0.1.1.md)).
 Package versions, specification tags and wire versions are separate namespaces.
 
 Available operations include single-document and stream loading from UTF-8,
@@ -80,23 +80,23 @@ precedence, coordinates, pass counts and the native resource fallback.
 The working specification is at revision 1.4 (`spec-v1.4`). Historical
 specification tags (`spec-v1.0` through `spec-v1.4`) and conformance pins
 retain their exact bindings. The pinned conformance baseline at
-`c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99` (`conformance/pins/pin-c8b7421.json`)
-adds the 12 explicit-limit revision 1.4 records (`yamlprims-core-depth128` r1
-and `yamlprims-core-entries2` r1) and synthetic driver controls
+`6b1266e16676dc456328eb64c0eed028060845c3` (`conformance/pins/pin-6b1266e.json`)
+adds the 18 explicit-limit revision 1.4 records (`yamlprims-core-depth128` r1,
+`yamlprims-core-depth255` r1 and `yamlprims-core-entries2` r1) and synthetic driver controls
 (`conformance/scripts/structcorpus_probes_v14.py`) for the four revision 4
 policy profiles (`yamlprims-core`, `yamlprims-core-stream`,
 `yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key` r4), which carry
-zero shipped corpus records in `c8b7421`:
+zero shipped corpus records in `6b1266e`:
 
 | Revision 1.4 rule | Conformance and unit coverage |
 | --- | --- |
 | Bytes-only anchor registration | Focused unit/integration controls plus `yaml.limits.anchor-registration-bytes-not-nodes` (`yamlprims-core-entries2` r1) |
-| Combined source depth and bounded validation precedence | Focused unit/integration controls plus the six `yamlprims-core-depth128` r1 depth-boundary and alias-subtree records (`depth-127`, `depth-128`, `depth-129`, `alias-125`, `alias-126`, `alias-127`) |
+| Combined source depth and bounded validation precedence | Focused unit/integration controls plus the six `yamlprims-core-depth128` r1 (`depth-127`, `depth-128`, `depth-129`, `alias-125`, `alias-126`, `alias-127`) and six `yamlprims-core-depth255` r1 (`depth-254`, `depth-255`, `depth-256`, `alias-252`, `alias-253`, `alias-254`) depth-boundary and alias-subtree records |
 | Merged-entry capacity before copy admission | Focused unit/integration controls plus `yaml.limits.merge-shadowed-fits-entries2` and `yaml.limits.merge-partial-entries-before-copy` (`yamlprims-core-entries2` r1) |
 | Ordinary-entry, copy-tie and completed-key rules | Focused unit/integration controls plus `yaml.limits.ordinary-entry-before-value-nodes` and the two completed-key NaN precedence records (`nan-key-before-value-nodes`, `nan-key-after-key-owned-bytes`) under `yamlprims-core-entries2` r1 |
 
 Passing the pinned conformance gate establishes bounded corpus transfer for
-these 12 records and the historical 61,348-case baseline; it does not close the
+these 18 records and the historical 61,348-case baseline; it does not close the
 broader M1 release gates below.
 
 ## Remaining gates before API freeze
@@ -124,7 +124,7 @@ and license audit, and package/downstream qualification. Logical weight limits
 are not RSS limits. The current Rust workflow is baseline coverage on Linux;
 documentation CI is not runtime qualification. The `Profile B` pure-Go twin (`yaml/` in root `go.mod`, `CGO_ENABLED=0`,
 standard library only) and its conformance driver (`cmd/structcorpus-driver`)
-are qualified against all 19 manifest rows of `conformance/pins/pin-c8b7421.json`
+are qualified against all 20 manifest rows of `conformance/pins/pin-6b1266e.json`
 (`conformance/requalify.sh`) and verified for byte-for-byte wire, `DecodeWire`
 round-trip, and plain-JSON parity with the Rust core via `make crosscheck`. The
 isolated M2 language bindings (`bindings/typescript/` zero-import WASM module

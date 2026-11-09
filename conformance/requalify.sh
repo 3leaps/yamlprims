@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 prefix_only=false
-pin="$root/conformance/pins/pin-c8b7421.json"
+pin="$root/conformance/pins/pin-6b1266e.json"
 if [ "${1:-}" = --prefix-only ] && [ "$#" -eq 1 ]; then
   prefix_only=true
 else
@@ -51,7 +51,11 @@ driver="${CARGO_TARGET_DIR:-$root/target}/release/examples/structcorpus"
 "$python" -I conformance/scripts/structcorpus_gate.py "$pin" "$hydrated" "$corpus" "$driver" --record "$out/gate.json"
 "$python" -I conformance/scripts/structcorpus_probes_v13.py "$corpus" "$driver" > "$out/probes-v13.tsv"
 if [ -f "$corpus/manifests/profiles/yamlprims-core-depth128.r1.json" ]; then
-  "$python" -I conformance/scripts/structcorpus_probes_v14.py "$corpus" "$driver" > "$out/probes-v14.tsv"
+  v14_flags=()
+  if [ -f "$corpus/manifests/profiles/yamlprims-core-depth255.r1.json" ]; then
+    v14_flags=(--require-depth255)
+  fi
+  "$python" -I conformance/scripts/structcorpus_probes_v14.py ${v14_flags[@]+"${v14_flags[@]}"} "$corpus" "$driver" > "$out/probes-v14.tsv"
 fi
 "$python" -I conformance/scripts/structcorpus_gate_probes.py "$pin" "$hydrated" "$corpus" "$driver" > "$out/gate-probes.tsv"
 "$python" -I conformance/scripts/node_selectors.py "$corpus" "$driver" "$out/selectors.json"
@@ -60,7 +64,7 @@ go_driver="${CARGO_TARGET_DIR:-$root/target}/release/structcorpus-driver-go"
 "$python" -I conformance/scripts/structcorpus_gate.py "$pin" "$hydrated" "$corpus" "$go_driver" --record "$out/go-gate.json"
 "$python" -I conformance/scripts/structcorpus_probes_v13.py "$corpus" "$go_driver" > "$out/go-probes-v13.tsv"
 if [ -f "$corpus/manifests/profiles/yamlprims-core-depth128.r1.json" ]; then
-  "$python" -I conformance/scripts/structcorpus_probes_v14.py "$corpus" "$go_driver" > "$out/go-probes-v14.tsv"
+  "$python" -I conformance/scripts/structcorpus_probes_v14.py ${v14_flags[@]+"${v14_flags[@]}"} "$corpus" "$go_driver" > "$out/go-probes-v14.tsv"
 fi
 "$python" -I conformance/scripts/structcorpus_gate_probes.py "$pin" "$hydrated" "$corpus" "$go_driver" > "$out/go-gate-probes.tsv"
 "$python" -I conformance/scripts/node_selectors.py "$corpus" "$go_driver" "$out/go-selectors.json"

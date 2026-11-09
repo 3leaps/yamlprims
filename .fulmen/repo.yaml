@@ -4,7 +4,7 @@
 schema: "contract:taxonomy/v0/repo-declaration.schema.json"
 class: prims
 profile: B  # locked parallel pure-Go and Rust implementations
-profile_status: locked  # both Rust and Go trees pass conformance/pins/pin-c8b7421.json and make crosscheck
+profile_status: locked  # both Rust and Go trees pass conformance/pins/pin-6b1266e.json and make crosscheck
 leaf: true  # depends on no other prim; scripts/deps-check.sh enforces it
 category: library
 env_prefix: YAMLPRIMS_

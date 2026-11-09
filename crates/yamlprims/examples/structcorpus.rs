@@ -212,7 +212,7 @@ fn profiles() -> Vec<Profile> {
             "reject",
             true,
         ),
-        // Spec 1.4 (DDR-0010, DDR-0011).
+        // Spec 1.4 (DDR-0010, DDR-0011, DDR-0012).
         p(
             "yamlprims-core",
             4,
@@ -254,6 +254,14 @@ fn profiles() -> Vec<Profile> {
             true,
         ),
         p(
+            "yamlprims-core-depth255",
+            1,
+            "target",
+            MergeKeys::Reject,
+            "reject",
+            true,
+        ),
+        p(
             "yamlprims-core-entries2",
             1,
             "target",
@@ -279,6 +287,7 @@ const LIMITS_PROFILES: &[&str] = &[
     "yamlprims-core-limits",
     "yamlprims-core-stress",
     "yamlprims-core-depth128",
+    "yamlprims-core-depth255",
     "yamlprims-core-entries2",
 ];
 
@@ -592,8 +601,8 @@ fn main() -> ExitCode {
     }
 }
 
-/// Parse a JSON record, allowing up to 512 levels of container nesting so 128-deep
-/// `yaml-value/1` expectations in `yamlprims-core-depth128` r1 do not trip `serde_json`'s
+/// Parse a JSON record, allowing up to 1024 levels of container nesting so 255-deep
+/// `yaml-value/1` expectations in `yamlprims-core-depth255` r1 do not trip `serde_json`'s
 /// default 128-level deserializer recursion cap.
 fn parse_json(s: &str) -> Result<J, String> {
     match serde_json::from_str(s) {
@@ -623,8 +632,8 @@ fn trim_json_start(s: &str) -> &str {
 }
 
 fn parse_deep_json(s: &mut &str, depth: usize) -> Result<J, String> {
-    if depth > 512 {
-        return Err("JSON nesting exceeds 512".into());
+    if depth > 1024 {
+        return Err("JSON nesting exceeds 1024".into());
     }
     *s = trim_json_start(s);
     match s.as_bytes().first().copied() {
@@ -1340,24 +1349,62 @@ fn run_crosscheck_jsonl() -> ExitCode {
                 }
             }
         }
+        let mut rt_opts = def_opts.clone();
+        if opts.validate().is_ok() {
+            rt_opts.limits.max_input_bytes = rt_opts
+                .limits
+                .max_input_bytes
+                .max(opts.limits.max_input_bytes);
+            rt_opts.limits.max_depth = rt_opts.limits.max_depth.max(opts.limits.max_depth);
+            rt_opts.limits.max_nodes = rt_opts.limits.max_nodes.max(opts.limits.max_nodes);
+            rt_opts.limits.max_expanded_nodes = rt_opts
+                .limits
+                .max_expanded_nodes
+                .max(opts.limits.max_expanded_nodes);
+            rt_opts.limits.max_alias_events = rt_opts
+                .limits
+                .max_alias_events
+                .max(opts.limits.max_alias_events);
+            rt_opts.limits.max_owned_bytes = rt_opts
+                .limits
+                .max_owned_bytes
+                .max(opts.limits.max_owned_bytes);
+            rt_opts.limits.max_scalar_bytes = rt_opts
+                .limits
+                .max_scalar_bytes
+                .max(opts.limits.max_scalar_bytes);
+            rt_opts.limits.max_key_bytes =
+                rt_opts.limits.max_key_bytes.max(opts.limits.max_key_bytes);
+            rt_opts.limits.max_mapping_entries = rt_opts
+                .limits
+                .max_mapping_entries
+                .max(opts.limits.max_mapping_entries);
+            rt_opts.limits.max_documents =
+                rt_opts.limits.max_documents.max(opts.limits.max_documents);
+            rt_opts.limits.max_output_bytes = rt_opts
+                .limits
+                .max_output_bytes
+                .max(opts.limits.max_output_bytes);
+            rt_opts.limits.max_warnings = rt_opts.limits.max_warnings.max(opts.limits.max_warnings);
+        }
         let loaded = if single {
             load_bytes(&input, &opts).map(|d| vec![d])
         } else {
             load_all_bytes(&input, &opts)
         };
         let wire = match &loaded {
-            Err(e) => encode_error(e, &def_opts).expect("encode_error"),
+            Err(e) => encode_error(e, &rt_opts).expect("encode_error"),
             Ok(docs) => match encode(docs, &opts) {
                 Ok(out) => out,
-                Err(enc_err) => encode_error(&enc_err, &def_opts).expect("encode_error"),
+                Err(enc_err) => encode_error(&enc_err, &rt_opts).expect("encode_error"),
             },
         };
         let plain = if check_plain {
             match load_bytes(&input, &opts) {
-                Err(e) => encode_error(&e, &def_opts).expect("encode_error"),
+                Err(e) => encode_error(&e, &rt_opts).expect("encode_error"),
                 Ok(doc) => match encode_plain(doc.root(), &opts) {
                     Ok(out) => out,
-                    Err(perr) => encode_error(&perr, &def_opts).expect("encode_error"),
+                    Err(perr) => encode_error(&perr, &rt_opts).expect("encode_error"),
                 },
             }
         } else {

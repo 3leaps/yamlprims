@@ -91,6 +91,7 @@ class RequalifyTests(unittest.TestCase):
             corpus = tmp / "corpus"
             (corpus / "manifests/profiles").mkdir(parents=True)
             (corpus / "manifests/profiles/yamlprims-core-depth128.r1.json").write_text("{}\n")
+            (corpus / "manifests/profiles/yamlprims-core-depth255.r1.json").write_text("{}\n")
             hydrated = tmp / "hydrated"
             hydrated.mkdir()
             out = tmp / "evidence"
@@ -119,16 +120,16 @@ class RequalifyTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             py_calls = py_log.read_text().splitlines()
             self.assertEqual(len(py_calls), 10, py_calls)
-            expected_pin = str(ROOT / "conformance/pins/pin-c8b7421.json")
+            expected_pin = str(ROOT / "conformance/pins/pin-6b1266e.json")
             self.assertIn(f"conformance/scripts/structcorpus_gate.py {expected_pin}", py_calls[0])
             self.assertIn("conformance/scripts/structcorpus_probes_v13.py", py_calls[1])
-            self.assertIn("conformance/scripts/structcorpus_probes_v14.py", py_calls[2])
+            self.assertIn("conformance/scripts/structcorpus_probes_v14.py --require-depth255", py_calls[2])
             self.assertIn(f"conformance/scripts/structcorpus_gate_probes.py {expected_pin}", py_calls[3])
             self.assertIn("conformance/scripts/node_selectors.py", py_calls[4])
             self.assertIn(f"conformance/scripts/structcorpus_gate.py {expected_pin}", py_calls[5])
             self.assertIn("structcorpus-driver-go", py_calls[5])
             self.assertIn("conformance/scripts/structcorpus_probes_v13.py", py_calls[6])
-            self.assertIn("conformance/scripts/structcorpus_probes_v14.py", py_calls[7])
+            self.assertIn("conformance/scripts/structcorpus_probes_v14.py --require-depth255", py_calls[7])
             self.assertIn(f"conformance/scripts/structcorpus_gate_probes.py {expected_pin}", py_calls[8])
             self.assertIn("conformance/scripts/node_selectors.py", py_calls[9])
 

@@ -5,7 +5,7 @@ starting with the contract.**
 
 The repository contains the [specification](docs/spec/yamlprims-spec.md),
 [build specification](docs/build-spec.md), [decision records](docs/decisions/README.md),
-the `Profile B` Rust (`crates/yamlprims`, `yamlprims` on crates.io) and pure-Go (`github.com/3leaps/yamlprims/yaml`) cores, isolated TypeScript WASM (`bindings/typescript/`, `@3leaps/yamlprims` on npm) and Python `PyO3/maturin` (`bindings/python/`, `yamlprims` on PyPI) bindings, and the [CLI](crates/yamlprims-cli/README.md). See [implementation status](docs/implementation.md) and the [v0.1.0 release notes](docs/releases/v0.1.0.md) for current coverage
+the `Profile B` Rust (`crates/yamlprims`, `yamlprims` on crates.io) and pure-Go (`github.com/3leaps/yamlprims/yaml`) cores, isolated TypeScript WASM (`bindings/typescript/`, `@3leaps/yamlprims` on npm) and Python `PyO3/maturin` (`bindings/python/`, `yamlprims` on PyPI) bindings, and the [CLI](crates/yamlprims-cli/README.md). See [implementation status](docs/implementation.md) and the [v0.1.1 release notes](docs/releases/v0.1.1.md) for current coverage
 and remaining work.
 
 ## What we are building
