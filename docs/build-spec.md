@@ -114,7 +114,11 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
-Revision `1.4` is tagged as `spec-v1.4` (`SPEC_VERSION` is `1.4`). Existing tags `spec-v1.0` through `spec-v1.4` and their pinned
+Revision `1.4` is tagged as `spec-v1.4`; the working tree carries draft revision
+`1.5` (`SPEC_VERSION` is `1.5`, proposing [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)
+for deterministic Core YAML emission, strict RFC 7493 I-JSON projection,
+checked caller-tree constructors, iterative `Drop` for `Node`, and symmetric
+`decode_wire`). Existing tags `spec-v1.0` through `spec-v1.4` and their pinned
 expectations remain immutable. Revision 1.3 adds nested empty-scalar normalization and the
 zero-width collection exception, and clarifies UTF-8 input scope, f32 conversion
 and exact keep-chomping EOF values. Its new anchor rules require a new profile
@@ -193,7 +197,7 @@ input-size errors belong to `input`; the driver must map `MaxInputBytes` to that
 phase rather than the general `limit` phase and test that mapping at the boundary.
 
 Keep operation coverage distinct: ordinary load limits, stream document limits,
-encoder output limits and M3 warning truncation. Use fixed-message constructed
+encoder output limits and M4 warning truncation. Use fixed-message constructed
 errors for exact error-envelope/output-length goldens; loader prose is not a
 normative oracle. Such operations may become declarative corpus records with a
 versioned operation schema and executor. Until then, retain consumer API tests.
@@ -369,7 +373,7 @@ Per [ADR-0002](decisions/ADR-0002-library-first-workspace.md),
 [SecDR-0001](decisions/SecDR-0001-resource-and-native-boundaries.md), `yamlprims`
 supersedes the earlier C ABI (`crates/yamlprims-ffi` + `cgo`) and native Node-API
 (`crates/yamlprims-node`) draft in `spec-v1.4` §11.5. With the `Profile B` pure-Go
-twin delivered in M1 (`v0.1.0`), M2 (`v0.2.0`) adds the isolated TypeScript and
+twin delivered in M1 (`v0.1.0`), M2 (`v0.1.0`) delivers the isolated TypeScript and
 Python bindings:
 
 1. **TypeScript WASM binding (`bindings/typescript/`, `@3leaps/yamlprims`):**
@@ -412,9 +416,12 @@ root Go module (`github.com/3leaps/yamlprims/yaml`) and Rust crates (`yamlprims`
 `yamlprims-cli`), followed by npm (`@3leaps/yamlprims`) and PyPI (`yamlprims`)
 with post-publish registry byte verification (`make release-verify-registries`).
 
-### M3 — demand-driven additions
+### M3 and M4 — Core emitter, I-JSON projection, and demand-driven additions
 
-Consider the in-memory document iterator, migration lint, Failsafe schema and
-emitter only for concrete consumers. They are not hidden prerequisites for M1.
-Streaming input, source-preserving editing and a new parser engine require new
-scope and decision records.
+Under proposed [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md),
+M3 (`v0.2.0`) specifies deterministic data-layer Core YAML emission, `serde::Serialize`,
+symmetric `decode_wire`, strict RFC 7493 I-JSON projection, and caller-tree bounds
+across all four `Profile B` bindings. M4 retains the optional in-memory document
+iterator, migration lint, and Failsafe schema only for concrete consumers; they
+are not hidden prerequisites for M1–M3. Streaming input, source-preserving editing
+and a new parser engine require new scope and decision records.

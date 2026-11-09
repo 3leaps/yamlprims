@@ -1,8 +1,10 @@
 # Open design items before implementation freeze
 
-Status: open design work. Specification revision 1.4 is tagged at `spec-v1.4`;
-revision 1.3 and earlier revisions remain available at their immutable tags.
-Neither specification text
+Status: open design work. Specification revision 1.4 is tagged at `spec-v1.4`
+(earlier revisions remain available at their immutable tags), while working
+draft revision 1.5 (`SPEC_VERSION` `1.5`, [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md))
+proposes the caller-tree bounds, deterministic Core YAML emitter, symmetric wire
+decoder, and strict RFC 7493 I-JSON projection below. Neither specification text
 nor specification publication establishes implementation qualification.
 
 ## M1 contract freeze
@@ -75,10 +77,13 @@ bound to their original source, specification and profile pins.
 | Error-key metric (`1.4/E-4`) | Name existing child-edge nesting P separately from loader H | Preserve prior key preflight goldens and path-segment limits; include empty/nonempty collection distinctions |
 
 The String-only scalar-text formula is unchanged; correcting an implementation
-of that formula is an existing-contract repair, not a new 1.4 policy. These
-proposals leave the general caller-tree API/support domain explicitly deferred.
-No new constructors, foreign-Serde budget seed, recursive Debug bound or
-all-finite-trees stack-safety promise is accepted by this draft.
+of that formula is an existing-contract repair, not a new 1.4 policy. Revision
+1.4 left the caller-tree API/support domain deferred; draft revision 1.5
+([ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md))
+selects iterative `Drop` for `Node`, checked `Document`/`Tag`/`Tagged`
+constructors, `EmitLimits`/`Options`-bounded crate operations, and symmetric
+`decode_wire` rules, leaving four-binding runtime qualification open until
+`v0.2.0` evidence lands.
 
 ### Remaining freeze and qualification items
 
@@ -134,7 +139,7 @@ Revision 1.3 additionally needs profile-bound node selectors and matching
 schema/validator/driver support, separate from event locations. Limit-error
 configured values need a schema extension; input-size errors already use the
 corpus `input` phase. Test that mapping independently from other load limits.
-Keep stream, output and M3-warning operations distinct. Fixed-message error
+Keep stream, output and M4-warning operations distinct. Fixed-message error
 operation goldens require an operation schema/executor or API tests, rather than
 freezing loader prose. Independent oracle promotion and a fail-closed run of
 the exact new inventory remain separate qualification requirements.

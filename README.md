@@ -20,15 +20,14 @@ and remaining work.
   - **TypeScript ([`bindings/typescript/`](bindings/typescript/README.md), `@3leaps/yamlprims`):** Isolated `wasm32-unknown-unknown` WebAssembly module with zero WASM imports and pre-copy linear-memory bounds (no native Node-API addons).
   - **Python ([`bindings/python/`](bindings/python/README.md), `yamlprims`):** Standalone `PyO3/maturin` (`abi3-py310`, `#![forbid(unsafe_code)]` in crate, crossing CPython's C-extension ABI via `PyO3`) binding isolated from the root Cargo workspace.
 
-The Rust implementation uses `granit-parser` as its internal event source; the pure-Go twin implements its own standard-library scanner/parser and resolver against the applicable `spec-v1.4` semantics and [ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md). `yamlprims` owns the value, policy and error contract; it does not expose backend types or promise drop-in compatibility with YAML 1.1 or `unsafe-libyaml`-backed loaders. Current M1/M2 scope covers loading, validation, typed deserialization, canonical `yamlprims-value/1` wire encoding/decoding and plain JSON projection (`encode_plain` / `to_plain`); YAML text emission and the fused M3 iterator/linter remain M3 scope. It performs no includes, environment interpolation or network access.
+The Rust implementation uses `granit-parser` as its internal event source; the pure-Go twin implements its own standard-library scanner/parser and resolver against the applicable `yamlprims` specification semantics and [ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md). `yamlprims` owns the value, policy and error contract; it does not expose backend types or promise drop-in compatibility with YAML 1.1 or `unsafe-libyaml`-backed loaders. Current `v0.1.0` runtime scope covers M1/M2 loading, validation, typed deserialization, canonical `yamlprims-value/1` wire encoding/decoding and plain JSON projection (`encode_plain` / `to_plain`); draft [Revision 1.5](docs/spec/yamlprims-spec.md) and proposed [ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md) specify M3 (`v0.2.0`) deterministic Core YAML emission, strict RFC 7493 I-JSON projection, symmetric `decode_wire`, and caller-tree bounds, while M4 additions (fused iterator, migration lint, Failsafe schema) remain consumer-gated. It performs no includes, environment interpolation or network access.
 
 ## Status and participation
 
-Current tagged specification: [**spec-v1.4**](https://github.com/3leaps/yamlprims/tree/spec-v1.4),
-a draft contract. [Revision 1.4](docs/spec/yamlprims-spec.md)
-defines loader depth, anchor-cache accounting, bounded error precedence and
-entry/copy/key admission. Caller-tree guarantees remain deferred.
-Earlier specification tags (`spec-v1.0` through `spec-v1.3`) and their file digests remain immutable, including
+Current tagged specification: [**spec-v1.4**](https://github.com/3leaps/yamlprims/tree/spec-v1.4);
+working draft in tree: [Revision 1.5](docs/spec/yamlprims-spec.md) (`SPEC_VERSION` `1.5`,
+unreleased draft specification proposing [ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
+Earlier specification tags (`spec-v1.0` through `spec-v1.4`) and their file digests remain immutable, including
 historical draft-status wording. A specification tag may include in-development
 Rust source; it does not imply a crate release, API freeze or conformance of
 that source to every requirement.

@@ -1,4 +1,38 @@
-# spec-v1.4 — tagged draft specification
+# spec-v1.5 — unreleased draft specification
+
+Revision 1.5 proposes the data-layer YAML 1.2.2 Core emitter, caller-constructed
+tree bounds, symmetric wire decoding, and strict RFC 7493 I-JSON projection
+recorded in [ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md),
+alongside the `Profile B` multi-language architecture accepted under
+[ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md).
+
+- `1.5/E-1`: checked caller-tree constructors (`Document::new`,
+  `Document::with_metadata`, `Tag::try_new`, `Tag::with_spelling`, `Tagged::new`),
+  iterative heap-stack `Drop`, `Clone`, `PartialEq`, and depth-bounded `Debug`
+  for `Node`, `Value`, `Mapping`, `Tagged`, and `Document`, and symmetric
+  `decode_wire` over `yamlprims-value/1`.
+- `1.5/E-2`: deterministic 2-space block-first YAML 1.2.2 Core emitter (`emit`,
+  `emit_all`, `EmitOptions`, `EmitLimits`), `CompatQuoting::Yaml11Safe` default
+  scalar quoting, `serde::Serialize` (`to_node`, `to_string`, `to_string_with`),
+  CLI `yamlprims emit`, and byte-for-byte `Profile B` emitter parity across Rust,
+  Go, TypeScript WASM, and Python `PyO3`.
+- `1.5/E-3`: strict RFC 7493 I-JSON projection (`encode_ijson`, `load_ijson`,
+  `load_ijson_with`, `load_ijson_bytes`, CLI `yamlprims dump --ijson`, and host
+  `EncodeIJSON*` / `LoadIJSON*` / `loadIjson` / `load_ijson`) enforcing
+  single-document cardinality, `±(2^53 − 1)` safe integers, finite floats (`-0.0`
+  as `0`), `String`-only mapping keys, `UnknownTags::Reject`, and rejection of
+  all 66 Unicode noncharacters.
+- `1.5/E-4`: alignment of §1, §2, §11.2, and §11.5 with `ADR-0004` (`Profile B`:
+  pure-Go twin `github.com/3leaps/yamlprims/yaml`, zero-import
+  `wasm32-unknown-unknown` TypeScript package `@3leaps/yamlprims`, and `PyO3`
+  `abi3-py310` Python package `yamlprims`).
+
+The signed `spec-v1.4` tag and earlier tags (`spec-v1.0` through `spec-v1.3`)
+remain immutable. The `yamlprims-value/1` wire grammar remains version 1, and
+the §6 subtree-weight formula is unchanged. Code releases use `v<VERSION>` tags
+and per-version release notes under `docs/releases/v<VERSION>.md`.
+
+## spec-v1.4 — tagged draft specification
 
 Revision 1.4 is available at the signed `spec-v1.4` tag.
 

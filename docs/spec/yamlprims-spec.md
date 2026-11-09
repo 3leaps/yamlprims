@@ -1,20 +1,22 @@
 # yamlprims specification
 
-**Revision 1.4** · Status: Unreleased draft · License: CC0-1.0 (specification text)
+**Revision 1.5** · Status: Unreleased draft · License: CC0-1.0 (specification text)
 
-The tagged draft baseline is [revision 1.3](https://github.com/3leaps/yamlprims/blob/spec-v1.3/docs/spec/yamlprims-spec.md).
+The tagged draft baseline is [revision 1.4](https://github.com/3leaps/yamlprims/blob/spec-v1.4/docs/spec/yamlprims-spec.md).
 This draft contains the changes and decision status listed in §16. Existing
-profiles pinned to revisions 1.0 through 1.3 keep their original expectations;
+profiles pinned to revisions 1.0 through 1.4 keep their original expectations;
 they do not adopt this draft implicitly.
 
 **Specification release.** This is a proposed target contract, not a claim that
-the source tree conforms to every requirement. The repository contains a working
-Rust core and an initial CLI; no package or binding is published by this draft.
-See [implementation status](../implementation.md), the
-[build specification](../build-spec.md) and [open design items](../design-review.md).
-Revision 1.4 proposes loader depth, accounting, precedence and admission rules.
-New caller-built-tree APIs and general stack-safety guarantees are deferred;
-their existing open design gates remain prerequisites to M1 freeze.
+every source snapshot conforms to every requirement before qualification. See
+[implementation status](../implementation.md), the
+[build specification](../build-spec.md), and [open design items](../design-review.md).
+Revision 1.5 incorporates the `Profile B` multi-language architecture
+([ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md))
+and defines checked caller-tree constructors and stack-safe cleanup (§3), the
+deterministic YAML 1.2.2 Core emitter and typed serialization (§8.2, §10.2),
+symmetric wire decoding (§11.1), and strict RFC 7493 I-JSON projection (§11.6)
+([ADR-0005](../decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
 
 This document is the normative contract for yamlprims: an owned YAML 1.2 data
 layer over a maintained, safe-Rust event parser. Its key words MUST, MUST NOT,
@@ -52,15 +54,17 @@ reported at the first invalid original-byte position; valid UTF-8 proceeds to
 YAML syntax validation. Option validation (§6) and the raw-input-size gate still
 apply. This is a UTF-8 input surface, not support for every YAML character encoding.
 
-| Milestone                                | Contents                                                                                                               |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **M1**                                   | Rust core: `load`, `load_all`, `from_str`, owned `Value`/`Node`/`Error`, limits, wire format (§11), CLI `check`/`dump` |
-| **M2**                                   | C ABI with a Go binding; Node-API with a TypeScript binding; cross-language conformance (§11–13)                       |
-| M3 (optional, each requiring a consumer) | in-memory document iterator, migration lint, Failsafe schema, emitter                                                  |
+| Milestone                                | Contents                                                                                                                                                                            |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **M1**                                   | Rust core: `load`, `load_all`, `from_str`, owned `Value`/`Node`/`Error`, limits, wire format (§11), CLI `check`/`dump`                                                              |
+| **M2**                                   | `Profile B` multi-language parity ([ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)): pure-Go twin, zero-import WASM TypeScript, `PyO3` Python (§11–13) |
+| **M3**                                   | Checked caller-tree constructors & stack-safe `Drop` (§3), Core emitter & `serde::Serialize` (§8.2, §10.2), symmetric `decode_wire` (§11.1), strict RFC 7493 `encode_ijson` (§11.6) |
+| M4 (optional, each requiring a consumer) | in-memory document iterator, migration lint, Failsafe schema                                                                                                                        |
 
-**Out of scope:** a new YAML parser; source-preserving editing; `!include` or
-environment expansion; a YAML 1.1 schema; borrowed deserialization; incremental
-byte-stream input (all input is a complete in-memory buffer).
+**Out of scope:** a new YAML parser; source-preserving CST editing (comment,
+ trivia, or anchor/alias graph retention); `!include` or environment expansion;
+a YAML 1.1 resolution schema; borrowed deserialization; incremental byte-stream
+input (all input is a complete in-memory buffer).
 
 ## 2. Layering
 
@@ -76,15 +80,22 @@ resolver        scalar and tag resolution (§4)                        ← owned
                  ▼
 builder         nodes, keys, duplicates, merge, budgets (§5–6)        ← owned policy
                  ▼
-Document / Node tree ─► typed conversion (§8) ─► wire encoder (§11) ─► CLI, Go, TS
+Document / Node tree ─► typed conversion (§8.1) / wire encoder (§11.1) / I-JSON projection (§11.6)
+        ▲            └► Core emitter (§10.2) ──► UTF-8 YAML 1.2 Core text
+        │
+checked constructors (§3) / serde::Serialize (§8.2) / decode_wire (§11.1)
 ```
 
 - The generic (`load`) and typed (`from_str`) paths share one resolver and
-  builder. §8 states exactly what that guarantees for typed conversion.
-- The core and CLI crates are `#![forbid(unsafe_code)]`. Unsafe boundary code,
-  including binding-generator output, is isolated in the C ABI and Node-API
-  crates and reviewed with their dependency closures.
-- Proposed MSRV: 1.88. The engine declares 1.81; its dependency closure is
+  builder. §8 states exactly what that guarantees for typed conversion and
+  serialization.
+- Under `Profile B` ([ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)),
+  the Rust core, Rust CLI, and `PyO3` Python extension are `#![forbid(unsafe_code)]`;
+  the Go package (`github.com/3leaps/yamlprims/yaml`) is pure Go (`CGO_ENABLED=0`,
+  standard library only); and the TypeScript package (`@3leaps/yamlprims`) wraps
+  a zero-import `wasm32-unknown-unknown` module whose `#[allow(unsafe_code)]`
+  annotations are confined strictly to exported `#[no_mangle]` ABI entrypoints.
+- MSRV: 1.88. The engine declares 1.81; its dependency closure is
   `arraydeque` and `smallvec`.
 
 ## 3. Value model
@@ -93,6 +104,7 @@ Document / Node tree ─► typed conversion (§8) ─► wire encoder (§11) �
 pub struct Node { /* private */ }
 impl Node {
     pub fn value(&self) -> &Value;
+    pub fn into_value(self) -> Value;            // moves Value out safely under iterative Drop
     pub fn span(&self) -> &NodeSpan;
     pub fn via(&self) -> Option<&Via>;          // set on the root of an alias or merge copy
     pub fn tag_start(&self) -> Option<Location>; // explicit tag token, if any
@@ -117,17 +129,85 @@ impl Integer {
 // Range: i128::MIN ..= u128::MAX. Exactly one representation per number.
 
 pub struct Mapping { /* private: ordered entries + key index */ }
-pub struct Tagged { tag: Tag, value: Node }               // accessors only
+pub struct Tagged { tag: Tag, value: Node }
+impl Tagged {
+    pub fn new(tag: Tag, value: Node) -> Result<Tagged, Error>; // validates tag and §4.4 inner kind
+    pub fn tag(&self) -> &Tag;
+    pub fn value(&self) -> &Node;
+    pub fn into_parts(self) -> (Tag, Node);
+}
 pub struct Tag { uri: String, handle: String, suffix: String }
+impl Tag {
+    pub fn new(uri: impl Into<String>) -> Tag;
+    pub fn try_new(uri: impl Into<String>) -> Result<Tag, Error>;
+    pub fn with_spelling(
+        uri: impl Into<String>,
+        handle: impl Into<String>,
+        suffix: impl Into<String>,
+    ) -> Result<Tag, Error>;
+}
 pub struct Document { root: Node, yaml_version: Option<(u32, u32)>, explicit_start: bool }
+impl Document {
+    pub fn new(root: Node) -> Document; // yaml_version: None, explicit_start: false
+    pub fn with_metadata(
+        root: Node,
+        yaml_version: Option<(u32, u32)>,
+        explicit_start: bool,
+    ) -> Result<Document, Error>;
+}
 ```
 
 - **Invariant-bearing fields are private.** Values are built through checked
   constructors, so conversion and encoding never see a non-canonical
   `Integer`, a mapping with duplicate keys, or a stale key index.
-- **`Tag`.** `uri` is the resolved tag (`tag:example.com,2026:thing`,
-  `!custom`). `handle` and `suffix` reconstruct the source spelling; they are
-  not a promise of the exact source lexeme. Tag equality uses `uri` only.
+- **`Tag` and `Tagged` constructors.** `uri` is the resolved decoded tag
+  identity (`tag:example.com,2026:thing`, `!custom`), matching the engine's
+  UTF-8 percent-decoded tag output. `handle` and `suffix` reconstruct the
+  source spelling; they are not a promise of the exact source lexeme. Tag
+  equality uses `uri` only. Existing `Tag::new` is retained for source
+  compatibility; `Tag::try_new` and `Tag::with_spelling` validate syntax and
+  structural invariants without imposing a fixed byte-length cap (byte lengths
+  are bounded by `Limits::max_owned_bytes` / `Limits::max_key_bytes` on load
+  and wire decode, and by `EmitLimits::max_tag_bytes` during emission): `uri`
+  MUST be either a **local tag** starting with `'!'` (`uri.len() >= 2`,
+  rejecting non-specific `"!"`) or a **global tag URI** starting with an RFC
+  3986 §3.1 scheme `[A-Za-z][A-Za-z0-9+.-]*:` followed by zero or more
+  characters (permitting an empty scheme-specific part such as `"x:"` per RFC
+  3986 §3 `path-empty` while rejecting scheme-less verbatim strings such as
+  `"$:?"` per YAML 1.2.2 §6.9.1 Example 6.25; any UTF-8 bytes outside
+  `ns-tag-char \ {'%'}` for shorthand `!`/`!!` tags or outside
+  `ns-uri-char \ {'%', '[', ']', '#'}` for verbatim `!<…>` tags in decoded `uri`
+  are percent-encoded as `%XX` during emission per §10.2), and MUST NOT be one
+  of the seven Core Schema tag URIs
+  (`tag:yaml.org,2002:{null,bool,int,float,str,seq,map}`), returning
+  `InvalidOptions` (`Site::NotSource { last_known: None }`; `InvalidOptions` is
+  used for caller-supplied metadata/configuration violations so the
+  `yamlprims-value/1` version `1` `ErrorKind` vocabulary remains closed at 23
+  variants). `Tag::with_spelling` additionally requires `handle` to be `""`
+  (`uri == suffix`), `"!"`, `"!!"`, or a named handle `!<ns-word-char>+!`
+  (`[0-9A-Za-z-]+`), where any non-empty `handle` requires a non-empty `suffix`
+  and a non-empty prefix
+  (`uri.strip_suffix(&suffix).is_some_and(|prefix| !prefix.is_empty())`,
+  supporting both default `!`/`!!` handles and `%TAG`-redefined `!`, `!!`, and
+  named handles whose expanded `uri` is a valid local tag or global URI).
+  `Tagged::new` validates `tag` by those same rules (`InvalidOptions`) and
+  enforces §4.4 inner-kind compatibility: `value.value()` MUST be
+  `Value::String`, `Value::Sequence`, or `Value::Mapping` (and MUST be
+  `Value::String` when `tag.uri() == "tag:yaml.org,2002:merge"`), returning
+  `TagKindMismatch` (`Site::NotSource { last_known: None }`) on `Null`, `Bool`,
+  `Int`, `Float`, nested `Tagged`, or `!!merge` collections. Wire decoding
+  (`decode_wire`, §11.1) enforces these §3 `Tagged` inner-kind and
+  non-empty/non-`"!"`/non-Core/handle-suffix `Tag` invariants while accounting
+  `tag_bytes(tag)` against `Limits::max_owned_bytes` and `Limits::max_key_bytes`
+  (returning `Internal` on malformed wire input), and `emit*` (§10.2)
+  revalidates `yaml_version`, `Tag`, `max_tag_bytes`, and `Tagged` invariants
+  before emitting (while `encode_ijson` rejects any `Value::Tagged` node per
+  §11.6 Rule 5).
+- **`Document` constructors.** `Document::new(root)` sets `yaml_version = None`
+  and `explicit_start = false`. `Document::with_metadata` accepts `None` or
+  `Some((1, minor))` with `minor <= 999_999_999` (matching the §9 nine-digit
+  scanner limit) and rejects any other `(major, minor)` pair with
+  `UnsupportedYamlVersion` (`Site::NotSource { last_known: None }`).
 - **Retained tags.** Non-core tags are preserved at every depth (§4.4).
   Explicit **core** tags (`!!str`, `!!int`, …) direct resolution and are not
   retained in `Value`; only their `tag_start` survives. The guarantee is
@@ -138,12 +218,23 @@ pub struct Document { root: Node, yaml_version: Option<(u32, u32)>, explicit_sta
   stays valid. A key containing NaN at any depth is `InvalidKey`, so
   hand-built mappings keep the parser's invariants.
 - **No panicking `Index`.** Mapping lookup returns `Option`.
-
-These value invariants do not establish a supported depth or stack bound for
-arbitrary caller-built trees. The support domain of construction, mutation,
-Clone, Drop, equality/hashing, formatting and foreign deserialization remains
-an M1 freeze item. Revision 1.4 adds no constructor or universal caller-tree
-guarantee; loader depth alone is not such a guarantee.
+- **Caller-tree bounds and stack-safe cleanup.** `Drop`, `Clone`, and
+  `PartialEq` for `Node`, `Value`, `Mapping`, `Tagged`, and `Document` MUST
+  traverse nested `Sequence`, `Mapping`, and `Tagged` subtrees iteratively on
+  explicit heap worklists (and `fmt::Debug` MUST bound collection formatting at
+  `MAX_DEPTH_CEILING = 255`) so dropping, cloning, comparing, or debug-formatting
+  arbitrarily deep caller-constructed trees never overflows the call stack, even
+  when no `Options` are supplied; `Node::into_value` moves `Value` out without
+  triggering E0509 destructuring restrictions. Crate-owned internal traversals
+  (`key_eq`, `contains_nan`, `hash_into`, `budget::metrics`) also use iterative
+  heap stacks, and crate/binding operations parameterized by `Options` or
+  `EmitOptions` (`from_node`, `to_node`, `encode`, `encode_plain`,
+  `encode_ijson`, `decode_wire`, `emit`, `emit_all`, Go
+  `Emit*`/`FromPlain`/`Marshal`, TypeScript `fromPlain`/`dump*`, and Python
+  `from_plain`/`dump*`) enforce configured `max_depth` (`<= 255`), `max_nodes`,
+  and `max_output_bytes` before descending into child collections or via explicit
+  heap worklists, turning over-deep or cyclic host graphs into
+  `LimitExceeded(MaxDepth)` before call-stack exhaustion.
 
 ## 4. Scalar resolution
 
@@ -207,10 +298,21 @@ affect resolution. A major version other than 1 is an
   String(text) whatever it looks like; a collection stays a plain collection.
   It is never `Tagged`.
 - **Non-core tags** — including the YAML 1.1 types `!!binary`, `!!timestamp`,
-  `!!set`, `!!omap`, local `!x` tags, verbatim `!<…>` tags, and `%TAG`
-  expansions — produce `Tagged { tag, value }`. For a scalar, the inner value
-  is **String(raw text) without resolution**: `!custom 42` holds String "42".
-  For a collection, the children resolve normally. Nothing is decoded.
+  `!!set`, `!!omap` (and `!!merge` when appearing on a scalar value rather than
+  a mapping key; as in revisions 1.0–1.4, `!!merge` on a collection is
+  `TagKindMismatch` and `!!merge` on a mapping key follows §5.3), local `!x`
+  tags, verbatim `!<…>` tags, and `%TAG` expansions — produce
+  `Tagged { tag, value }`. For a scalar, the inner value is **String(raw text)
+  without resolution**: `!custom 42` holds String "42". For a collection, the
+  children resolve normally. Nothing is decoded. Note that while the scanner's
+  lexical grammar (`[86] ns-global-tag-prefix`, `[91] c-verbatim-tag`) accepts
+  any `ns-uri-char+` sequence when `unknown_tags = Preserve`, YAML 1.2.2 §6.8.2
+  and §6.9.1 require non-local tags to be global tag URIs (`scheme:…`);
+  `Tag::try_new` and `emit*` (§10.2) enforce that YAML 1.2.2 §6.8.2 / §6.9.1
+  URI rule so every loaded document whose retained tags are valid YAML 1.2.2
+  local (`!…`) or global (`scheme:…`) tags (within `EmitLimits`) is guaranteed
+  to succeed under `emit*`, while scheme-less non-local verbatim tags (such as
+  YAML 1.2.2 Example 6.25 `!<$:?>`) are rejected by `emit*` with `InvalidOptions`.
 - `unknown_tags: Preserve (default) | Reject`. `Reject` raises `UnknownTag` at
   `tag_start` for any non-core, non-`!` tag.
 
@@ -432,7 +534,7 @@ span at byte 4, line 2, column 1 (the `...`); the second is at byte 12, line 4,
 column 1 (EOF). Single-document entrypoints instead report `MultipleDocuments`
 at the second `---`, byte 8, line 3, column 1.
 
-- M3: a document iterator over an **in-memory** input, fused after the first
+- M4: a document iterator over an **in-memory** input, fused after the first
   error.
 
 ## 6. Resource accounting
@@ -451,7 +553,7 @@ pub struct Limits {            // defaults are proposed, not yet measured
     pub max_mapping_entries: usize,   //   100_000 per mapping
     pub max_documents: usize,         //   1_024
     pub max_output_bytes: usize,      //   64 MiB  wire encoding (§11)
-    pub max_warnings: usize,          //   1_000   (M3 lint), then one truncation marker
+    pub max_warnings: usize,          //   1_000   (M4 lint), then one truncation marker
 }
 ```
 
@@ -593,7 +695,7 @@ rejected by `max_owned_bytes` at roughly the 63rd copy.
 document counters cover the whole `load`/`load_all` call, including documents
 already built and discarded merge-source structure. Depth resets per document;
 mapping-entry limits apply per mapping and scalar/key limits per scalar/key.
-For the M3 iterator, tree counters reset
+For the M4 iterator, tree counters reset
 per document; input, document, and alias-event counters do not. Memory a
 caller retains after a call returns is the caller's.
 
@@ -786,8 +888,8 @@ limits. Source validation does not charge materialized-node, expansion
 or cache budgets; it is bounded by raw input, source depth and the engine's
 fixed scanner guards (§9). The fixed non-depth guards listed there retain
 syntax-classified failures in this draft; exceeding a profile restriction is
-not independent evidence of malformed YAML. The closed syntax-error vocabulary
-remains an M1 freeze item.
+not independent evidence of malformed YAML. The closed 81-code `SyntaxKind`
+vocabulary is defined in §11.1 (`ADR-0004`).
 
 A source-validation pre-pass MAY implement phase 4; its cost is part of measured parse
 cost. A combined implementation MUST preserve the same observable order without
@@ -985,7 +1087,9 @@ this convention requires a specification revision and new pinned expectations.
 valid prefix and defined for `InvalidUtf8` too. Go uses byte offsets as they
 are.
 
-## 8. Typed deserialization
+## 8. Typed conversion
+
+### 8.1 Typed deserialization
 
 ```rust
 pub fn from_str<T: DeserializeOwned>(input: &str) -> Result<T, Error>;
@@ -1057,12 +1161,48 @@ rejected. `3.4028235677973362e38` is accepted. Negative values are symmetric.
   `Spanned` gets `span: None`, and `TaggedValue` is an error.
 - **`from_node` on hand-built trees.** Constructors keep the invariants, so
   the tree is well-formed. `from_node` applies `max_depth` and `max_nodes`.
-- **Panics.** Crate-owned YAML-loading paths must handle input and invalid options
-  without panicking. Caller conversions are excluded. Depth enforcement through
-  crate-owned typed conversion remains required; the construction/cleanup support
-  domain for arbitrary caller-built trees and foreign deserializers is deferred
-  to the M1 freeze gate. Loader depth is not a bound on caller-owned Serde frames
-  or every operation on a synthetic tree.
+- **Panics.** Crate-owned YAML-loading, serialization, and emission paths must
+  handle input and invalid options without panicking. Caller conversions are
+  excluded. Depth and node budgets apply across `from_node`, `to_node`, `emit`,
+  and encoders; `Drop` for `Node` is iterative (§3). Loader depth is not a bound
+  on caller-owned Serde visitor or `Serialize` frames.
+
+### 8.2 Typed serialization
+
+```rust
+pub fn to_node<T: Serialize>(value: &T, opts: &EmitOptions) -> Result<Node, Error>;
+pub fn to_string<T: Serialize>(value: &T) -> Result<String, Error>;
+pub fn to_string_with<T: Serialize>(value: &T, opts: &EmitOptions) -> Result<String, Error>;
+```
+
+`to_node` converts a `serde::Serialize` value into a synthetic `Node`
+(`NodeSpan::Synthetic`) under `EmitOptions::validate()`, enforcing `max_depth`,
+`max_nodes`, `max_scalar_bytes`, `max_key_bytes`, and `max_tag_bytes` while
+constructing the tree. `to_string` uses `EmitOptions::default()`, and
+`to_string_with` runs `to_node(value, opts)` followed by `emit_with(&node, opts)`.
+
+| Rust `Serialize` input                 | Resulting `Value`                                                                                  | Rejects (`Site::NotSource { last_known: None }`)                                      |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `()`, unit struct, `Option::None`      | `Null`                                                                                             | —                                                                                     |
+| `bool`                                 | `Bool`                                                                                             | —                                                                                     |
+| `u8`…`u128`, `i8`…`i128`               | `Int(Integer)`                                                                                     | —                                                                                     |
+| `f32` (`f64::from`), `f64`             | `Float(f64)` (any NaN normalized to canonical quiet NaN `0x7ff8_0000_0000_0000`)                   | NaN anywhere inside a mapping key → `InvalidKey`                                      |
+| `char`, `&str`, `String`               | `String`                                                                                           | UTF-8 length > `max_scalar_bytes` → `LimitExceeded(MaxScalarBytes)`                   |
+| bytes (`serialize_bytes`)              | `Sequence` of `Int(0..=255)`                                                                       | exceeds `max_depth` or `max_nodes` → `LimitExceeded`                                  |
+| `Option::Some(v)`, newtype struct      | `v` converted by these rules                                                                       | —                                                                                     |
+| sequence, tuple, tuple struct          | `Sequence`                                                                                         | exceeds `max_depth` or `max_nodes` → `LimitExceeded`                                  |
+| struct, map                            | `Mapping` in serialization order                                                                   | duplicate §5.1 key → `DuplicateKey`; NaN key → `InvalidKey`; key weight > `max_key_bytes` → `LimitExceeded(MaxKeyBytes)` |
+| unit enum variant                      | `String(variant)`                                                                                  | —                                                                                     |
+| newtype / tuple / struct enum variant  | single-entry `Mapping { String(variant): payload }`                                                | —                                                                                     |
+| `Spanned<T>`                           | `value` converted by `T` rules (`span` ignored on output)                                          | —                                                                                     |
+| `TaggedValue<T>`                       | `Tagged` constructed via `Tagged::new` (§3) with `value` converted by `T` rules                    | invalid/core/oversized tag → `InvalidOptions`; `Null`, `Bool`, `Int`, `Float`, nested `Tagged`, or `!!merge` collection → `TagKindMismatch` (rejected immediately by `to_node`) |
+| `Value`, `Node`                        | lossless synthetic copy (preserving `Integer`, `Float`, `Mapping`, and `Tagged`)                   | budget violations → `LimitExceeded`                                                   |
+
+**Serde typed round-trip scope.** For a Rust value `v: T` where `T: Serialize + DeserializeOwned` uses the built-in mappings in §8.1 and §8.2, `from_str_with::<T>(&to_string_with(&v, &emit_opts)?, &reload_opts)` reconstructs `v` whenever `T`'s §8.2 serialized representation is injective and Accepted by §8.1. The following built-in shapes are intentionally non-invertible or excluded from round-trip:
+1. `Option<()>` (`Some(())` and `None` both serialize to `Value::Null`, which deserializes as `None`) and nested `Option<Option<U>>` (`Some(None)` and `None` both serialize to `Value::Null`, which deserializes as outer `None`).
+2. `TaggedValue<U>` where `U` serializes to `Null`, `Bool`, `Int`, `Float`, or nested `TaggedValue` (rejected by `to_node` with `TagKindMismatch` because §4.4 `Tagged` wraps only `String`, `Sequence`, or `Mapping`), and §8.1's local-tag enum variant syntax (`!Variant payload`, since `Serialize` emits enum variants as strings or single-entry mappings `{Variant: payload}`).
+3. `Spanned<U>` (source `span` is ignored by `Serialize` and populated from the emitted YAML coordinates on `Deserialize`).
+4. Caller-defined Serde attributes or custom impls that are non-injective or asymmetric (`#[serde(untagged)]` with overlapping variant shapes, `#[serde(flatten)]` producing duplicate keys, or `#[serde(skip_serializing_if = "...")]` without a matching `#[serde(default)]`).
 
 ## 9. Engine configuration
 
@@ -1124,7 +1264,9 @@ revision 1.0 results as revision 1.0 results. A migration input
 accepted only by the earlier leniency is a reported compatibility difference,
 not grounds to rewrite a malformed-input expectation.
 
-## 10. Public Rust API (M1)
+## 10. Public Rust API and Core emitter
+
+### 10.1 Loading, typed conversion, wire, and projection APIs
 
 ```rust
 #[non_exhaustive]
@@ -1133,15 +1275,29 @@ pub struct Options {
     pub unknown_tags: UnknownTags,    // Preserve (default) | Reject
     pub limits: Limits,
 }
+impl Options {
+    pub fn ijson_default() -> Options; // Options::default() with unknown_tags = Reject and max_output_bytes = 16 MiB
+}
+pub enum WireEnvelope {
+    Documents(Vec<Document>),
+    Error(Error),
+}
 pub fn load(input: &str) -> Result<Document, Error>;
 pub fn load_with(input: &str, opts: &Options) -> Result<Document, Error>;
 pub fn load_bytes(input: &[u8], opts: &Options) -> Result<Document, Error>;
 pub fn load_all(input: &str) -> Result<Vec<Document>, Error>;
 pub fn load_all_with(input: &str, opts: &Options) -> Result<Vec<Document>, Error>;
 pub fn load_all_bytes(input: &[u8], opts: &Options) -> Result<Vec<Document>, Error>;
-pub fn from_str / from_str_with / from_node                          // §8
-pub fn encode(docs: &[Document], opts: &Options) -> Result<String, Error>;   // §11
-pub fn encode_error(error: &Error, opts: &Options) -> Result<String, Error>; // §11 error envelope
+pub fn from_str / from_str_with / from_node                          // §8.1
+pub fn to_node / to_string / to_string_with                          // §8.2
+pub fn encode(docs: &[Document], opts: &Options) -> Result<String, Error>;   // §11.1
+pub fn encode_error(error: &Error, opts: &Options) -> Result<String, Error>; // §11.1 error envelope
+pub fn decode_wire(wire_json: &str, opts: &Options) -> Result<WireEnvelope, Error>; // §11.1
+pub fn encode_plain(node: &Node, opts: &Options) -> Result<String, Error>;   // §11.3
+pub fn encode_ijson(node: &Node, opts: &Options) -> Result<String, Error>;   // §11.6
+pub fn load_ijson(input: &str) -> Result<String, Error>;                     // §11.6 (uses Options::ijson_default())
+pub fn load_ijson_with(input: &str, opts: &Options) -> Result<String, Error>;// §11.6
+pub fn load_ijson_bytes(input: &[u8], opts: &Options) -> Result<String, Error>; // §11.6
 ```
 
 Library calls perform no filesystem access, environment interpolation,
@@ -1162,19 +1318,264 @@ borrowed error. Invalid identity is rejected rather than shortened. If even
 the error envelope exceeds `max_output_bytes`, it returns a Rust
 `OutputLimitExceeded` error with `Site::NotSource { last_known: None }`;
 it MUST NOT recursively try to encode that error or bypass the budget.
-The C ABI's fallback when an error
-envelope cannot fit remains an M2 design gate (§11.5).
+
+### 10.2 Data-layer Core emitter
+
+```rust
+#[non_exhaustive]
+pub enum CompatQuoting {
+    Yaml11Safe, // default: quote YAML 1.1 scalar hazards in addition to §4.1 Core non-strings
+    CoreOnly,   // quote only §4.1 Core non-strings and YAML 1.2.2 lexical hazards
+}
+
+#[non_exhaustive]
+pub struct EmitLimits {
+    pub max_depth: usize,           // 128     collection levels; 1..=255
+    pub max_nodes: usize,           // 250_000 visited nodes, whole call
+    pub max_scalar_bytes: usize,    // 1 MiB   UTF-8 bytes per String node
+    pub max_key_bytes: usize,       // 64 KiB  logical subtree weight per mapping key
+    pub max_mapping_entries: usize, // 100_000 entries per Mapping
+    pub max_tag_bytes: usize,       // 1_024   UTF-8 bytes per Tag::uri
+    pub max_documents: usize,       // 1_024
+    pub max_output_bytes: usize,    // 8 MiB   emitted YAML UTF-8 bytes (matches Limits::default().max_input_bytes)
+}
+
+#[non_exhaustive]
+pub struct EmitOptions {
+    pub compat_quoting: CompatQuoting,
+    pub limits: EmitLimits,
+}
+
+pub fn emit(node: &Node) -> Result<String, Error>;
+pub fn emit_with(node: &Node, opts: &EmitOptions) -> Result<String, Error>;
+pub fn emit_all(docs: &[Document]) -> Result<String, Error>;
+pub fn emit_all_with(docs: &[Document], opts: &EmitOptions) -> Result<String, Error>;
+```
+
+`EmitOptions::validate()` runs before writing any output: every field of
+`EmitLimits` MUST be `>= 1`, `max_depth` MUST be `<= 255`, and both
+`max_scalar_bytes` and `max_key_bytes` MUST be `<= max_output_bytes`; violations
+return `InvalidOptions` with `Site::NotSource { last_known: None }`. Exceeding
+`max_depth`, `max_nodes`, `max_scalar_bytes`, `max_key_bytes`,
+`max_mapping_entries`, or `max_documents` returns `LimitExceeded`
+(`max_tag_bytes` violations return `InvalidOptions` because `yamlprims-value/1`
+`LimitKind` is frozen at wire version `1`); exceeding `max_output_bytes` returns
+`OutputLimitExceeded` with no partial output.
+
+**Deterministic diagnostic order (all emitter errors use `Site::NotSource { last_known: None }`):**
+1. `EmitOptions::validate()` (`InvalidOptions`), then `docs.len() > max_documents`
+   (`LimitExceeded(MaxDocuments)`).
+2. Complete a bounded iterative pre-order structural and `EmitLimits` preflight
+   over `0..docs.len()` **before** writing output bytes: for each document,
+   validate `doc.yaml_version` (`UnsupportedYamlVersion` when
+   `major != 1 || minor > 999_999_999`), then traverse `doc.root` in iterative
+   pre-order DFS (`Sequence` items `0..len`; `Mapping` entries `0..len`,
+   visiting each entry's `key` subtree in full before its `value` subtree).
+3. At each visited `Node` during preflight: charge `max_nodes`
+   (`LimitExceeded(MaxNodes)`), check mapping-key subtree weight once at each
+   mapping entry's key root before descending into the key's children
+   (`LimitExceeded(MaxKeyBytes)`, using the §6 subtree-weight formula with
+   `NODE_OVERHEAD = 64` per `Node`, `ENTRY_OVERHEAD = 24` per nested mapping
+   entry, `s.len()` per `Value::String`, and `NODE_OVERHEAD + 2 * tag.uri.len()`
+   per `Tagged` wrapper so key admission depends only on canonical `tag.uri` and
+   upper-bounds the reloaded `uri + handle + suffix` §6 weight), then validate
+   the `Value` variant (`LimitExceeded(MaxScalarBytes)` on `String`;
+   `InvalidKey` on `Float(NaN)` at any depth within a mapping-key subtree and
+   `DuplicateKey` on duplicate mapping keys; `InvalidOptions` on invalid or
+   oversized `Tag::uri`, then `TagKindMismatch` on `Tagged`;
+   `LimitExceeded(MaxDepth)` when a `Sequence` or `Mapping`, empty or non-empty,
+   exceeds `max_depth` with `Tagged` depth-transparent, followed by
+   `LimitExceeded(MaxMappingEntries)` when `mapping.len() > max_mapping_entries`).
+4. Emit UTF-8 YAML bytes, checking `max_output_bytes` incrementally as bytes are
+   written (`OutputLimitExceeded` with no partial output). Running preflight
+   before output writing guarantees that structural and input-limit diagnostics
+   always precede `OutputLimitExceeded` across all four bindings.
+
+**Deterministic layout ([ADR-0005](../decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)):**
+
+- **Encoding and stream boundaries (YAML 1.2.2 §9.2).** Output is UTF-8 without
+  BOM using `\n` line endings; every non-empty emitted stream ends with `\n`.
+  `emit_all(&[])` returns `""`. Any `doc.yaml_version` with `major != 1` or
+  `minor > 999_999_999` is rejected with `UnsupportedYamlVersion`. For document
+  index `i == 0`: emit `%YAML 1.<minor>\n---\n` when
+  `doc.yaml_version == Some((1, minor))`, else emit `---\n` when
+  `doc.explicit_start` is `true`, else emit the root node directly. For document
+  index `i >= 1`: emit `...\n%YAML 1.<minor>\n---\n` when
+  `doc.yaml_version == Some((1, minor))` (explicitly terminating document `i − 1`
+  before directives per YAML 1.2.2 §9.2), else emit `---\n` before the root node.
+- **Expanded block collection placement.** Indentation is 2 spaces per collection
+  level (`pad = " ".repeat(indent)`); nested block collections always use
+  expanded block form (never compact `- - x` or `- k: v`), and block sequences
+  under mapping keys are always indented `indent + 2` (never indentless). Empty
+  sequences and mappings always emit inline as `[]` and `{}`.
+  - **Sequence item at `indent`:** `{pad}- {rendered}\n` for single-line scalars
+    and empty `[]`/`{}`; `{pad}- {header}\n` + body lines at `indent + 2` for
+    literal block strings (empty body lines emit bare `\n` with zero spaces);
+    `{pad}-\n` + child collection at `indent + 2` for non-empty `Sequence` or
+    `Mapping`; `{pad}- {tag} {rendered}\n`, `{pad}- {tag} {header}\n` + body
+    lines at `indent + 2`, or `{pad}- {tag}\n` + child collection at `indent + 2`
+    for `Tagged`.
+  - **Mapping entry at `indent` (preserving `Mapping` entry order; every `Value`
+    key variant is assigned exhaustively):** Untagged `Null` (`null`), `Bool`
+    (`true`/`false`), `Int` (canonical decimal), finite or infinite `Float`
+    (`0.0`, `-0.0`, shortest decimal, `.inf`, `-.inf`), and single-line
+    `Value::String` keys (`!s.contains('\n')`) whose rendered single-line UTF-8
+    length is `<= 1,024` bytes emit as **implicit** keys (`{pad}{key}: {val}\n`,
+    `{pad}{key}: {header}\n` + body at `indent + 2`, `{pad}{key}:\n` + child
+    collection at `indent + 2`, or `{pad}{key}: {tag} …` matching the
+    sequence-item `Tagged` forms — for example `{Int(1): String("x")}` emits
+    `"1: x\n"` and `{Null: Bool(true)}` emits `"null: true\n"`). `Sequence`,
+    `Mapping`, `Tagged`, and `String` keys that contain `\n` (which always
+    select double-quoted `"..."` per step 1 below) or whose rendered single-line
+    form exceeds `1,024` UTF-8 bytes emit with **explicit** key syntax honoring
+    §9's 1,024-byte simple-key lookahead rule: key prefix `{pad}? {rendered}\n`,
+    `{pad}?\n` + collection at `indent + 2`, `{pad}? {tag} {rendered}\n`, or
+    `{pad}? {tag}\n` + collection at `indent + 2`, followed immediately by
+    `{pad}: {rendered}\n`, `{pad}: [tag ]{header}\n` + body at `indent + 2`,
+    `{pad}:\n` + collection at `indent + 2`, or `{pad}: {tag}\n` + collection at
+    `indent + 2` (for example `{Sequence([Int(1)]): String("v")}` emits
+    `"?\n  - 1\n: v\n"`).
+  - **Root `Tagged` at `indent = 0`:** `{tag} {rendered}\n` (single-line `String`
+    or empty `[]`/`{}`), `{tag} {header}\n` + body at `2` spaces (literal block
+    when no explicit indentation digit is needed), or `{tag}\n` + root collection
+    at `indent = 0` (non-empty collection).
+- **Scalars.** `Null` emits as `null`; `Bool` as `true` or `false`; `Int` as
+  canonical base-10 decimal (`i128::MIN..=u128::MAX`); `Float` as `.nan`,
+  `.inf`, `-.inf`, `-0.0`, `0.0`, or IEEE 754 shortest round-trip decimal with
+  round-to-even tie-breaking (`|f| = 0.<digits> × 10^k`, `n = digits.len()`,
+  `sci_exp = k − 1`): fixed-point when `-6 <= sci_exp < 21` (appending `.0` when
+  `k >= n` so integral floats never resolve as `Int`), and lowercase scientific
+  with an explicit decimal point (`d_0.0` when `n == 1`, `d_0.<d_1..>` when
+  `n > 1`) and explicit exponent sign `e+`/`e-` without leading exponent zeros
+  otherwise (e.g. `1.0e+21`, `1.5e-7`). `String` uses a deterministic 4-style
+  state machine:
+  1. **Double-quoted (`"..."`)** when the string contains any C0 control
+     character (`0x00..=0x1F` other than `\n`, explicitly including `\t` `0x09`
+     and `\r` `0x0D` so tabs never appear unescaped in plain, single-quoted, or
+     block scalars), `0x7F`, C1 controls (`U+0080..=U+009F`, including `U+0085`
+     NEL), `U+2028`, `U+2029`, `U+FEFF` (BOM), `U+FFFE`, or `U+FFFF` — or
+     consists solely of `\n` bytes (`"\n"`, `"\n\n"`, …), or is a mapping key
+     (whether an untagged `String` key or the inner `String` of a `Tagged` key)
+     containing `\n`, or is a root-level scalar (`enclosing_collections == 0`)
+     containing `\n` whose first byte is `' '` or `'\n'` (avoiding YAML 1.2.2
+     `n = −1` vs libyaml `n = 0` root indentation-indicator ambiguity). Exact
+     escape mapping: `"` (`0x22`), `\` (`0x5C`), `\b` (`0x08`), `\t` (`0x09`),
+     `\n` (`0x0A`), `\f` (`0x0C`), and `\r` (`0x0D`) emit as the 2-byte short
+     escapes `\"`, `\\`, `\b`, `\t`, `\n`, `\f`, and `\r`; all remaining C0
+     controls (`0x00..=0x07`, `0x0B`, `0x0E..=0x1F`), `0x7F`, C1 controls
+     (`U+0080..=U+009F`), `U+2028`, `U+2029`, `U+FEFF`, `U+FFFE`, and `U+FFFF`
+     emit as 6-byte lowercase `\uXXXX` (`\u0000`..`\u001f`, `\u007f`..`\u009f`,
+     `\u2028`, `\u2029`, `\ufeff`, `\ufffe`, `\uffff`); all other valid UTF-8
+     scalar values (including `U+FDD0..=U+FDEF` and non-BMP characters) are
+     written directly as UTF-8.
+  2. **Literal block (`|`, `|-`, `|+`)** in non-key positions when the string
+     contains `\n`, has at least one non-`\n` byte, and was not selected by
+     step 1 (`|-` without trailing `\n`, `|+` ending in `\n\n`, `|` otherwise;
+     inside enclosing collections, `|2`/`|2-`/`|2+` when starting with `' '` or
+     `'\n'`; non-empty lines indented `indent + 2` spaces, empty lines bare `\n`).
+  3. **Plain** when single-line (`!s.contains('\n')`), non-empty, `<= 1,024`
+     UTF-8 bytes, has no leading or trailing whitespace (`' '`, `'\t'`, or
+     Unicode `White_Space`), does not start with
+     `, [ ] { } # & * ! | > ' " % @ \``, does not start with `-`, `?`, or `:`
+     followed by end-of-string or ASCII whitespace (`' '` or `'\t'`), does not
+     equal or start with `---` or `...` followed by end-of-string or whitespace,
+     does not contain `: `, `:\t`, ` #`, or `\t#`, does not end with `:`, is not
+     `<<` or `=`, matches none of §4.1 rows 1–8 as a full-string match, and —
+     under `CompatQuoting::Yaml11Safe` (the default) — matches none of the four
+     YAML 1.1 scalar hazard classes (all evaluated as full-string `\A…\z`
+     matches):
+     - Case-insensitive YAML 1.1 booleans/nulls: `y`, `n`, `yes`, `no`, `on`,
+       `off`, `true`, `false`, `null`.
+     - Underscore- or comma-grouped, multi-dot, or YAML 1.1 radix/float
+       literals: `[+-]?0[0-9_]+`, `[+-]?0b[01_]+`, `[+-]?0x[0-9a-fA-F_]+`,
+       `[+-]?([0-9_]+\.[0-9_.]*|\.[0-9_][0-9_.]*)([eE][+-]?[0-9_]+)?`
+       (requiring at least one digit, including multi-dot tokens such as
+       `1.2.3`), `[+-]?[0-9][0-9_,]*([eE][+-]?[0-9_]+)?` (including
+       comma-grouped integers such as `1,000`), and ASCII case-insensitive
+       `[+-]?\.inf` / `\.nan`.
+     - Sexagesimal int and float literals (including underscored leading groups):
+       `[+-]?[0-9][0-9_]*(:[0-5]?[0-9])+([.][0-9_]*)?` (such as `10:20`,
+       `1_0:20`, or `1:05:30.5_0`).
+     - YAML 1.1 `!!timestamp` date/time prefixes:
+       `[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}([Tt \t].*)?` (such as `2026-11-09`).
+  4. **Single-quoted (`'...'`)** when single-line printable without `'`, else
+     **double-quoted (`"..."`)**.
+- **Tags (YAML 1.2.2 §5.6, §6.9.1; RFC 3986 §3.3).** Every `Value::Tagged` is
+  validated against §3's `Tag` rules (local `!…` with `len >= 2` or global RFC
+  3986 `[A-Za-z][A-Za-z0-9+.-]*:…` non-core URI with zero or more scheme-specific
+  characters, permitting `"x:"` per RFC 3986 §3 `path-empty` while rejecting
+  scheme-less verbatim strings such as `"$:?"` per YAML 1.2.2 §6.9.1 Example
+  6.25) and `max_tag_bytes` (`InvalidOptions`). `tag:yaml.org,2002:merge` on a
+  mapping key or collection and any `Value::Tagged` wrapping `Null`, `Bool`,
+  `Int`, `Float`, or nested `Tagged` are rejected with `TagKindMismatch`
+  (`Site::NotSource { last_known: None }`), preserving §4.4's non-core scalar
+  rule. Canonical tag rendering percent-encodes UTF-8 bytes outside
+  `ns-tag-char \ {'%'}` (`[0-9A-Za-z#;/?:@&=+$_.~*'()-]`) for shorthand tags and
+  outside `ns-uri-char \ {'%', '[', ']', '#'}` (`[0-9A-Za-z;/?:@&=+$_.~*'()-,!]`,
+  matching RFC 3986 §3.3 `pchar / "/" / "?"` so URI path/query characters never
+  contain unescaped `[`, `]`, or `#`) for verbatim global URIs as uppercase
+  `%XX`: local tags (`uri` starting with `'!'`, `len >= 2`) emit `'!'` +
+  `percent_encode(&uri[1..], ns-tag-char \ {'%'})`; secondary
+  `tag:yaml.org,2002:` non-core tags (`&uri[18..]` non-empty) emit `"!!"` +
+  `percent_encode(&uri[18..], ns-tag-char \ {'%'})`; all other valid global
+  `uri` values emit `"!<"` + `percent_encode(&uri, ns-uri-char \ {'%', '[', ']',
+  '#'})` + `">"` (preserving valid commas such as `!<tag:example.com,2026:v>`,
+  encoding `Tag::try_new("x:[")` as `!<x:%5B>`, and round-tripping through
+  `scanVerbatimTag`).
+- **Self-round-trip invariant.** Because `EmitLimits::default()` matches
+  `Limits::default()` on `max_depth` (`128`), `max_nodes` (`250,000`),
+  `max_scalar_bytes` (`1 MiB`), `max_key_bytes` (`64 KiB`, charging
+  `NODE_OVERHEAD + 2 * tag.uri.len()` per `Tagged` wrapper),
+  `max_mapping_entries` (`100,000`), `max_documents` (`1,024`), and
+  `max_output_bytes == max_input_bytes` (`8 MiB`), every document slice `docs`
+  accepted by default `emit_all(docs)` (`EmitOptions::default()`) reloads
+  unconditionally under default `load_all(&emitted)` (`Options::default()`).
+  More generally, for any `emit_opts` accepted by `emit_all_with(docs, &emit_opts)`
+  (within `EmitLimits` and satisfying §3's `yaml_version`, `Tag`, and `Tagged`
+  invariants — which includes every document produced by `load*` whose retained
+  non-core tags are valid YAML 1.2.2 §6.8.2 / §6.9.1 local `!…` or global
+  `scheme:…` tags within `EmitLimits`), loading the emitted UTF-8 text under
+  `reload_opts` with `UnknownTags::Preserve`, `MergeKeys::Reject`, and
+  `reload_opts.limits` satisfying
+  `max_input_bytes >= emitted.len()`,
+  `max_depth >= emit_opts.limits.max_depth`,
+  `max_nodes >= emit_opts.limits.max_nodes`,
+  `max_documents >= emit_opts.limits.max_documents`,
+  `max_mapping_entries >= emit_opts.limits.max_mapping_entries`,
+  `max_scalar_bytes >= max(40, emit_opts.limits.max_scalar_bytes)` (since the
+  loader's `MaxScalarBytes` check compares decoded scalar event text length,
+  which is `s.len()` for `String` and at most `40` bytes for `i128::MIN` among
+  non-`String` scalars),
+  `max_key_bytes >= emit_opts.limits.max_key_bytes` (since `EmitLimits` already
+  charges `2 * tag.uri.len()` per `Tagged` wrapper in mapping keys), and
+  `max_owned_bytes >= 65_536 + 128 * emit_opts.limits.max_nodes + 4 * emitted.len()`
+  returns documents of equal length where each document has identical
+  `yaml_version` and root `Value` under §5.1 `key_eq` extended so `NaN` equals
+  `NaN` and `-0.0` preserves its sign bit (`explicit_start || yaml_version.is_some()`
+  preserved on document `0`; documents `i >= 1` load with `explicit_start == true`
+  and `yaml_version == doc.yaml_version`, so a document `i >= 1` with
+  `yaml_version == None` after an earlier `%YAML` document reloads with
+  `yaml_version == None`). Because `Tagged` scalar payloads are `Value::String`
+  and source-only scalar style (`inner_plain`) is not part of `Value` equality
+  or `yamlprims-value/1`, source-dependent `!LocalTag 7` plain-scalar enum
+  coercion (§8.1) is not preserved through data-layer `emit`, whereas Serde
+  typed round-trip (`from_str_with::<T>(&to_string_with(&v, &emit_opts)?, &reload_opts)`)
+  holds for all `Serialize + DeserializeOwned` types within the invertible scope
+  defined in §8.2.
 
 **CLI.** `yamlprims check FILE…` prints `file:line:col: kind: message` and
 exits 1 on any error. `yamlprims dump FILE` writes the wire format.
-`yamlprims dump --plain FILE` writes plain JSON or fails, naming the loss
-(§11.3).
+`yamlprims dump --plain FILE` writes plain JSON for a single document or fails,
+naming the loss (§11.3). `yamlprims dump --ijson FILE` writes strict RFC 7493
+I-JSON for a single non-empty-stream document or fails (§11.6). `yamlprims emit FILE`
+loads a YAML stream (or `yamlprims-value/1` wire input with `--from-wire`) and
+writes canonical Core YAML (§10.2; `--compat-quoting core-only` opts out of
+YAML 1.1 hazard quoting).
 
-`check` and wire-format `dump` use multi-document semantics. An empty file is a
-successful check; dumping it emits
-`{"format":"yamlprims-value","version":1,"documents":[]}`. The plain-output
-shape for zero or multiple documents remains part of the CLI freeze gate; it
-MUST NOT silently synthesize a Null document under the single-document rules.
+`check`, wire-format `dump`, and `emit` use multi-document semantics. An empty
+file is a successful `check`, emits
+`{"format":"yamlprims-value","version":1,"documents":[]}` under wire `dump`,
+emits zero bytes under `emit`, and fails closed under `dump --ijson` (§11.6).
 
 ## 11. Wire format `yamlprims-value/1`
 
@@ -1226,7 +1627,7 @@ exactly these members:
 | kind                             | detail                                                      |
 | -------------------------------- | ----------------------------------------------------------- |
 | `invalid_utf8`                   | `{"invalid_len":N\|null}`                                   |
-| `syntax`                         | `{"syntax_kind":"<snake_case>"}` (closed set fixed with M1) |
+| `syntax`                         | `{"syntax_kind":"<snake_case>"}` (closed 81-code `SyntaxKind::ALL` vocabulary frozen in [ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)) |
 | `limit_exceeded`                 | `{"limit":"<Limits field name>","configured":N}`            |
 | `type`                           | `{"expected":S,"found":S}`                                  |
 | `missing_field`, `unknown_field` | `{"field":S}`                                               |
@@ -1255,10 +1656,12 @@ against the options supplied to this encoding call:
   from a Sequence or Mapping to a child adds one, while a Tagged wrapper's
   child retains its depth. Every wrapper still contributes its §6 weight.
   The path segment count and the key's nesting are separate checks.
-- A `syntax_kind` must be an ASCII code of 1–64 bytes drawn only from lowercase
-  letters, digits and `_`. A code outside that shape is an invalid kind/detail
-  pair and is rejected as `Internal`. This shape check does not define or
-  complete the closed `SyntaxKind` vocabulary, which remains an M1 freeze item.
+- A `syntax_kind` must belong to the closed 81-member `SyntaxKind::ALL`
+  snake_case vocabulary frozen in
+  [ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)
+  (and in `decode_wire`, an unknown `syntax_kind` code outside those 81 codes is
+  rejected as a malformed wire error envelope). An unrepresentable kind/detail
+  pair in `encode_error` is rejected as `Internal`.
 
 Every such rejection has `Site::NotSource { last_known: None }`, returns no JSON
 and is not recursively encoded. Limit errors identify the violated limit and
@@ -1284,9 +1687,10 @@ expectations or path-segment limits:
 | `[[]]` | 2 | 1 |
 | `[[0]]` | 2 | 2 |
 
-There is no universal constant offset between H and P. Stack safety of arbitrary
-caller-built trees, including destruction and operations without Options,
-remains an explicit M1 gate in the design review.
+There is no universal constant offset between H and P. Iterative `Drop` for
+`Node`, checked caller-tree constructors, and iterative crate-owned traversals
+are selected in §3; runtime qualification across all four bindings is tracked in
+§13.2.
 
 While writing, truncate `message` to 4,096 UTF-8 bytes and each `expected`,
 `found` and `field` description to 1,024 bytes, retaining a character-boundary
@@ -1300,25 +1704,71 @@ is always subject to `max_output_bytes`.
 **`related` roles:** `first_definition` (DuplicateKey), `alias_use`,
 `merge_directive`, `anchor_definition`.
 
-**Decoders** reject unknown fields, unknown kinds, unknown versions,
-non-canonical integers, and float bits that are not 16 hex digits. Adding a
-field or kind requires a new `version`. Encoding is fallible: exceeding
-`max_output_bytes` is `OutputLimitExceeded`, checked while writing.
+**Decoders** (`decode_wire` in Rust and Python, `DecodeWire` in Go, `decodeWire`
+in TypeScript) validate `Options` first (`InvalidOptions` with
+`Site::NotSource { last_known: None }`), enforce configured `Limits`
+(`max_input_bytes` on the wire JSON UTF-8 byte length, `max_documents`,
+`max_depth` using loader collection height **H** on `documents[*].root` and
+error-key nesting metric **P** on `error.path[*].key` trees so `[[]]` has
+**H = 2** and **P = 1**, `max_nodes`, `max_scalar_bytes`, `max_key_bytes`,
+`max_mapping_entries`, `max_owned_bytes` including §6 `tag_bytes(tag) = uri.len() + handle.len() + suffix.len()` with no separate fixed tag-byte cap) returning `LimitExceeded` with
+`Site::NotSource { last_known: None }`, and reject all malformed wire JSON or
+schema/invariant violations — trailing tokens, duplicate JSON object keys,
+unknown or missing fields, wrong member types, unsupported `format` or
+`version != 1`, out-of-range metadata integers or coordinates, non-canonical
+integer strings, float `bits` that are not 16 lowercase hex digits, `tagged`
+nodes wrapping `null`/`bool`/`int`/`float`/`tagged` or `tag:yaml.org,2002:merge`
+on a collection (§3, §4.4), empty or non-specific `"!"` or Core Schema `tag.uri`
+values, inconsistent `tag.handle`/`tag.suffix`, NaN or
+duplicate mapping keys, unknown `ErrorKind`/`SyntaxKind`/`LimitKind`/`RelatedRole`,
+or non-null locations on error `PathSegment::Key` nodes — with `Internal` and
+`Site::NotSource { last_known: None }` (using `Internal` because the
+`yamlprims-value/1` `ErrorKind` vocabulary is frozen at wire version `1` and
+wire payloads are an internal/inter-binding transport contract). Standard RFC
+8259 insignificant whitespace and valid string escapes are accepted on input;
+any `NaN` bit pattern normalizes to `0x7ff8000000000000`. Adding a field or kind
+requires a new `version`. Encoding is fallible: exceeding `max_output_bytes` is
+`OutputLimitExceeded`, checked while writing.
 
-**Round trip.** Rust → wire → host → wire is byte-identical, including
-`tag_start`. Host decoders are lossless for every field, except that NaN
-payloads are canonicalized.
+**Round trip.** For document envelopes produced by `encode(&docs, &enc_opts)`,
+`decode_wire` followed by `encode` is byte-identical (including `tag_start`,
+with NaN payloads canonicalized) whenever `dec_opts.limits.max_input_bytes`
+accommodates the wire JSON length and `dec_opts.limits` match or exceed the
+document tree's §6 metrics. For error envelopes produced by
+`encode_error(&err, &enc_opts)`, because `encode_error` checks `max_depth` (path
+segment count and error-key metric **P**), `max_key_bytes`, and
+`max_output_bytes` whereas `decode_wire` additionally charges `max_nodes`,
+`max_owned_bytes`, `max_scalar_bytes`, and `max_mapping_entries` across decoded
+path-key nodes, `decode_wire` followed by `encode_error` is byte-identical
+whenever `dec_opts.limits.max_input_bytes` accommodates the wire JSON length and
+`dec_opts.limits` (`max_nodes`, `max_owned_bytes`, `max_scalar_bytes`,
+`max_mapping_entries`, `max_depth`, `max_key_bytes`) accommodate the nodes in
+`err.path`.
 
-### 11.2 Host types
+### 11.2 Host types (`Profile B`)
 
-- **Go.** `Value` is a sealed interface: `Null`, `Bool`, `Int{*big.Int}`,
-  `Float{float64}` (built from bits), `String`, `Sequence`,
-  `Mapping{[]Entry}`, `Tagged`. Every node carries a `Span`. Errors are
-  `*yamlprims.Error`.
-- **TypeScript.** A discriminated union on `kind`. `int.value` is a `bigint`;
-  `float.value` is a `number` built from the bits. `mapping.entries` is
-  `Array<[Node, Node]>`. Errors are a `YamlprimsError` with `byteOffset`,
-  `utf16Offset`, `line`, `column`, `path`, and `related`.
+- **Go (`github.com/3leaps/yamlprims/yaml`).** Pure-Go twin (`CGO_ENABLED=0`,
+  standard library only) under
+  [ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md).
+  `Value` exposes kind-checked accessors over `Null`, `Bool`, `Integer`
+  (128-bit), `Float` (`float64` preserving bits), `String`, `Sequence`,
+  `Mapping`, and `Tagged`. Every `Node` carries its `NodeSpan`, `Via`, and
+  `TagStart`. Errors are `*yaml.Error`. Exposes `Load*`, `Encode*`,
+  `DecodeWire`, `ToPlain`, `FromPlain`, `Marshal`, `Emit*`, `EncodeIJSON`, and
+  `LoadIJSON*`.
+- **TypeScript (`@3leaps/yamlprims`).** Zero-import `wasm32-unknown-unknown`
+  package. A discriminated union on `kind`: `int.value` is a `bigint`;
+  `float.value` is a `number` built from `bits`; `mapping.entries` is a
+  `Mapping` of `[Node, Node]` pairs. Errors are `YamlprimsError` with
+  `byteOffset`, `utf16Offset`, `line`, `column`, `path`, and `related`. Exposes
+  `load*`, `encode*`, `decodeWire`, `toPlain`, `fromPlain`, `loadPlain`,
+  `loadIjson`, `dump`, and `dumpAll`.
+- **Python (`yamlprims`).** `#![forbid(unsafe_code)]` `PyO3` `cp310-abi3`
+  extension. `Node` preserves 128-bit `int`, `float` + `bits`, lossless
+  `Mapping` (keyed by §5.1 `key_eq`, never colliding `True`, `1`, and `1.0`),
+  and `Tagged`. Errors raise `YamlprimsError`. Exposes `load*`, `encode*`,
+  `decode_wire`, `to_plain`, `from_plain`, `load_plain`, `load_ijson`, `dump`,
+  and `dump_all`.
 
 ### 11.3 Plain conversion loss matrix
 
@@ -1338,6 +1788,31 @@ additional losses marked as errors below. Use the wire format for lossless data.
 | Tagged                                      | **error**                                                                                    | **error**                          |
 | spans, `via`, `tag_start`                   | dropped (documented)                                                                         | dropped                            |
 
+**Normative host-to-`Node` conversion (`fromPlain` / `from_plain` / `FromPlain` / `Marshal`).**
+All host input conversions construct synthetic `Node` trees (`NodeSpan::Synthetic`)
+under `EmitOptions::validate()`, checking `max_depth` (`<= 255`), `max_nodes`,
+and `max_mapping_entries` before descending into child collections (or via
+iterative heap worklists) so cyclic or over-deep host values fail with
+`LimitExceeded(MaxDepth)` (or `LimitExceeded(MaxNodes)` /
+`LimitExceeded(MaxMappingEntries)`, with `Site::NotSource { last_known: None }`)
+rather than exhausting the VM or goroutine call stack. Host strings (`String`
+values, mapping keys, and `Tag` fields) are validated for well-formed UTF-8 /
+Unicode scalar values before any `TextEncoder` replacement, `UnicodeEncodeError`,
+or `max_scalar_bytes` check: ill-formed UTF-8 bytes in Go (`!utf8.ValidString`)
+or unpaired UTF-16 surrogates (`U+D800..=U+DFFF`) in TypeScript and Python fail
+closed with `InvalidUtf8` (`Site::NotSource { last_known: None }`):
+
+| Host input | TypeScript `fromPlain` / `dump*` | Python `from_plain` / `dump*` | Go `FromPlain` / `Marshal` |
+| --- | --- | --- | --- |
+| Null / absent | `null` → `Null`; `undefined`, `symbol`, `function` → `Type` | `None` → `Null` | `nil` interface or typed `nil` pointer → `Null` |
+| Boolean | `boolean` → `Bool` | `bool` (checked before `int`) → `Bool` | `bool` → `Bool` |
+| Exact integer | `bigint` in `i128::MIN..=u128::MAX` → `Int`; outside → `IntegerOutOfRange` | `int` (non-`bool`) in `i128::MIN..=u128::MAX` → `Int`; outside → `IntegerOutOfRange` | `int*`, `uint*`, `yaml.Integer` → `Int` |
+| Floating-point / JS `number` | `number`: `-0` (`Object.is(n, -0)`), non-finite, fractional, or outside `±(2^53 − 1)` → `Float` (canonicalizing `NaN`); finite safe integers in `±(2^53 − 1)` other than `-0` → `Int` (pass explicit `float` `Node` when `1.0` float kind is required) | `float` → `Float` (preserving `-0.0`, canonicalizing `NaN`) | `float32` (`float64(v)`), `float64` → `Float` (preserving `-0.0`, canonicalizing `NaN`) |
+| String | well-formed `string` → `String` (lone surrogate `U+D800..=U+DFFF` → `InvalidUtf8`; `> max_scalar_bytes` → `LimitExceeded(MaxScalarBytes)`) | well-formed `str` → `String` (lone surrogate `U+D800..=U+DFFF` → `InvalidUtf8`; `> max_scalar_bytes` → `LimitExceeded(MaxScalarBytes)`) | valid UTF-8 `string` → `String` (`!utf8.ValidString` → `InvalidUtf8`; `> MaxScalarBytes` → `LimitExceeded(MaxScalarBytes)`) |
+| Sequence | `Array` → `Sequence` | `list`, `tuple` → `Sequence` | slice (including `nil` slice → `[]`), array → `Sequence` |
+| Mapping / struct | `Mapping`, `Map` (insertion order, keys converted recursively), or plain object (`Object.prototype` / `null` prototype, own enumerable string keys) → `Mapping` | `Mapping` or `dict` (insertion order, keys converted recursively) → `Mapping` | `yaml.Mapping` (entry order), `struct` (exported fields in declaration order honoring `yaml:"name,omitempty,-"` tags), `map[K]V` (`nil` map → `{}`, keys converted recursively and sorted deterministically by `bytes.Compare` of each key's `CompatQuoting::CoreOnly` emitted text) → `Mapping` |
+| Host `Node` / `Tagged` / other | lossless synthetic copy validated per §3; non-plain objects (`Date`, `RegExp`, `Set`, …) → `Type` | lossless synthetic copy validated per §3; `bytes`, `set`, arbitrary objects → `Type` | `yaml.Node`, `yaml.Value`, `yaml.Document` validated per §3; `chan`, `func`, unsafe pointers → `Type` |
+
 ### 11.4 Host-side conformance
 
 For every corpus case, each binding decodes the wire bytes; asserts its host
@@ -1346,37 +1821,120 @@ URIs, key kinds, spans); and re-encodes canonically and compares the bytes
 with the Rust encoder's. The same suite covers error objects, paths, and the
 loss matrix.
 
-### 11.5 C ABI (M2)
+### 11.5 WASM and `PyO3` native bridges (`Profile B`)
 
-**Proposed interface, not yet frozen.** The output-envelope budget/failure
-protocol and pointer preconditions must be resolved under
-[the M2 design gate](../design-review.md#m2-boundary-freeze) before an ABI release.
+Under [ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md),
+`yamlprims` ships a pure-Go twin rather than a `cgo` C ABI, a zero-import
+`wasm32-unknown-unknown` module for TypeScript, and a `#![forbid(unsafe_code)]`
+`PyO3` `abi3-py310` extension for Python:
 
-```c
-uint32_t yp_abi_version(void);                         // 1
-int32_t  yp_load(const uint8_t* ptr, size_t len, const char* opts_json, size_t opts_len,
-                 yp_buffer* out);                      // 0 ok, 1 input error, 2 internal error
-void     yp_buffer_free(yp_buffer* buf);               // frees and zeroes; zeroed buffer = no-op
-typedef struct { uint8_t* ptr; size_t len; size_t cap; } yp_buffer;
-```
+- **Zero-import WASM ABI (`bindings/typescript`).** Linear memory is bounded;
+  `options_reserve` and `input_reserve` enforce input and option ceilings before
+  copying bytes into linear memory. Entry points return status `0` (`documents`
+  wire envelope or UTF-8 payload), `1` (`error` wire envelope), `2` (compact
+  `output_limit_exceeded` / `internal` fallback when even the error envelope
+  exceeds `max_output_bytes`), or trap recovery via fresh instance recreation.
+- **`PyO3` extension (`bindings/python`).** Releases the Python GIL during
+  native parse/emit/projection work and wraps native calls in `catch_unwind`,
+  mapping status `2` to `OutputLimitExceeded` and status `3` to `Internal`
+  (`YamlprimsError`).
+- **Host emission (`dump` / `dumpAll` / `dump_all`).** While Rust (`emit*`) and
+  Go (`Emit*`) emit directly from in-memory `Document` / `Node` trees without
+  wire serialization, TypeScript (`dump` / `dumpAll`) and Python (`dump` /
+  `dump_all`) run the §10.2 pre-order structural and `EmitLimits` validation
+  walk on the host side first, strip source-only metadata on the emission wire
+  envelope (`span: null`, `via: null`, `tag_start: null`,
+  `tag: { uri, handle: "", suffix: uri }`), and verify
+  `min_output_bytes = sum(string_utf8_bytes) + sum(rendered_tag_min_bytes(tag.uri)) <= max_output_bytes`
+  (`OutputLimitExceeded`), where `rendered_tag_min_bytes(uri)` is
+  `2 + (uri.len() - 18)` for non-empty `tag:yaml.org,2002:*` URIs and `uri.len()`
+  otherwise — a strict lower bound on rendered YAML output that never rejects
+  valid native-emitter inputs such as `!!foo ''\n`. Admitted envelopes pass
+  through native `decode_wire` + `emit_all_with`. The bridge derives its
+  internal `decode_wire` `Limits` from `Limits::default()` with the following
+  fields overridden from `emit_opts.limits` (while `max_tag_bytes` is enforced
+  by `emit_all_with` after wire decoding):
+  `max_depth = emit_limits.max_depth`, `max_nodes = emit_limits.max_nodes`,
+  `max_documents = emit_limits.max_documents`,
+  `max_mapping_entries = emit_limits.max_mapping_entries`,
+  `max_scalar_bytes = emit_limits.max_scalar_bytes`,
+  `max_key_bytes = emit_limits.max_key_bytes`,
+  `wire_cap = saturating_add(65_536, saturating_add(saturating_mul(max_nodes, 512), saturating_mul(max_output_bytes, 18)))`,
+  and
+  `owned_cap = saturating_add(65_536, saturating_add(saturating_mul(max_nodes, 128), saturating_mul(max_output_bytes, 4)))`.
+  On the 64-bit native `PyO3` bridge (`Python`), `max_input_bytes` and
+  `max_owned_bytes` use `wire_cap` and `owned_cap` directly so wire framing
+  never narrows `EmitLimits`, guaranteeing byte-identical YAML output and
+  diagnostic parity with Rust and Go across the full `EmitLimits` domain for
+  equal `Document`/`Node` trees. On the 32-bit `wasm32` bridge (`TypeScript`),
+  linear memory is bounded, so the supported WASM emission domain is
+  `EmitLimits` intersected with a `64 MiB` (`67_108_864`-byte) canonical
+  wire-envelope and `64 MiB` logical-owned-weight ceiling
+  (`min(67_108_864, wire_cap)` and `min(67_108_864, owned_cap)`), mirroring
+  `Limits::wasm_safe()` on load: inputs whose wire JSON and logical owned
+  weight lie within that `64 MiB` WASM ceiling have byte-identical YAML output
+  and diagnostic parity across all four bindings, while inputs exceeding the
+  `64 MiB` WASM wire or owned ceiling fail deterministically with
+  `LimitExceeded(MaxInputBytes, configured: 67_108_864)` or
+  `LimitExceeded(MaxOwnedBytes, configured: 67_108_864)`
+  (`Site::NotSource { last_known: None }`).
 
-- `ptr` may be NULL only when `len == 0`. `out` MUST be non-NULL.
-- On every status, `out` holds one wire `Result` envelope. Status 0 carries
-  `documents`; statuses 1 and 2 carry `error`, and status 2's kind is
-  `internal`. The only exception: if allocating the envelope itself fails,
-  `out` stays zeroed.
-- `opts_json`: NULL with `opts_len == 0` means all defaults. Otherwise a JSON
-  object `{"merge_keys":"reject"|"apply"|"as_key","unknown_tags":"preserve"|"reject","limits":{<Limits field>:N,…}}`.
-  Every member is optional and defaults as in Rust. Unknown members, wrong
-  types, and failed validation return status 1 with `invalid_options`. This
-  schema is fixed with M1 and frozen at the M2 ABI freeze.
-- The library owns `out`'s memory; the caller frees it exactly once with
-  `yp_buffer_free`. Freeing a stale copy of a freed buffer is undefined
-  behavior.
-- Every entry point runs under `catch_unwind`, and the shared library is
-  built with `panic = "unwind"`. This does not cover allocation-failure
-  aborts or undefined behavior caused by invalid caller pointers.
-- The Node-API binding passes no caller-supplied callbacks into Rust.
+### 11.6 Strict RFC 7493 I-JSON projection
+
+`encode_ijson(node, opts)`, `load_ijson(input)`, and `load_ijson_with` /
+`load_ijson_bytes` (Rust), `EncodeIJSON*` and `LoadIJSON*` (Go), `loadIjson`
+(TypeScript), `load_ijson` (Python), and `yamlprims dump --ijson` (CLI) project
+a YAML document to compact UTF-8 [RFC 7493](https://www.rfc-editor.org/rfc/rfc7493)
+I-JSON text (no insignificant whitespace; [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)
+§3.2.2.2 string escaping and §3.2.2.3 number formatting; object members in
+`Mapping` insertion order, leaving lexicographic UTF-16 key sorting to
+downstream RFC 8785 JCS canonicalizers; see
+[ADR-0005](../decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
+Rust and Go expose both stream-level (`load_ijson*` / `LoadIJSON*`) and
+in-memory `Node`-level (`encode_ijson` / `EncodeIJSON*`) entrypoints, whereas
+TypeScript (`loadIjson`), Python (`load_ijson`), and the CLI (`dump --ijson`)
+expose the stream-level entrypoint directly over source YAML text/bytes.
+
+Because JSON has a single `number` type and no distinct `-0` token in RFC 8785
+JCS, I-JSON projection is an intentional **many-to-one projection from the YAML
+1.2 data model onto the RFC 7493 / RFC 8785 JSON value domain**: `Value::Int(1)`
+and `Value::Float(1.0)` both project to JSON `"1"`, and `Value::Float(-0.0)` and
+`Value::Float(0.0)` both project to JSON `"0"`. Unlike `encode_plain` (§11.3,
+which remains unchanged and allows 128-bit JSON integers, `-0.0`, and implicit
+empty-stream `null` via single-document `load`), I-JSON projection combines RFC
+7493 interoperability constraints (§2.1 UTF-8 and noncharacter prohibition, §2.2
+`binary64` finite numbers and `±(2^53 − 1)` exact integers, §2.3 unique string
+member names) with fail-closed YAML-projection profile rules (single
+non-empty-stream YAML document, explicit tag/merge refusal, and bounded output
+bytes) so out-of-range `Value::Int` values, non-finite floats, non-`String`
+mapping keys, and `Value::Tagged` wrappers fail closed rather than silently
+rounding integers, stringifying keys, or stripping tags:
+
+| # | Rule | Normative requirement | `ErrorKind` |
+| --- | --- | --- | --- |
+| 1 | **Single non-empty-stream document** | `load_ijson*` preserves §7.1 error precedence: Phases 1–4 (`InvalidOptions`, `max_input_bytes`, `InvalidUtf8`, and §7.1 bounded source syntax and `max_depth` validation across the whole input buffer) run before Phase 5 document-cardinality checks (`MultipleDocuments` at the start of any second document `Site::Source`, independent of `max_documents`, and empty-stream refusal at EOF `Site::Source` on zero-document streams such as `""`, comments/whitespace only, or bare `...` instead of synthesizing `null`). Thus `null\n---\n[\n` fails with `Syntax(unclosed_flow_collection)` and `null\n---\n[[[]]]\n` (`max_depth=2`) fails with `LimitExceeded(max_depth)`, while valid-syntax `null\n---\n1\n` fails with `MultipleDocuments`. Explicit `---\n` or `null`/`~` emits `"null"`; bare single documents (`a: 1`) are accepted. | `Type { expected: "single YAML document", found: "empty_stream" }` (`0` docs); `MultipleDocuments` (`> 1` docs) |
+| 2 | **IEEE 754 safe integers** | `Value::Int` MUST lie within `-(2^53 − 1)..=+(2^53 − 1)` (`-9_007_199_254_740_991..=9_007_199_254_740_991`). `Value::Int` values outside that range (including `±2^53`, `i64::MIN`, `u64::MAX`, `2^64`) fail closed so distinct YAML integer literals never round-collide in `binary64`. | `IntegerOutOfRange` |
+| 3 | **Finite `binary64` floats** | `Value::Float` MUST be finite. `.nan`, `.inf`, and `-.inf` fail closed. Finite `Value::Float` values (which are already IEEE 754 `binary64` floats in the YAML data model) format per RFC 8785 §3.2.2.3 (ECMAScript `Number::toString`, with `-0.0` → `"0"`, `1.0` → `"1"`, `1e20` → `"100000000000000000000"`, `1e21` → `"1e+21"`). | `FloatOutOfRange` |
+| 4 | **String-only mapping keys** | Every `Mapping` key MUST be `Value::String`. `Bool`, `Int`, `Float`, `Null`, `Sequence`, and `Mapping` keys fail closed without stringification (`Value::Tagged` keys fail under Rule 5 `UnknownTag`, which takes precedence). Duplicate keys are already rejected during loading (§5.2) and checked on synthetic mappings. | `Type { expected: "I-JSON string key", found: "non_string_key" }` |
+| 5 | **Tags and merge keys** | `load_ijson*` forces `UnknownTags::Reject` regardless of `opts.unknown_tags` (allowing callers to pass modified `Options::default()` structs without manually overriding the `UnknownTags::Preserve` loader default), and `encode_ijson` rejects any `Value::Tagged` node (keys and values alike) before key-kind checks. `MergeKeys::Reject` is the default; callers may opt into `MergeKeys::Apply` via `opts.merge_keys`; `MergeKeys::AsKey` (which is never a default) is rejected by `load_ijson*` with `InvalidOptions` so unquoted `<<` is never silently treated as a literal key across canonicalization boundaries. | `UnknownTag` / `MergeRejected` / `InvalidOptions` |
+| 6 | **Unicode noncharacters & budgets** | Every `Value::String` (both mapping keys and string values) is validated for well-formed UTF-8 first (`InvalidUtf8`, including Go ill-formed UTF-8 strings on synthetic `Node` inputs and TypeScript/Python unpaired UTF-16 surrogates `U+D800..=U+DFFF` on source strings before `TextEncoder` replacement or `UnicodeEncodeError`) and then scanned left-to-right for the 66 Unicode noncharacters (`U+FDD0..=U+FDEF`, and code points on planes `0..=16` with `(cp & 0xFFFE) == 0xFFFE`); any match fails closed. `Options::ijson_default()` (Rust) and `DefaultIJSONOptions()` (Go) return `Options::default()` with `unknown_tags = UnknownTags::Reject` and `limits.max_output_bytes = 16 MiB` (`16_777_216`). Parameterless entrypoints (`load_ijson(input)` in Rust, `EncodeIJSON(node)` / `LoadIJSON(input)` in Go) and partial-option entrypoints when `max_output_bytes` is omitted (`loadIjson(input, opts?)` in TypeScript, `load_ijson(input, **opts)` in Python, and CLI `dump --ijson` without `--max-output-bytes`) merge onto `Options::ijson_default()` (`16 MiB` default output cap); in Rust and Go, explicit-struct entrypoints (`encode_ijson`, `load_ijson_with`, `load_ijson_bytes`, `EncodeIJSONWith`, `LoadIJSONWith`, `LoadIJSONBytes`) use `opts.limits.max_output_bytes` directly from the supplied struct (callers customizing `Options` while retaining the `16 MiB` I-JSON cap start from `Options::ijson_default()` / `DefaultIJSONOptions()`). | `Type { expected: "RFC 7493 I-JSON string", found: "noncharacter" }`, `InvalidUtf8`, `LimitExceeded`, `OutputLimitExceeded` |
+
+**Traversal, normative `Type` strings, and `Site` parity.** The `Type.expected`
+and `Type.found` strings in Rules 1, 4, and 6 above are normative across all
+four bindings. Projection walks the root `Node` in iterative pre-order DFS
+(`Sequence` items `0..len`; `Mapping` entries `0..len`, inspecting each entry's
+`key` before its `value`) using a fresh per-call node counter (`1..=opts.limits.max_nodes`,
+independent of any prior loader node counter). Each visited `Node` charges
+`max_nodes` first (`LimitExceeded(MaxNodes)`), then checks `Value::Tagged`
+(`UnknownTag`), then (in key position) non-`String` kind (`non_string_key`),
+then scalar/collection budgets (`max_scalar_bytes`, `max_key_bytes`,
+`max_depth`, `max_mapping_entries`) and scalar validity (`noncharacter`,
+`IntegerOutOfRange`, `FloatOutOfRange`), reporting `Site::Source(span.start)` on
+source-spanned nodes (using alias use-site provenance where present) and
+`Site::NotSource { last_known: None }` on synthetic nodes, and checking
+`max_output_bytes` incrementally as output bytes are written
+(`OutputLimitExceeded` with `Site::NotSource { last_known: None }` and no
+partial output).
 
 ## 12. Design rationale
 
@@ -1389,7 +1947,7 @@ typedef struct { uint8_t* ptr; size_t len; size_t cap; } yp_buffer;
 | Typed maps keep the last duplicate silently                                                     | one `DuplicateKey` policy on every path                                                 |
 | Merge keys skipped on one path, kept as a literal key on another                                | merge recognized by the builder under an explicit policy (§5.3)                         |
 | Alias expansion and document count unbounded in bytes and nodes                                 | §6 aggregate budgets, checked before copying                                            |
-| Multi-document iteration misbehaves after an error                                              | `load_all` all-or-nothing; iterator fused (M3)                                          |
+| Multi-document iteration misbehaves after an error                                              | `load_all` all-or-nothing; iterator fused (M4)                                          |
 | Duplicate-key and other structural errors reported without a location                           | `Site::Source` required for input errors (§7.1)                                         |
 | String error paths are ambiguous                                                                | typed `PathSegment`s and exact wire path keys                                           |
 | Dependence on an unmaintained machine-translated C parser                                       | a maintained safe-Rust event engine; no libyaml-lineage crate in the dependency closure |
@@ -1446,7 +2004,7 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   is measured per category (§6), not asserted. Test load-limit boundaries with
   named configured values and valid options; test `max_documents` through stream
   APIs and `max_output_bytes` through encoders. Input-size failures belong to the
-  input gate even though the Rust kind is `LimitExceeded`. M3 warning exhaustion
+  input gate even though the Rust kind is `LimitExceeded`. M4 warning exhaustion
   uses its truncation marker, not a load-error pair.
 - **Equality.** Reordered composite keys; equal URIs with different handles;
   the same value at different locations; nested NaN; ±0; Int vs Float; alias
@@ -1553,7 +2111,7 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   bounds; counters within budget on success.
 - **Miri** on the corpus.
 - **Mutation testing** of the duplicate check, each budget check, the alias
-  height check, merge precedence, and (M3) the iterator fuse. Every mutant
+  height check, merge precedence, and (M4) the iterator fuse. Every mutant
   must fail the suite.
 - **Measurements, not gates:** peak memory and latency per default profile,
   and the engine's scalar buffering bound (§6).
@@ -1563,30 +2121,118 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   handling and order-independent composite-key hashing; anchor lifecycle
   (per-document reset, redefinition, alias inside a later definition, nested
   alias and merge origin); MSRV built and tested, not inferred.
+- **Revision 1.5 caller-tree safety and wire decoding.** Drop, clone, compare,
+  and debug-format a synthetic tree nested 10,000+ levels deep on a default
+  thread stack without stack overflow. Exercise `Tag::try_new`,
+  `Tag::with_spelling`, `Tagged::new`, and `Document::with_metadata` across
+  valid local/global URIs (including empty scheme-specific `"x:"`, RFC 4151
+  commas in `tag:example.com,2026:v`, `%TAG` handle expansions onto valid local
+  or global URI prefixes, and percent-encoded control/delimiter/path bytes such
+  as `x:[` → `!<x:%5B>`, `tag:example.com,2026:a#b` →
+  `!<tag:example.com,2026:a%23b>`, `tag:example.com,2026:a|b`,
+  `tag:example.com,2026:a\nb`, and `!a%` across all four bindings) and negative
+  controls (empty URI, non-specific `!`, scheme-less `"$:?"`, Core Schema URIs,
+  mismatched `handle`/`suffix`, non-`String` scalar or nested `Tagged` inner
+  nodes, `!!merge` collections, major YAML version != 1, and minor YAML version
+  > `999_999_999`). Verify `decode_wire` round-trip identity (including valid
+  loaded tags exceeding 2 KiB within `max_owned_bytes`), `LimitExceeded`
+  bounds (including shared error-envelope boundary vectors distinguishing
+  error-key metric **P = 1** on `[[]]` from document height **H = 2**, and
+  rejecting error path keys when `max_nodes` or `max_scalar_bytes` is exceeded),
+  and `Internal` malformed-envelope controls (including `tagged` inner-kind /
+  Core-tag violations and unknown `syntax_kind` rejection) across all four
+  bindings (`Rust`, `Go`, `TypeScript`, `Python`) on the conformance vector
+  suite, including 255-deep containers.
+- **Revision 1.5 Core emitter.** Verify `emit` / `emit_all` self-round-trip
+  (`load_all` ∘ `emit_all` == input modulo spans, `via`, `tag_start`, tag
+  handle/suffix spelling, and §10.2 `explicit_start` normalization on directives
+  and multi-document separators, preserving `yaml_version` including `None` on
+  documents `i >= 1` following a `%YAML` document, `-0.0` sign bit, and
+  canonical NaN under default `Options::default()` for `EmitOptions::default()`)
+  across all valid `structcorpus` cases and in-repo conformance vectors, plus
+  independently hand-authored canonical byte vectors pinning expanded nested
+  collections, implicit non-`String` scalar keys (`null`, `bool`, `int`,
+  `float`), `1,024`- vs `1,025`-byte simple-key boundary, mixed-metadata
+  multi-document streams (`...\n` before later `%YAML 1.2`, and `---\n`
+  resetting `yaml_version` to `None`), percent-encoded local/verbatim tags
+  (`x:` → `!<x:>`, `x:[` → `!<x:%5B>`), `\ufffe`/`\uffff` double-quoted
+  escaping, root-level leading-space multiline double-quoting, and
+  shortest-decimal/exponent float formatting (`1.0e+21`, `1.5e-7`, `1.0`,
+  subnormals, and `2^53` boundaries). Assert byte-for-byte output identity for
+  structurally equal `Document` / `Node` trees across Rust (`emit_all_with`),
+  Go (`EmitAllWith`), TypeScript (`dumpAll`), and Python (`dump_all`) within the
+  `64 MiB` WASM wire/owned domain, including dense host-bridge sequences
+  (`150,000`+ `null`/float nodes). Cover both `CompatQuoting::Yaml11Safe`
+  (quoting `yes`/`no`/`on`/`off`/`y`/`n`, plain and underscored sexagesimals
+  such as `10:20` and `1_0:20`, `0o`/`0x`/leading-zero octals, underscore- and
+  comma-grouped numbers such as `1,000`, multi-dot numeric tokens such as
+  `1.2.3`, and `YYYY-MM-DD`) and `CompatQuoting::CoreOnly`, multiline chomping
+  (`|`, `|-`, `|+`, nested `|2`), explicit `? ` keys (collections, `Tagged`,
+  keys > 1,024 bytes), `TagKindMismatch` on `Tagged` wrapping non-`String`
+  scalars or `!!merge` keys/collections, `serde::Serialize` (`to_node` /
+  `to_string` round-trip with `from_str` within §8.2's invertible scope), CLI
+  `yamlprims emit`, and every `EmitLimits` rejection without partial output
+  (including competing-failure precedence where `[{a: 1, b: 2}]` under
+  `max_depth = 1, max_mapping_entries = 1` fails with
+  `LimitExceeded(MaxDepth)`).
+- **Revision 1.5 RFC 7493 I-JSON projection.** Exercise all six §11.6 rules,
+  §7.1 source-validation precedence (including `null\n---\n[\n` →
+  `Syntax(unclosed_flow_collection)` and `null\n---\n[[[]]]\n` at `max_depth=2`
+  → `LimitExceeded(max_depth)` winning over `MultipleDocuments`, while valid
+  `null\n---\n1\n` at `max_documents=10` → `MultipleDocuments`), pre-order
+  diagnostic precedence (including `UnknownTag` winning on a `Tagged` mapping
+  key), and exact `ErrorKind` values across Rust, Go, TypeScript, Python, and
+  CLI `dump --ijson`: zero-document (`""`, `# comment\n`, `...\n`) vs
+  explicit-null (`---\n`, `null`) vs multi-document streams; `±(2^53 − 1)` pass
+  vs `±2^53` / `i64::MIN` / `u64::MAX` `IntegerOutOfRange`; finite float RFC
+  8785 formatting (`-0.0` → `"0"`, `1.0` → `"1"`, `1e20`, `1e21`) vs
+  `.nan`/`±.inf` `FloatOutOfRange`; `String` keys vs `Bool`/`Int`/`Null`/collection
+  keys; unconditional `UnknownTags::Reject` vs opt-in `MergeKeys::Apply` and
+  rejected `MergeKeys::AsKey`; all 66 Unicode noncharacters (`U+FDD0..=U+FDEF`
+  and plane `0..=16` `0xFFFE`/`0xFFFF` code points) in both keys and values;
+  and parameterless `16 MiB` vs explicit `Options` `max_output_bytes`
+  enforcement.
 
 ## 14. Open questions
 
-1. **Emission.** None in M1/M2. If consumers need it, M3 adds a canonical
-   emitter whose round-trip test uses §5.1 equality extended so NaN equals NaN
-   by bits, ignoring spans and tag spelling.
-2. **Limits.** The §6 defaults are proposals until measured.
-3. **MSRV.** Proposed 1.88.
+1. **In-memory document iterator and migration lint (M4).** Deferred until a
+   concrete consumer requires incremental per-document streaming over an
+   in-memory buffer or YAML 1.1 migration diagnostics.
+2. **Limits.** The §6 and §10.2 defaults remain subject to empirical peak-memory
+   and latency measurement across target workloads.
 
 ## 15. Decisions
 
-Policy defaults in this specification are recorded as decision records in the
-yamlprims repository under `docs/decisions/`. The merge-key default
-(`Reject`) is the first.
+Policy and architecture decisions in this specification are recorded as decision
+records in the yamlprims repository under `docs/decisions/` (`ADR-0001` through
+`ADR-0005`).
 
 ## 16. Errata
 
-Tagged revisions 1.0 through 1.3 remain preserved at their `spec-v1.x` tags.
+Tagged revisions 1.0 through 1.4 remain preserved at their `spec-v1.x` tags.
 Erratum numbering belongs to this public specification and restarts per revision;
-cross-document references use revision-qualified identifiers such as `1.4/E-1`.
+cross-document references use revision-qualified identifiers such as `1.5/E-1`.
 Specification publication and decision acceptance do not establish implementation
 qualification.
 
-### Revision 1.4 — unreleased draft
+### Revision 1.5 — unreleased draft
+
+These proposed contract updates ([ADR-0005](../decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md))
+require maintainer acceptance and corresponding conformance qualification.
+Historical tags (`spec-v1.0` through `spec-v1.4`) and their pinned profiles
+remain unchanged.
+
+| ID | Sections | Change from revision 1.4 |
+| --- | --- | --- |
+| E-1 | §3, §4.4, §7.1, §11.1, §13.2 | Add checked caller-tree constructors (`Document::new`, `Document::with_metadata` with 9-digit minor-version bound, `Tag::try_new` / `Tag::with_spelling` with RFC 3986 scheme / local-tag validation permitting empty scheme-specific `"x:"`, `Tagged::new` with §4.4 inner-kind enforcement), clarify §4.4's existing `!!merge` collection/scalar/key behavior without changing historical profile expectations, specify iterative heap-stack `Drop`/`Clone`/`PartialEq` and bounded `Debug` plus crate traversals, incorporate the closed 81-code `SyntaxKind` catalog (`ADR-0004`), and define symmetric `decode_wire` validation (including §3 `Tagged` inner-kind/tag checks, **H** vs **P** depth metrics, and error-envelope round-trip budget preconditions) across all four bindings. (`Internal` for malformed wire input and `InvalidOptions` for invalid tag metadata preserve the closed 23-variant `yamlprims-value/1` `ErrorKind` vocabulary and are candidates for dedicated variants in a future wire version `2`.) |
+| E-2 | §8.2, §10.2, §13.2, §14 | Specify the deterministic 2-space block-first YAML 1.2.2 Core emitter (`emit`, `emit_all`, `EmitOptions`, `EmitLimits` with `max_mapping_entries: 100_000` and `max_output_bytes: 8 MiB` so default `emit_all` reloads under default `load_all`), exhaustive implicit/explicit mapping-key rules, root-safe literal block selection, RFC 3986 §3.3 verbatim tag escaping (`[`, `]`, `#`), `CompatQuoting::Yaml11Safe` default quoting (anchored full-string matching, including underscored sexagesimals, comma-grouped integers, and multi-dot numbers), `serde::Serialize` (`to_node`, `to_string`, `to_string_with`, and invertible round-trip scope), CLI `emit`, and four-language byte-for-byte emitter parity; renumber the deferred streaming/migration milestone from `M3` (`ADR-0002`, `spec-v1.0..1.4`) to `M4` as `M3` (`v0.2.0`) delivers emission and I-JSON projection. |
+| E-3 | §10.1, §11.6, §13.2 | Specify the six-rule RFC 7493 I-JSON projection (`encode_ijson`, `load_ijson`, `load_ijson_bytes`, `Options::ijson_default()`, CLI `dump --ijson`, and host equivalents) with §7.1 source-validation precedence before Phase 5 document-cardinality checks, exact closed-set `ErrorKind` diagnostics, normative `Type` strings, and RFC 8785 number/string token formatting. |
+| E-4 | §1, §2, §11.2, §11.5 | Align multi-language architecture sections with `ADR-0004` (`Profile B`: pure-Go twin, zero-import `wasm32` TypeScript with explicit `64 MiB` WASM wire/owned bridge domain, and `#![forbid(unsafe_code)]` `PyO3` `abi3-py310` Python). |
+
+Wire grammar version 1 (`yamlprims-value/1`) and the §6 subtree-weight formula
+are unchanged.
+
+### Revision 1.4 — tagged draft specification
 
 These proposed contract updates require maintainer acceptance and a separately
 pinned qualification profile. Historical tags, profiles and observations remain

@@ -77,7 +77,7 @@ precedence, coordinates, pass counts and the native resource fallback.
 
 ## Revision 1.4 conformance integration and remaining gaps
 
-The working specification is at revision 1.4 (`spec-v1.4`). Historical
+The working specification draft is at revision 1.5 (`spec-v1.5`; `SPEC_VERSION` is `1.5`), building on tagged revision 1.4 (`spec-v1.4`). Historical
 specification tags (`spec-v1.0` through `spec-v1.4`) and conformance pins
 retain their exact bindings. The pinned conformance baseline at
 `6b1266e16676dc456328eb64c0eed028060845c3` (`conformance/pins/pin-6b1266e.json`)
