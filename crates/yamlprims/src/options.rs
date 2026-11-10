@@ -63,6 +63,15 @@ pub struct Options {
 }
 
 impl Options {
+    /// Default options for RFC 7493 I-JSON projection (`UnknownTags::Reject`,
+    /// `limits.max_output_bytes = 16 MiB`; spec-v1.5 §10.1, §11.6).
+    pub fn ijson_default() -> Self {
+        let mut opts = Self::default();
+        opts.unknown_tags = UnknownTags::Reject;
+        opts.limits.max_output_bytes = 16 * 1024 * 1024;
+        opts
+    }
+
     /// granit's `strict_indentation`, the same for every parsing pass.
     pub(crate) fn strict_indentation(&self) -> bool {
         true

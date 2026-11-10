@@ -17,10 +17,21 @@ pub(crate) const NODE: &str = "$yamlprims::Node";
 pub(crate) const SPANNED: &str = "$yamlprims::Spanned";
 pub(crate) const TAGGED_VALUE: &str = "$yamlprims::TaggedValue";
 
+#[derive(Clone)]
+pub(crate) struct SerActiveState {
+    pub(crate) limits: crate::emit::EmitLimits,
+    pub(crate) nodes_used: usize,
+    pub(crate) depth: usize,
+    pub(crate) in_key: bool,
+}
+
 thread_local! {
     pub(crate) static NODE_SLOT: RefCell<Option<Node>> = const { RefCell::new(None) };
     pub(crate) static SPAN_SLOT: RefCell<Option<Option<Span>>> = const { RefCell::new(None) };
     pub(crate) static TAG_SLOT: RefCell<Option<Tag>> = const { RefCell::new(None) };
+    pub(crate) static SER_VALUE_SLOT: RefCell<Option<Result<Value, crate::error::Error>>> = const { RefCell::new(None) };
+    pub(crate) static SER_TAG_SLOT: RefCell<Option<Tag>> = const { RefCell::new(None) };
+    pub(crate) static SER_ACTIVE_STATE: RefCell<Option<SerActiveState>> = const { RefCell::new(None) };
 }
 
 /// A value together with the source span of the node it came from (`None` for synthetic nodes
@@ -48,7 +59,7 @@ impl<'de> Deserialize<'de> for Node {
 
 impl<'de> Deserialize<'de> for Value {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
-        Node::deserialize(d).map(|n| n.value)
+        Node::deserialize(d).map(Node::into_value)
     }
 }
 

@@ -1107,6 +1107,46 @@ func runValue(input []byte, opts yaml.Options, single bool) map[string]any {
 	for i := range docs {
 		outDocs[i] = notation(docs[i].Root())
 	}
+	emitOpts := yaml.DefaultEmitOptions()
+	emitOpts.Limits.MaxDepth = opts.Limits.MaxDepth
+	emitOpts.Limits.MaxNodes = max(opts.Limits.MaxNodes, opts.Limits.MaxExpandedNodes)
+	emitOpts.Limits.MaxScalarBytes = opts.Limits.MaxScalarBytes
+	emitOpts.Limits.MaxKeyBytes = opts.Limits.MaxKeyBytes
+	emitOpts.Limits.MaxMappingEntries = opts.Limits.MaxMappingEntries
+	emitOpts.Limits.MaxTagBytes = max(opts.Limits.MaxScalarBytes, 1024)
+	emitOpts.Limits.MaxDocuments = opts.Limits.MaxDocuments
+	emitOpts.Limits.MaxOutputBytes = max(
+		opts.Limits.MaxInputBytes*8,
+		opts.Limits.MaxScalarBytes*4,
+		opts.Limits.MaxKeyBytes*4,
+		16*1024*1024,
+	)
+	emitted, eerr := yaml.EmitAllWith(docs, emitOpts)
+	if eerr != nil {
+		return map[string]any{"emit_error": eerr.Error()}
+	}
+	reparseOpts := opts
+	reparseOpts.MergeKeys = yaml.MergeKeysAsKey
+	reparseOpts.Limits.MaxInputBytes = max(len(emitted), opts.Limits.MaxInputBytes, 16*1024*1024)
+	reparseOpts.Limits.MaxOwnedBytes = max(reparseOpts.Limits.MaxOwnedBytes, reparseOpts.Limits.MaxInputBytes)
+	reparseOpts.Limits.MaxNodes = max(reparseOpts.Limits.MaxNodes, reparseOpts.Limits.MaxExpandedNodes)
+	reparsed, rerr := yaml.LoadAllWith(emitted, reparseOpts)
+	if rerr != nil {
+		return map[string]any{"reparse_error": rerr.Error(), "emitted": emitted}
+	}
+	reparsedDocs := make([]any, len(reparsed))
+	for i := range reparsed {
+		reparsedDocs[i] = notation(reparsed[i].Root())
+	}
+	if !reflect.DeepEqual(reparsedDocs, outDocs) {
+		return map[string]any{
+			"roundtrip_mismatch": map[string]any{
+				"emitted":  emitted,
+				"reparsed": reparsedDocs,
+				"original": outDocs,
+			},
+		}
+	}
 	return map[string]any{"documents": outDocs}
 }
 
@@ -1591,6 +1631,8 @@ func runCrosscheckJSONL() int {
 				"wire":      wire,
 				"roundtrip": rt,
 				"plain":     "",
+				"emit":      "",
+				"ijson":     "",
 			}))
 			continue
 		}
@@ -1782,11 +1824,43 @@ func runCrosscheckJSONL() int {
 			}
 		}
 
+		var emitOut string
+		if lerr == nil {
+			emitted, eerr := yaml.EmitAllWith(docs, yaml.DefaultEmitOptions())
+			if eerr != nil {
+				ew, e2 := yaml.EncodeError(eerr, rtOpts)
+				if e2 != nil {
+					fmt.Fprintf(os.Stderr, "%s: EmitAllWith EncodeError: %v\n", id, e2)
+					return 2
+				}
+				emitOut = ew
+			} else {
+				emitOut = emitted
+			}
+		}
+
+		ijsonOpts := opts
+		ijsonOpts.UnknownTags = yaml.UnknownTagsReject
+		var ijsonOut string
+		ij, ijErr := yaml.LoadIJSONBytes(input, ijsonOpts)
+		if ijErr != nil {
+			iw, e2 := yaml.EncodeError(ijErr, rtOpts)
+			if e2 != nil {
+				fmt.Fprintf(os.Stderr, "%s: LoadIJSONBytes EncodeError: %v\n", id, e2)
+				return 2
+			}
+			ijsonOut = iw
+		} else {
+			ijsonOut = ij
+		}
+
 		fmt.Println(mustJSON(map[string]any{
 			"id":        id,
 			"wire":      wire,
 			"roundtrip": rt,
 			"plain":     plain,
+			"emit":      emitOut,
+			"ijson":     ijsonOut,
 		}))
 	}
 	return 0

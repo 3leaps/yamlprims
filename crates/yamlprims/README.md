@@ -1,8 +1,11 @@
 # yamlprims
 
 Rust implementation under development: owned YAML values, exact integers,
-arbitrary mapping keys, explicit merge policy, source locations, typed Serde
-conversion and bounded wire encoding.
+arbitrary mapping keys, explicit merge policy, source locations, checked
+caller-tree constructors, stack-safe heap-worklist `Node` operations, typed
+Serde conversion (`Deserialize` and `Serialize`), bounded wire encoding and
+decoding, deterministic YAML 1.2.2 Core emission, and strict RFC 7493 I-JSON
+projection.
 
 ```rust
 let document = yamlprims::load("port: 8080\n")?;

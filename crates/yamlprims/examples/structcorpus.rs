@@ -57,8 +57,9 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use yamlprims::{
-    encode, encode_error, encode_plain, from_node, load_all_bytes, load_bytes, Error, ErrorKind,
-    LimitKind, Limits, MergeKeys, Node, NodeSpan, Options, UnknownTags, Value,
+    decode_wire, emit_all_with, encode, encode_error, encode_plain, from_node, load_all_bytes,
+    load_bytes, load_ijson_bytes, EmitOptions, Error, ErrorKind, LimitKind, Limits, MergeKeys,
+    Node, NodeSpan, Options, UnknownTags, Value, WireEnvelope,
 };
 
 struct Profile {
@@ -986,7 +987,58 @@ fn run_value(input: &[u8], opts: &Options, single: bool) -> J {
     };
     match docs {
         Ok(docs) => {
-            json!({"documents": docs.iter().map(|d| notation(d.root())).collect::<Vec<_>>()})
+            let want_docs = docs.iter().map(|d| notation(d.root())).collect::<Vec<_>>();
+            let mut emit_opts = EmitOptions::default();
+            emit_opts.limits.max_depth = opts.limits.max_depth;
+            emit_opts.limits.max_nodes = opts.limits.max_nodes.max(opts.limits.max_expanded_nodes);
+            emit_opts.limits.max_scalar_bytes = opts.limits.max_scalar_bytes;
+            emit_opts.limits.max_key_bytes = opts.limits.max_key_bytes;
+            emit_opts.limits.max_mapping_entries = opts.limits.max_mapping_entries;
+            emit_opts.limits.max_tag_bytes = opts.limits.max_scalar_bytes.max(1024);
+            emit_opts.limits.max_documents = opts.limits.max_documents;
+            emit_opts.limits.max_output_bytes = opts
+                .limits
+                .max_input_bytes
+                .saturating_mul(8)
+                .max(opts.limits.max_scalar_bytes.saturating_mul(4))
+                .max(opts.limits.max_key_bytes.saturating_mul(4))
+                .max(16 * 1024 * 1024);
+            let emitted = match emit_all_with(&docs, &emit_opts) {
+                Ok(s) => s,
+                Err(e) => return json!({"emit_error": e.to_string()}),
+            };
+            let mut reparse_opts = opts.clone();
+            reparse_opts.merge_keys = MergeKeys::AsKey;
+            reparse_opts.limits.max_input_bytes = emitted
+                .len()
+                .max(opts.limits.max_input_bytes)
+                .max(16 * 1024 * 1024);
+            reparse_opts.limits.max_owned_bytes = reparse_opts
+                .limits
+                .max_owned_bytes
+                .max(reparse_opts.limits.max_input_bytes);
+            reparse_opts.limits.max_nodes = reparse_opts
+                .limits
+                .max_nodes
+                .max(reparse_opts.limits.max_expanded_nodes);
+            let reparsed = match load_all_bytes(emitted.as_bytes(), &reparse_opts) {
+                Ok(d) => d,
+                Err(e) => return json!({"reparse_error": e.to_string(), "emitted": emitted}),
+            };
+            let reparsed_docs = reparsed
+                .iter()
+                .map(|d| notation(d.root()))
+                .collect::<Vec<_>>();
+            if reparsed_docs != want_docs {
+                return json!({
+                    "roundtrip_mismatch": {
+                        "emitted": emitted,
+                        "reparsed": reparsed_docs,
+                        "original": want_docs,
+                    }
+                });
+            }
+            json!({"documents": want_docs})
         }
         Err(e) => error(&e, false),
     }
@@ -1294,7 +1346,17 @@ fn run_crosscheck_jsonl() -> ExitCode {
                 format!("syntax error: {code}"),
             );
             let wire = encode_error(&err, &def_opts).expect("encode syntax error");
-            println!("{}", json!({"id": id, "wire": wire, "plain": ""}));
+            println!(
+                "{}",
+                json!({
+                    "id": id,
+                    "wire": wire,
+                    "roundtrip": wire,
+                    "plain": "",
+                    "emit": "",
+                    "ijson": "",
+                })
+            );
             continue;
         }
         let input = if let Some(hex) = rec["input_hex"].as_str() {
@@ -1399,6 +1461,14 @@ fn run_crosscheck_jsonl() -> ExitCode {
                 Err(enc_err) => encode_error(&enc_err, &rt_opts).expect("encode_error"),
             },
         };
+        let roundtrip = match decode_wire(&wire, &rt_opts) {
+            Ok(WireEnvelope::Documents(docs)) => encode(&docs, &rt_opts).expect("rt encode"),
+            Ok(WireEnvelope::Error(e)) => encode_error(&e, &rt_opts).expect("rt encode_error"),
+            Err(e) => {
+                eprintln!("{id}: decode_wire failed: {e}");
+                return ExitCode::from(2);
+            }
+        };
         let plain = if check_plain {
             match load_bytes(&input, &opts) {
                 Err(e) => encode_error(&e, &rt_opts).expect("encode_error"),
@@ -1410,7 +1480,30 @@ fn run_crosscheck_jsonl() -> ExitCode {
         } else {
             String::new()
         };
-        println!("{}", json!({"id": id, "wire": wire, "plain": plain}));
+        let emit_out = match &loaded {
+            Err(_) => String::new(),
+            Ok(docs) => match emit_all_with(docs, &EmitOptions::default()) {
+                Ok(out) => out,
+                Err(e) => encode_error(&e, &rt_opts).expect("encode_error"),
+            },
+        };
+        let mut ijson_opts = opts.clone();
+        ijson_opts.unknown_tags = UnknownTags::Reject;
+        let ijson_out = match load_ijson_bytes(&input, &ijson_opts) {
+            Ok(out) => out,
+            Err(e) => encode_error(&e, &rt_opts).expect("encode_error"),
+        };
+        println!(
+            "{}",
+            json!({
+                "id": id,
+                "wire": wire,
+                "roundtrip": roundtrip,
+                "plain": plain,
+                "emit": emit_out,
+                "ijson": ijson_out,
+            })
+        );
     }
     ExitCode::SUCCESS
 }

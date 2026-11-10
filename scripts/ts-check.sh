@@ -145,6 +145,10 @@ for r, t in zip(rust_lines, ts_lines):
         mismatches.append(f"{r['id']} [wire]:\n  rust: {r['wire']}\n  ts:   {t['wire']}")
     elif r["plain"] != t["plain"]:
         mismatches.append(f"{r['id']} [plain]:\n  rust: {r['plain']}\n  ts:   {t['plain']}")
+    elif r.get("emit", "") != t.get("emit", ""):
+        mismatches.append(f"{r['id']} [emit]:\n  rust: {r.get('emit', '')}\n  ts:   {t.get('emit', '')}")
+    elif r.get("ijson", "") != t.get("ijson", ""):
+        mismatches.append(f"{r['id']} [ijson]:\n  rust: {r.get('ijson', '')}\n  ts:   {t.get('ijson', '')}")
 if mismatches:
     for m in mismatches[:10]:
         print(m, file=sys.stderr)

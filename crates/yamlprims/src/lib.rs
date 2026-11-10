@@ -7,24 +7,31 @@
 mod budget;
 mod build;
 mod de;
+mod emit;
 mod engine;
 mod error;
+mod ijson;
 mod load;
 mod options;
 mod protocol;
 mod resolve;
+mod ser;
 mod value;
 mod wire;
 
+pub use emit::{emit, emit_all, emit_all_with, emit_with, CompatQuoting, EmitLimits, EmitOptions};
 pub use error::{
     Error, ErrorDetail, ErrorKind, LimitKind, PathSegment, Related, RelatedRole, Site, SyntaxKind,
 };
+pub use ijson::{encode_ijson, load_ijson, load_ijson_bytes, load_ijson_with};
 pub use options::{Limits, MergeKeys, Options, UnknownTags};
 pub use protocol::{Spanned, TaggedValue};
+pub use ser::{to_node, to_string, to_string_with};
 pub use value::{
     key_eq, Document, InsertError, Integer, Location, Mapping, Node, NodeSpan, Span, Tag, Tagged,
     Value, Via,
 };
+pub use wire::{decode_wire, WireEnvelope};
 
 use serde::de::DeserializeOwned;
 
@@ -112,45 +119,59 @@ type Origin = Option<(RelatedRole, Span)>;
 /// location for parsed nodes, `NotSource` with the nearest source ancestor otherwise, §8)
 /// and the nearest alias use or merge directive at or above it, as `related` (§7.2).
 fn count_nodes(
-    mut n: &Node,
+    root: &Node,
     budget: &mut usize,
-    depth: usize,
+    initial_depth: usize,
     max_depth: usize,
-    mut last_known: Option<Location>,
-    mut origin: Origin,
+    initial_last_known: Option<Location>,
+    initial_origin: Origin,
 ) -> Result<(), (LimitKind, Site, Origin)> {
     let site = |n: &Node, last_known: Option<Location>| match n.span() {
         NodeSpan::Source(s) => Site::Source(s.start),
         NodeSpan::Synthetic => Site::NotSource { last_known },
     };
-    loop {
-        if let NodeSpan::Source(s) = n.span() {
-            last_known = Some(s.start);
+    let mut stack: Vec<(&Node, usize, Option<Location>, Origin)> =
+        vec![(root, initial_depth, initial_last_known, initial_origin)];
+    while let Some((mut n, depth, mut last_known, mut origin)) = stack.pop() {
+        loop {
+            if let NodeSpan::Source(s) = n.span() {
+                last_known = Some(s.start);
+            }
+            origin = match n.via() {
+                Some(Via::Alias { use_site }) => Some((RelatedRole::AliasUse, *use_site)),
+                Some(Via::Merge { directive }) => Some((RelatedRole::MergeDirective, *directive)),
+                None => origin,
+            };
+            *budget = budget
+                .checked_sub(1)
+                .ok_or_else(|| (LimitKind::MaxNodes, site(n, last_known), origin))?;
+            // Tag wrappers do not add depth; walk them in a loop so a chain cannot recurse.
+            match &n.value {
+                Value::Tagged(t) => n = &t.value,
+                _ => break,
+            }
         }
-        origin = match n.via() {
-            Some(Via::Alias { use_site }) => Some((RelatedRole::AliasUse, *use_site)),
-            Some(Via::Merge { directive }) => Some((RelatedRole::MergeDirective, *directive)),
-            None => origin,
-        };
-        *budget = budget
-            .checked_sub(1)
-            .ok_or_else(|| (LimitKind::MaxNodes, site(n, last_known), origin))?;
-        // Tag wrappers do not add depth; walk them in a loop so a chain cannot recurse.
         match &n.value {
-            Value::Tagged(t) => n = &t.value,
-            _ => break,
+            Value::Sequence(s) => {
+                if depth + 1 > max_depth {
+                    return Err((LimitKind::MaxDepth, site(n, last_known), origin));
+                }
+                for c in s.iter().rev() {
+                    stack.push((c, depth + 1, last_known, origin));
+                }
+            }
+            Value::Mapping(m) => {
+                if depth + 1 > max_depth {
+                    return Err((LimitKind::MaxDepth, site(n, last_known), origin));
+                }
+                let entries: Vec<(&Node, &Node)> = m.iter().collect();
+                for (k, v) in entries.into_iter().rev() {
+                    stack.push((v, depth + 1, last_known, origin));
+                    stack.push((k, depth + 1, last_known, origin));
+                }
+            }
+            _ => {}
         }
-    }
-    let children: Vec<&Node> = match &n.value {
-        Value::Sequence(s) => s.iter().collect(),
-        Value::Mapping(m) => m.iter().flat_map(|(k, v)| [k, v]).collect(),
-        _ => return Ok(()),
-    };
-    if depth + 1 > max_depth {
-        return Err((LimitKind::MaxDepth, site(n, last_known), origin));
-    }
-    for c in children {
-        count_nodes(c, budget, depth + 1, max_depth, last_known, origin)?;
     }
     Ok(())
 }

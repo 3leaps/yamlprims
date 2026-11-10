@@ -6,15 +6,21 @@ twin (`yaml/` in root `go.mod`, `github.com/3leaps/yamlprims/yaml`,
 driver (`cmd/structcorpus-driver`), isolated TypeScript WASM
 ([`bindings/typescript/`](../bindings/typescript/README.md), `@3leaps/yamlprims`)
 and Python `PyO3/maturin` ([`bindings/python/`](../bindings/python/README.md),
-`yamlprims`) bindings, and a thin `yamlprims-cli` consumer (`v0.1.1`; see
-[docs/releases/v0.1.1.md](releases/v0.1.1.md)).
+`yamlprims`) bindings, and a thin `yamlprims-cli` consumer (`v0.2.0`; see
+[docs/releases/v0.2.0.md](releases/v0.2.0.md)).
 Package versions, specification tags and wire versions are separate namespaces.
 
 Available operations include single-document and stream loading from UTF-8,
 owned values with exact integers and arbitrary keys, explicit merge policy,
-source spans, typed Serde conversion, canonical wire/error encoding and plain
-JSON projection. The core forbids unsafe code and performs no filesystem,
-environment or network access. Granit-parser 2.0.0 is the internal engine.
+source spans, checked caller-tree constructors (`Document::new`, `Tag::try_new`,
+`Tagged::new`), stack-safe heap-worklist `Drop`/`Clone`/`PartialEq` and bounded
+`Debug`, typed Serde conversion (`Deserialize` and `Serialize`), canonical
+wire/error encoding and symmetric `decode_wire`, plain JSON projection,
+deterministic 2-space block-first YAML 1.2.2 Core emission (`emit`, `emit_all`,
+`CompatQuoting::Yaml11Safe`), and strict RFC 7493 I-JSON projection
+(`encode_ijson`, `load_ijson`). The core forbids unsafe code and performs no
+filesystem, environment or network access. Granit-parser 2.0.0 is the internal
+engine.
 
 The engine adapter translates backend events, styles, tags, locations and
 scanner/parser syntax errors (`ErrorKind::Syntax(SyntaxKind)`, `SyntaxKind::ALL`,
@@ -75,14 +81,15 @@ native nesting guards with headroom for the pinned scanner's simple-key
 lookahead. Focused controls cover depth boundaries, native and adapter error
 precedence, coordinates, pass counts and the native resource fallback.
 
-## Revision 1.4 conformance integration and remaining gaps
+## Revision 1.4 and 1.5 conformance integration and remaining gaps
 
-The working specification draft is at revision 1.5 (`spec-v1.5`; `SPEC_VERSION` is `1.5`), building on tagged revision 1.4 (`spec-v1.4`). Historical
+The working specification is at revision 1.5 (`SPEC_VERSION` `1.5`,
+[ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)). Historical
 specification tags (`spec-v1.0` through `spec-v1.4`) and conformance pins
 retain their exact bindings. The pinned conformance baseline at
 `6b1266e16676dc456328eb64c0eed028060845c3` (`conformance/pins/pin-6b1266e.json`)
 adds the 18 explicit-limit revision 1.4 records (`yamlprims-core-depth128` r1,
-`yamlprims-core-depth255` r1 and `yamlprims-core-entries2` r1) and synthetic driver controls
+`yamlprims-core-depth255` r1, and `yamlprims-core-entries2` r1) and synthetic driver controls
 (`conformance/scripts/structcorpus_probes_v14.py`) for the four revision 4
 policy profiles (`yamlprims-core`, `yamlprims-core-stream`,
 `yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key` r4), which carry
@@ -91,13 +98,15 @@ zero shipped corpus records in `6b1266e`:
 | Revision 1.4 rule | Conformance and unit coverage |
 | --- | --- |
 | Bytes-only anchor registration | Focused unit/integration controls plus `yaml.limits.anchor-registration-bytes-not-nodes` (`yamlprims-core-entries2` r1) |
-| Combined source depth and bounded validation precedence | Focused unit/integration controls plus the six `yamlprims-core-depth128` r1 (`depth-127`, `depth-128`, `depth-129`, `alias-125`, `alias-126`, `alias-127`) and six `yamlprims-core-depth255` r1 (`depth-254`, `depth-255`, `depth-256`, `alias-252`, `alias-253`, `alias-254`) depth-boundary and alias-subtree records |
+| Combined source depth and bounded validation precedence | Focused unit/integration controls plus the six `yamlprims-core-depth128` r1 depth-boundary and alias-subtree records (`depth-127`, `depth-128`, `depth-129`, `alias-125`, `alias-126`, `alias-127`) and the six `yamlprims-core-depth255` r1 native parser ceiling records (`depth-254`, `depth-255`, `depth-256`, `alias-252`, `alias-253`, `alias-254`) |
 | Merged-entry capacity before copy admission | Focused unit/integration controls plus `yaml.limits.merge-shadowed-fits-entries2` and `yaml.limits.merge-partial-entries-before-copy` (`yamlprims-core-entries2` r1) |
 | Ordinary-entry, copy-tie and completed-key rules | Focused unit/integration controls plus `yaml.limits.ordinary-entry-before-value-nodes` and the two completed-key NaN precedence records (`nan-key-before-value-nodes`, `nan-key-after-key-owned-bytes`) under `yamlprims-core-entries2` r1 |
 
 Passing the pinned conformance gate establishes bounded corpus transfer for
-these 18 records and the historical 61,348-case baseline; it does not close the
-broader M1 release gates below.
+these 18 records and the historical 61,348-case baseline (`61,366` total cases /
+`90,988` expectations, including `load -> emit_all_with -> load` semantic
+round-trip verification across all positive value expectations in both the Rust
+and Go drivers); it does not close the broader M1 release gates below.
 
 ## Remaining gates before API freeze
 
@@ -126,13 +135,14 @@ documentation CI is not runtime qualification. The `Profile B` pure-Go twin (`ya
 standard library only) and its conformance driver (`cmd/structcorpus-driver`)
 are qualified against all 20 manifest rows of `conformance/pins/pin-6b1266e.json`
 (`conformance/requalify.sh`) and verified for byte-for-byte wire, `DecodeWire`
-round-trip, and plain-JSON parity with the Rust core via `make crosscheck`. The
-isolated M2 language bindings (`bindings/typescript/` zero-import WASM module
+round-trip, plain-JSON, `emit_all`, and `encode_ijson` parity with the Rust core via `make crosscheck`. The
+isolated M2/M3 language bindings (`bindings/typescript/` zero-import WASM module
 and `bindings/python/` `PyO3/maturin` `abi3-py310` wheel) are verified in-tree
-against `conformance/vectors/cases.jsonl` and `structcorpus --crosscheck-jsonl`
+against `conformance/vectors/cases.jsonl` (`176` vectors) and `structcorpus --crosscheck-jsonl`
 via `make ts-check` and `make python-check`, and ship as signed release assets
 for npm (`@3leaps/yamlprims`) and PyPI (`yamlprims`) ([build specification](build-spec.md),
-[ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
+[ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md),
+[ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
 
 The working specification is a new draft; tagged specifications remain at their
 immutable baselines. Historical draft-status prose inside those tags does not

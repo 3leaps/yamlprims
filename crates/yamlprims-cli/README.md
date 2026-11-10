@@ -9,6 +9,8 @@ It forbids unsafe code. All YAML policies, values, limits and encoders come from
 cargo run --locked -p yamlprims-cli -- check config.yaml
 cargo run --locked -p yamlprims-cli -- dump config.yaml
 cargo run --locked -p yamlprims-cli -- dump --plain config.yaml
+cargo run --locked -p yamlprims-cli -- dump --ijson config.yaml
+cargo run --locked -p yamlprims-cli -- emit config.yaml
 cargo run --locked -p yamlprims-cli -- --merge=apply check config.yaml
 ```
 
@@ -23,6 +25,16 @@ Current command behavior:
 - `dump --plain FILE` requires exactly one document. It writes plain JSON or
   fails with a diagnostic and no stdout. Zero/multiple documents are currently
   rejected; their final output representation remains a contract-freeze item.
+- `dump --ijson FILE` requires exactly one explicit document and projects it to
+  strict RFC 7493 I-JSON UTF-8 bytes (`spec-v1.5 §11.3`, `§11.6`), failing with
+  a diagnostic on stderr, no stdout, and exit 1 on empty streams, multi-document
+  streams, integers outside `±(2^53 − 1)`, `NaN`/`±Infinity`, non-string mapping
+  keys, tags, or Unicode noncharacters.
+- `emit FILE` reads a YAML stream (or a `yamlprims-value/1` wire envelope with
+  `--from-wire` or a single JSON value with `--from-plain`) and writes canonical
+  2-space block-first YAML 1.2.2 Core output (`spec-v1.5 §10.2`, `§11.6`) with
+  `--compat-quoting=yaml11_safe|core_only` (`yaml11_safe` default) and optional
+  `--max-output-bytes=N`.
 - `-` selects stdin, explicitly, at most once per command. No files means a usage
   error. File paths use operating-system strings; `--` admits filenames that
   begin with `-`. The path `-` is always stdin.
