@@ -8,6 +8,20 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
+### Added
+
+- Deterministic 2-space block-first YAML 1.2.2 Core Schema emitter (`spec-v1.5 §10.2`, [ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)) with `CompatQuoting::Yaml11Safe` default quoting, `EmitLimits`, and `EmitOptions` across Rust (`emit`, `emit_with`, `emit_all`, `emit_all_with`), pure Go (`Emit`, `EmitWith`, `EmitAll`, `EmitAllWith`, `FromPlain`, `Marshal`, `MarshalWith`), TypeScript WASM (`dump`, `dumpAll`, `fromPlain`, `defaultEmitLimits`, `defaultEmitOptions`), Python `PyO3` (`dump`, `dump_all`, `from_plain`, `EmitLimits`, `EmitOptions`), and the CLI (`yamlprims emit` with `--from-wire`, `--from-plain`, `--compat-quoting`, `--merge`, and `--max-output-bytes`).
+- `serde::Serialize` implementations in `crates/yamlprims` for `Value`, `Node`, `Document`, `Mapping`, and `Integer`, plus bounded `to_node`, `to_string`, and `to_string_with` routing arbitrary `T: serde::Serialize` values through `EmitLimits` and the Core emitter.
+- Strict six-rule RFC 7493 I-JSON projection (`spec-v1.5 §11.6`) across Rust (`encode_ijson`, `load_ijson`, `load_ijson_with`, `load_ijson_bytes`, `Options::ijson_default`), pure Go (`EncodeIJSON`, `EncodeIJSONWith`, `LoadIJSON`, `LoadIJSONWith`, `LoadIJSONBytes`, `DefaultIJSONOptions`), TypeScript WASM (`loadIjson`), Python `PyO3` (`load_ijson`), and the CLI (`yamlprims dump --ijson`).
+- Checked caller-tree constructors (`Document::new`, `Document::with_metadata`, `Tag::try_new`, `Tag::with_spelling`, `Tagged::new`, `Node::into_value` in Rust and `NewSimpleDocument`, `TryNewDocumentWithMetadata`, `TryNewTag`, `TryNewTagWithSpelling`, `TryNewTagged` in Go), symmetric `decode_wire(json: &str, opts: &Options) -> Result<WireEnvelope, Error>` in Rust (`spec-v1.5 §11.1`), and 16 `spec-v1.5` emitter and I-JSON conformance vectors in `conformance/vectors/cases.jsonl` (`176` total vectors verified across all four bindings).
+
+### Changed
+
+- Replaced compiler-generated recursive `Drop`, `Clone`, and `PartialEq` on `Node` and `Value` with explicit heap-worklist implementations and bounded `Debug` formatting to container depth `<= 255`, ensuring caller-constructed trees cannot overflow call stacks on 2 MiB threads (`spec-v1.5 §3`, `§6`).
+- Aligned Go `DecodeWire`, Python `decode_wire`, and TypeScript `decodeWire` with the `spec-v1.5 §11.1` and `§11.4` non-Core tag URI syntax, inner-kind, and `max_scalar_bytes` rules, and extended `crates/yamlprims/examples/structcorpus.rs` and `cmd/structcorpus-driver` to verify `load -> emit_all_with -> load` semantic round-trip across all positive value expectations in `structcorpus`.
+
 ## [0.1.1] - 2026-11-09
 
 ### Added
@@ -31,9 +45,10 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 - Safe-Rust `yamlprims` core crate (`crates/yamlprims`, `#![forbid(unsafe_code)]`, MSRV `1.88.0`) and `yamlprims-cli` command (`crates/yamlprims-cli`, `check`, `dump`, `dump --plain`) implementing the `spec-v1.4` YAML 1.2.2 Core Schema data layer (`Value`, `Node`, `Integer`, `Mapping`, `Options`, `Limits`, `Error`, `SyntaxKind`, typed `serde::Deserialize`, canonical `yamlprims-value/1` wire encoding, and plain JSON projection).
 - Pure-Go `Profile B` twin (`github.com/3leaps/yamlprims/yaml`, `CGO_ENABLED=0`, standard library only), Go `structcorpus` conformance driver (`cmd/structcorpus-driver`), and automated Rust/Go differential parity gate (`make crosscheck`) ([ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
 - Isolated TypeScript WebAssembly binding (`@3leaps/yamlprims`, `bindings/typescript/`, zero-import `wasm32-unknown-unknown` module with 128 MiB linear-memory ceiling, pre-copy reservation bounds, status-`2` `OutputLimitExceeded` fallback, and 16 MiB high-water instance recycling) and Python `PyO3/maturin` `cp310-abi3` binding (`yamlprims`, `bindings/python/`, `#![forbid(unsafe_code)]`, GIL release and `catch_unwind` panic containment).
-- Conformance qualification against `conformance/pins/pin-c8b7421.json` (`structcorpus` `c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99`, 19 profile rows across `spec-v1.0` through `spec-v1.4`, `61,360` cases / `90,982` expectations) and 154 in-repo differential conformance vectors (`conformance/vectors/cases.jsonl`).
+- Conformance qualification against `conformance/pins/pin-c8b7421.json` (`structcorpus` `c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99`, 19 profile rows across `spec-v1.0` through `spec-v1.4`, `61,360` corpus cases / `90,982` expectations) and 154 in-repo differential conformance vectors (`conformance/vectors/cases.jsonl`).
 - Dual-track signed release, packaging, and provenance verification workflows and scripts (`.github/workflows/release.yml`, `.github/workflows/crates-verify.yml`, `.github/workflows/registry-publish.yml`, `scripts/release-*.sh`, `scripts/release-*.py`, `scripts/check-packages.sh`, `scripts/deps-check.sh`, `scripts/doctor.py`) supporting OpenPGP + Minisign release signing, zero-compile `crates.io` publication, and OIDC Trusted Publishing with PyPI PEP 740 and npm Sigstore provenance verification.
 
-[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/3leaps/yamlprims/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/3leaps/yamlprims/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/3leaps/yamlprims/releases/tag/v0.1.0

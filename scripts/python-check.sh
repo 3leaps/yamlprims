@@ -98,6 +98,10 @@ for r, p in zip(rust_lines, py_lines):
         mismatches.append(f"{r['id']} [wire]:\n  rust: {r['wire']}\n  py:   {p['wire']}")
     elif r["plain"] != p["plain"]:
         mismatches.append(f"{r['id']} [plain]:\n  rust: {r['plain']}\n  py:   {p['plain']}")
+    elif r.get("emit", "") != p.get("emit", ""):
+        mismatches.append(f"{r['id']} [emit]:\n  rust: {r.get('emit', '')}\n  py:   {p.get('emit', '')}")
+    elif r.get("ijson", "") != p.get("ijson", ""):
+        mismatches.append(f"{r['id']} [ijson]:\n  rust: {r.get('ijson', '')}\n  py:   {p.get('ijson', '')}")
 if mismatches:
     for m in mismatches[:10]:
         print(m, file=sys.stderr)

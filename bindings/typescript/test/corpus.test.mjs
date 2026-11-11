@@ -8,12 +8,15 @@ import { test } from "node:test";
 import {
   YamlprimsError,
   decodeWire,
+  defaultEmitOptions,
   defaultOptions,
+  dumpAll,
   encode,
   encodeError,
   encodePlain,
   loadAllBytes,
   loadBytes,
+  loadIjson,
   loadPlain,
   validateOptions,
 } from "@3leaps/yamlprims";
@@ -76,7 +79,7 @@ test("conformance/vectors/cases.jsonl wire, round-trip, and plain parity", () =>
       assert.equal(decoded.kind, "error", `${id}: expected error envelope`);
       const rt = encodeError(decoded.error, defOpts);
       assert.equal(rt, wire, `${id}: syntax_code round-trip mismatch`);
-      outLines.push(JSON.stringify({ id, plain: "", wire }));
+      outLines.push(JSON.stringify({ id, emit: "", ijson: "", plain: "", wire }));
       continue;
     }
 
@@ -144,7 +147,45 @@ test("conformance/vectors/cases.jsonl wire, round-trip, and plain parity", () =>
       plain = plainViaHost;
     }
 
-    outLines.push(JSON.stringify({ id, plain, wire }));
+    const loadOptsWideOut = {
+      ...opts,
+      limits: {
+        ...opts.limits,
+        maxOutputBytes: Math.max(opts.limits.maxOutputBytes, defOpts.limits.maxOutputBytes),
+      },
+    };
+    let docsForEmit = null;
+    try {
+      docsForEmit = single
+        ? [loadBytes(inputBytes, loadOptsWideOut)]
+        : loadAllBytes(inputBytes, loadOptsWideOut);
+    } catch {
+      docsForEmit = null;
+    }
+
+    let emit = "";
+    if (docsForEmit !== null) {
+      try {
+        emit = dumpAll(docsForEmit, defaultEmitOptions());
+      } catch (err) {
+        if (!(err instanceof YamlprimsError)) throw err;
+        emit = encodeError(err, rtOpts);
+      }
+    }
+
+    let ijson = "";
+    try {
+      ijson = loadIjson(inputBytes, {
+        mergeKeys: opts.mergeKeys,
+        unknownTags: "reject",
+        limits: opts.limits,
+      });
+    } catch (err) {
+      if (!(err instanceof YamlprimsError)) throw err;
+      ijson = encodeError(err, rtOpts);
+    }
+
+    outLines.push(JSON.stringify({ id, emit, ijson, plain, wire }));
   }
 
   if (process.env.YAMLPRIMS_RESULTS_OUT) {

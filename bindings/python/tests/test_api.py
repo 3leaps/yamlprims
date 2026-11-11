@@ -12,10 +12,15 @@ import unittest
 import yamlprims
 from yamlprims import (
     CANONICAL_NAN_BITS,
+    DEFAULT_EMIT_MAX_OUTPUT_BYTES,
+    DEFAULT_EMIT_MAX_TAG_BYTES,
+    DEFAULT_IJSON_MAX_OUTPUT_BYTES,
     I128_MAX,
     I128_MIN,
     U128_MAX,
     Document,
+    EmitLimits,
+    EmitOptions,
     Limits,
     Location,
     Mapping,
@@ -27,18 +32,26 @@ from yamlprims import (
     Tagged,
     YamlprimsError,
     decode_wire,
+    default_emit_limits,
+    default_emit_options,
+    default_ijson_options,
     default_limits,
     default_options,
+    dump,
+    dump_all,
     encode,
     encode_error,
     encode_plain,
+    from_plain,
     key_eq,
     load,
     load_all,
     load_all_bytes,
     load_bytes,
+    load_ijson,
     load_plain,
     to_plain,
+    validate_emit_options,
 )
 
 
@@ -311,25 +324,24 @@ class TestApi(unittest.TestCase):
         # Nested Tagged-in-Tagged rejected by Node.from_tagged, Node(kind="tagged", ...), and encode
         inner_tagged = Node(
             kind="tagged",
-            value=Tagged(tag=Tag(uri="!b", handle="!", suffix="b"), value=Node.from_null()),
+            value=Tagged(tag=Tag(uri="!b", handle="!", suffix="b"), value=Node.from_str("x")),
         )
         with self.assertRaises(YamlprimsError) as cm_tag:
             Node.from_tagged(Tag(uri="!a", handle="!", suffix="a"), inner_tagged)
-        self.assertEqual(cm_tag.exception.kind, "internal")
+        self.assertEqual(cm_tag.exception.kind, "tag_kind_mismatch")
 
         with self.assertRaises(YamlprimsError) as cm_ctor:
             Node(
                 kind="tagged",
                 value=Tagged(tag=Tag(uri="!a", handle="!", suffix="a"), value=inner_tagged),
             )
-        self.assertEqual(cm_ctor.exception.kind, "internal")
+        self.assertEqual(cm_ctor.exception.kind, "tag_kind_mismatch")
 
-        bypass_outer = Node.from_tagged(Tag(uri="!a", handle="!", suffix="a"), Node.from_null())
-        object.__setattr__(
-            bypass_outer,
-            "value",
-            Tagged(tag=Tag(uri="!a", handle="!", suffix="a"), value=inner_tagged),
-        )
+        bypass_outer = Node.from_tagged(Tag(uri="!a", handle="!", suffix="a"), Node.from_str("x"))
+        bypass_inner = object.__new__(Tagged)
+        object.__setattr__(bypass_inner, "tag", Tag(uri="!a", handle="!", suffix="a"))
+        object.__setattr__(bypass_inner, "value", inner_tagged)
+        object.__setattr__(bypass_outer, "value", bypass_inner)
         with self.assertRaises(YamlprimsError) as cm_enc:
             encode([Document(root=bypass_outer)])
         self.assertEqual(cm_enc.exception.kind, "internal")
@@ -343,24 +355,219 @@ class TestApi(unittest.TestCase):
         self.assertEqual(cm.exception.message, "native panic in yamlprims")
         self.assertIsNone(cm.exception.location())
 
-    def test_depth_255_ceiling_roundtrip(self) -> None:
-        opts = Options(
-            limits=Limits(
-                max_depth=255,
-                max_nodes=1024,
-                max_owned_bytes=262144,
-                max_scalar_bytes=1024,
-                max_key_bytes=1024,
-                max_output_bytes=262144,
-            )
+    def test_spec_v15_checked_constructors_and_deep_trees(self) -> None:
+        t1 = Tag.try_new("!custom")
+        t2 = Tag.with_spelling("!custom", "!", "custom")
+        self.assertEqual(t1, t2)
+        self.assertEqual(hash(t1), hash(t2))
+
+        with self.assertRaises(YamlprimsError) as cm:
+            Tag.try_new("tag:yaml.org,2002:str")
+        self.assertEqual(cm.exception.kind, "invalid_options")
+
+        with self.assertRaises(YamlprimsError) as cm2:
+            Tagged.new(Tag.try_new("!custom"), Node.null())
+        self.assertEqual(cm2.exception.kind, "tag_kind_mismatch")
+
+        doc = Document.with_metadata(Node.string("ok"), (1, 2), True)
+        self.assertEqual(doc.yaml_version, (1, 2))
+        self.assertTrue(doc.explicit_start)
+        with self.assertRaises(YamlprimsError) as cm_doc:
+            Document.with_metadata(Node.string("no"), (2, 0), False)
+        self.assertEqual(cm_doc.exception.kind, "unsupported_yaml_version")
+
+        # 2,000-deep sequence should compare and repr without Python RecursionError
+        cur_a = Node.string("leaf")
+        cur_b = Node.string("leaf")
+        for _ in range(2000):
+            cur_a = Node.sequence([cur_a])
+            cur_b = Node.sequence([cur_b])
+        self.assertEqual(cur_a, cur_b)
+        self.assertIn("...", repr(cur_a))
+
+    def test_spec_v15_decode_wire_limits_and_invariants(self) -> None:
+        wire = encode([Document.new(Node.sequence([Node.sequence([])]))])
+        # max_input_bytes enforced on wire_json
+        with self.assertRaises(YamlprimsError) as cm_in:
+            decode_wire(wire, Options(limits=Limits(max_input_bytes=10)))
+        self.assertEqual(cm_in.exception.kind, "limit_exceeded")
+        self.assertEqual(cm_in.exception.detail["limit"], "max_input_bytes")
+
+        # [[]] has loader height H = 2 -> rejected at max_depth=1
+        with self.assertRaises(YamlprimsError) as cm_h:
+            decode_wire(wire, Options(limits=Limits(max_depth=1)))
+        self.assertEqual(cm_h.exception.kind, "limit_exceeded")
+        self.assertEqual(cm_h.exception.detail["limit"], "max_depth")
+
+        # Error path key [[]] has metric P = 1 -> accepted at max_depth=1
+        err_wire = encode_error(
+            YamlprimsError(
+                kind="duplicate_key",
+                message="dup",
+                path=[PathSegment.from_key(Node.sequence([Node.sequence([])]))],
+            ),
+            Options(limits=Limits(max_depth=1)),
         )
-        deep_tagged = ("!t [" * 255) + "0" + ("]" * 255) + "\n"
-        doc = load_bytes(deep_tagged.encode("utf-8"), opts)
-        wire = encode([doc], opts)
-        decoded = decode_wire(wire, opts)
-        self.assertEqual(decoded.kind, "documents")
-        assert decoded.documents is not None
-        self.assertEqual(encode(decoded.documents, opts), wire)
+        env = decode_wire(err_wire, Options(limits=Limits(max_depth=1)))
+        self.assertEqual(env.kind, "error")
+
+    def test_load_ijson_six_rules(self) -> None:
+        self.assertEqual(default_ijson_options().limits.max_output_bytes, DEFAULT_IJSON_MAX_OUTPUT_BYTES)
+        self.assertEqual(load_ijson("a: 1.0\nb: -0.0\nc: 1e20\nd: 1e21\n"), '{"a":1,"b":0,"c":100000000000000000000,"d":1e+21}')
+        self.assertEqual(load_ijson("---\n"), "null")
+
+        # Rule 1: empty stream and multi-doc
+        for empty in ("", "# comment only\n", "...\n"):
+            with self.assertRaises(YamlprimsError) as cm_empty:
+                load_ijson(empty)
+            self.assertEqual(cm_empty.exception.kind, "type")
+            self.assertEqual(cm_empty.exception.detail["found"], "empty_stream")
+
+        with self.assertRaises(YamlprimsError) as cm_multi:
+            load_ijson("1\n---\n2\n")
+        self.assertEqual(cm_multi.exception.kind, "multiple_documents")
+
+        # Rule 2: IEEE 754 safe integer bounds
+        self.assertEqual(load_ijson("9007199254740991\n"), "9007199254740991")
+        with self.assertRaises(YamlprimsError) as cm_int:
+            load_ijson("9007199254740992\n")
+        self.assertEqual(cm_int.exception.kind, "integer_out_of_range")
+
+        # Rule 3: Non-finite floats
+        for nf in (".nan\n", ".inf\n", "-.inf\n"):
+            with self.assertRaises(YamlprimsError) as cm_fl:
+                load_ijson(nf)
+            self.assertEqual(cm_fl.exception.kind, "float_out_of_range")
+
+        # Rule 4: Non-string mapping keys
+        with self.assertRaises(YamlprimsError) as cm_key:
+            load_ijson("1: one\n")
+        self.assertEqual(cm_key.exception.kind, "type")
+        self.assertEqual(cm_key.exception.detail["found"], "non_string_key")
+
+        # Rule 5: Tags and merge keys
+        with self.assertRaises(YamlprimsError) as cm_tag:
+            load_ijson("!custom hello\n")
+        self.assertEqual(cm_tag.exception.kind, "unknown_tag")
+
+        with self.assertRaises(YamlprimsError) as cm_as_key:
+            load_ijson("<<: 1\n", merge_keys="as_key")
+        self.assertEqual(cm_as_key.exception.kind, "invalid_options")
+
+        self.assertEqual(
+            load_ijson("base: &b {x: 1}\nmerged: {<<: *b, y: 2}\n", merge_keys="apply"),
+            '{"base":{"x":1},"merged":{"x":1,"y":2}}',
+        )
+
+        # Rule 6: Unicode noncharacters
+        with self.assertRaises(YamlprimsError) as cm_nc:
+            load_ijson('"\ufdd0"\n')
+        self.assertEqual(cm_nc.exception.kind, "type")
+        self.assertEqual(cm_nc.exception.detail["found"], "noncharacter")
+
+    def test_from_plain_dump_and_dump_all(self) -> None:
+        self.assertEqual(default_emit_limits().max_tag_bytes, DEFAULT_EMIT_MAX_TAG_BYTES)
+        self.assertEqual(default_emit_limits().max_output_bytes, DEFAULT_EMIT_MAX_OUTPUT_BYTES)
+        self.assertEqual(default_emit_options().compat_quoting, "yaml11_safe")
+
+        n = from_plain({"yes_str": "yes", "count": 42, "items": [True, None, -0.0]})
+        self.assertEqual(n.kind, "mapping")
+
+        yaml_safe = dump({"flag": "yes", "time": "10:20", "iso": "2026-11-09"})
+        self.assertEqual(yaml_safe, "flag: 'yes'\ntime: '10:20'\niso: '2026-11-09'\n")
+
+        yaml_core = dump(
+            {"flag": "yes", "time": "10:20", "iso": "2026-11-09"},
+            EmitOptions(compat_quoting="core_only"),
+        )
+        self.assertEqual(yaml_core, "flag: yes\ntime: 10:20\niso: 2026-11-09\n")
+
+        # Multi-document dump_all + round-trip
+        d1 = Document.with_metadata(from_plain({"a": 1}), (1, 2), True)
+        d2 = Document.new(from_plain(["x", "y"]))
+        emitted = dump_all([d1, d2])
+        self.assertIn("%YAML 1.2\n---\n", emitted)
+        reloaded = load_all(emitted)
+        self.assertEqual(len(reloaded), 2)
+        self.assertEqual(to_plain(reloaded[0]), {"a": 1})
+        self.assertEqual(to_plain(reloaded[1]), ["x", "y"])
+
+        # Lone surrogate in from_plain / dump raises InvalidUtf8 before max_scalar_bytes
+        with self.assertRaises(YamlprimsError) as cm_surr:
+            dump("\ud800", EmitOptions(limits=EmitLimits(max_scalar_bytes=1)))
+        self.assertEqual(cm_surr.exception.kind, "invalid_utf8")
+
+        # Output limit exceeded
+        with self.assertRaises(YamlprimsError) as cm_out:
+            dump(
+                "hello world",
+                EmitOptions(limits=EmitLimits(max_scalar_bytes=4, max_key_bytes=4, max_output_bytes=4)),
+            )
+        self.assertEqual(cm_out.exception.kind, "limit_exceeded")
+
+        with self.assertRaises(YamlprimsError) as cm_out2:
+            dump("hello", EmitOptions(limits=EmitLimits(max_scalar_bytes=5, max_key_bytes=5, max_output_bytes=5)))
+        self.assertEqual(cm_out2.exception.kind, "output_limit_exceeded")
+
+        # Bare Tagged is charged once (2 nodes total for Tagged + inner scalar)
+        bare_tagged = Tagged(Tag.try_new("!t"), Node.string("v"))
+        self.assertEqual(
+            dump(bare_tagged, EmitOptions(limits=EmitLimits(max_nodes=2))),
+            "!t v\n",
+        )
+
+        # dump_all bounds lazy iterables via islice and converts non-iterable TypeError to YamlprimsError("type")
+        import itertools
+        with self.assertRaises(YamlprimsError) as cm_gen:
+            dump_all(itertools.repeat("x"), EmitOptions(limits=EmitLimits(max_documents=2)))
+        self.assertEqual(cm_gen.exception.kind, "limit_exceeded")
+        self.assertEqual(cm_gen.exception.detail["limit"], "max_documents")
+
+        with self.assertRaises(YamlprimsError) as cm_noniter:
+            dump_all(42)  # type: ignore[arg-type]
+        self.assertEqual(cm_noniter.exception.kind, "type")
+
+        # Malformed non-core tag URI in wire decode raises internal
+        bad_tag_wire = (
+            '{"format":"yamlprims-value","version":1,"documents":[{"root":{'
+            '"kind":"tagged","tag":{"uri":"$:?","handle":"","suffix":"$:?"},'
+            '"inner":{"kind":"string","value":"x","span":null,"via":null,"tag_start":null},'
+            '"span":null,"via":null,"tag_start":null},"explicit_start":false,"yaml_version":null}]}'
+        )
+        with self.assertRaises(YamlprimsError) as cm_bad_tag:
+            decode_wire(bad_tag_wire)
+        self.assertEqual(cm_bad_tag.exception.kind, "internal")
+
+        # Incremental preflight rejects max_nodes=1 on large list immediately and 5,000-key dict completes quickly
+        with self.assertRaises(YamlprimsError) as cm_inc_nodes:
+            dump([0] * 100_000, EmitOptions(limits=EmitLimits(max_nodes=1)))
+        self.assertEqual(cm_inc_nodes.exception.kind, "limit_exceeded")
+        self.assertEqual(cm_inc_nodes.exception.detail["limit"], "max_nodes")
+
+        large_dict_yaml = dump({f"k{i}": i for i in range(2_000)})
+        self.assertTrue(large_dict_yaml.startswith("k0: 0\n"))
+
+        # Keyed 64-bit structural hash prevents sys.hash_info.modulus integer hash-flooding
+        # and keeps key_eq comparisons O(1) (<= 5 comparisons vs 499,500 on unkeyed int hash).
+        import sys
+        from unittest.mock import patch
+        import yamlprims as _yp_mod
+        modulus = sys.hash_info.modulus
+        mod_entries = [(Node.integer(i * modulus), Node.null()) for i in range(1_000)]
+        with patch.object(_yp_mod, "key_eq", wraps=key_eq) as spy_eq:
+            mod_map = Mapping(mod_entries)
+            self.assertEqual(len(mod_map), 1_000)
+            self.assertLessEqual(spy_eq.call_count, 5)
+        with patch.object(_yp_mod, "key_eq", wraps=key_eq) as spy_eq_load:
+            mod_yaml = "".join(f"{i * modulus}: null\n" for i in range(1_000))
+            mod_doc = load(mod_yaml)
+            self.assertEqual(len(mod_doc.root.value), 1_000)
+            self.assertLessEqual(spy_eq_load.call_count, 5)
+
+        # Tag.with_spelling rejects trailing newline in named handle
+        with self.assertRaises(YamlprimsError) as cm_nl_handle:
+            Tag.with_spelling("x:thing", "!e!\n", "thing")
+        self.assertEqual(cm_nl_handle.exception.kind, "invalid_options")
 
 
 if __name__ == "__main__":

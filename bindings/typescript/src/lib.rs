@@ -22,8 +22,9 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use yamlprims::{
-    encode, encode_error, encode_plain, load_all_bytes, load_bytes, Error, ErrorKind, Limits,
-    MergeKeys, Options, Site, UnknownTags,
+    decode_wire, emit_all_with, encode, encode_error, encode_plain, load_all_bytes, load_bytes,
+    load_ijson_bytes, CompatQuoting, EmitLimits, EmitOptions, Error, ErrorKind, Limits, MergeKeys,
+    Options, Site, UnknownTags, WireEnvelope,
 };
 
 /// Wire ABI version exported by this module.
@@ -171,11 +172,14 @@ pub extern "C" fn input_reserve(len: usize, max_input_bytes: usize) -> usize {
                 s.clear_all();
                 return 0;
             }
-            let Ok(opts) = parse_options(&s.options) else {
+            let effective_max = if let Ok(opts) = parse_options(&s.options) {
+                max_input_bytes.min(opts.limits.max_input_bytes)
+            } else if parse_emit_options(&s.options).is_ok() {
+                max_input_bytes.min(MAX_WASM_INPUT_CEILING)
+            } else {
                 s.clear_all();
                 return 0;
             };
-            let effective_max = max_input_bytes.min(opts.limits.max_input_bytes);
             if len > effective_max {
                 s.clear_all();
                 return 0;
@@ -316,6 +320,142 @@ pub extern "C" fn load_plain(input_len: usize, options_len: usize) -> u32 {
         .unwrap_or(2)
 }
 
+/// Load a single YAML document from the reserved input buffer and project it
+/// to compact RFC 7493 I-JSON text (`spec-v1.5 §11.6`) in `STATE.output`.
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "C" fn load_ijson(input_len: usize, options_len: usize) -> u32 {
+    STATE
+        .try_with(|cell| {
+            let Ok(mut s) = cell.try_borrow_mut() else {
+                return 2;
+            };
+            s.output.clear();
+            let valid_reservation = s.options_valid
+                && s.input_valid
+                && options_len == s.options.len()
+                && input_len == s.input.len();
+            s.options_valid = false;
+            s.input_valid = false;
+            if !valid_reservation {
+                s.options = Vec::new();
+                s.input = Vec::new();
+                s.write_fallback_internal("invalid buffer reservation");
+                return 2;
+            }
+
+            let opts = match parse_ijson_options(&s.options) {
+                Ok(o) => o,
+                Err(e) => {
+                    s.options = Vec::new();
+                    s.input = Vec::new();
+                    return finish_error(&mut s, &e, &Options::default());
+                }
+            };
+
+            let res = load_ijson_bytes(&s.input, &opts);
+            s.options = Vec::new();
+            s.input = Vec::new();
+
+            match res {
+                Ok(json) => {
+                    s.output.extend_from_slice(json.as_bytes());
+                    0
+                }
+                Err(e) => {
+                    let mut err_opts = opts.clone();
+                    err_opts.limits.max_output_bytes = err_opts
+                        .limits
+                        .max_output_bytes
+                        .max(Limits::default().max_output_bytes);
+                    finish_encode_failure(&mut s, &e, &err_opts)
+                }
+            }
+        })
+        .unwrap_or(2)
+}
+
+/// Decode a `yamlprims-value/1` wire envelope from the reserved input buffer
+/// and emit YAML 1.2.2 Core text (`spec-v1.5 §10.2`, `§11.5`) in `STATE.output`.
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "C" fn emit_wire(input_len: usize, options_len: usize) -> u32 {
+    STATE
+        .try_with(|cell| {
+            let Ok(mut s) = cell.try_borrow_mut() else {
+                return 2;
+            };
+            s.output.clear();
+            let valid_reservation = s.options_valid
+                && s.input_valid
+                && options_len == s.options.len()
+                && input_len == s.input.len();
+            s.options_valid = false;
+            s.input_valid = false;
+            if !valid_reservation {
+                s.options = Vec::new();
+                s.input = Vec::new();
+                s.write_fallback_internal("invalid buffer reservation");
+                return 2;
+            }
+
+            let eopts = match parse_emit_options(&s.options) {
+                Ok(o) => o,
+                Err(e) => {
+                    s.options = Vec::new();
+                    s.input = Vec::new();
+                    return finish_error(&mut s, &e, &Options::default());
+                }
+            };
+
+            let wire_cap = 65_536usize
+                .saturating_add(eopts.limits.max_nodes.saturating_mul(512))
+                .saturating_add(eopts.limits.max_output_bytes.saturating_mul(18))
+                .min(MAX_WASM_INPUT_CEILING);
+            let owned_cap = 65_536usize
+                .saturating_add(eopts.limits.max_nodes.saturating_mul(128))
+                .saturating_add(eopts.limits.max_output_bytes.saturating_mul(4))
+                .min(MAX_WASM_INPUT_CEILING);
+            let mut bridge_opts = Options::default();
+            bridge_opts.limits.max_depth = eopts.limits.max_depth;
+            bridge_opts.limits.max_nodes = eopts.limits.max_nodes;
+            bridge_opts.limits.max_expanded_nodes = eopts.limits.max_nodes;
+            bridge_opts.limits.max_documents = eopts.limits.max_documents;
+            bridge_opts.limits.max_mapping_entries = eopts.limits.max_mapping_entries;
+            bridge_opts.limits.max_scalar_bytes = eopts.limits.max_scalar_bytes.min(owned_cap);
+            bridge_opts.limits.max_key_bytes = eopts.limits.max_key_bytes.min(owned_cap);
+            bridge_opts.limits.max_input_bytes = wire_cap;
+            bridge_opts.limits.max_owned_bytes = owned_cap;
+            bridge_opts.limits.max_output_bytes =
+                eopts.limits.max_output_bytes.min(MAX_WASM_INPUT_CEILING);
+
+            let input_bytes = std::mem::take(&mut s.input);
+            s.options = Vec::new();
+
+            let Ok(wire_str) = std::str::from_utf8(&input_bytes) else {
+                let err = Error::new(
+                    ErrorKind::InvalidUtf8 { invalid_len: None },
+                    Site::NotSource { last_known: None },
+                    "invalid UTF-8 in wire envelope",
+                );
+                return finish_error(&mut s, &err, &Options::default());
+            };
+
+            match decode_wire(wire_str, &bridge_opts) {
+                Ok(WireEnvelope::Documents(docs)) => match emit_all_with(&docs, &eopts) {
+                    Ok(yaml_out) => {
+                        s.output.extend_from_slice(yaml_out.as_bytes());
+                        0
+                    }
+                    Err(e) => finish_encode_failure(&mut s, &e, &Options::default()),
+                },
+                Ok(WireEnvelope::Error(e)) => finish_error(&mut s, &e, &Options::default()),
+                Err(e) => finish_error(&mut s, &e, &Options::default()),
+            }
+        })
+        .unwrap_or(2)
+}
+
 fn finish_encode_failure(s: &mut State, err: &Error, opts: &Options) -> u32 {
     match err.kind {
         ErrorKind::OutputLimitExceeded { configured } => {
@@ -401,9 +541,37 @@ fn parse_options(bytes: &[u8]) -> Result<Options, Error> {
     let text =
         std::str::from_utf8(bytes).map_err(|_| invalid_opts("options must be valid UTF-8"))?;
     let mut p = OptParser::new(text.as_bytes());
-    let opts = p.parse_root()?;
+    let opts = p.parse_root(Options::default())?;
     opts.validate()?;
     Ok(opts)
+}
+
+fn parse_ijson_options(bytes: &[u8]) -> Result<Options, Error> {
+    if bytes.is_empty() {
+        let opts = Options::ijson_default();
+        opts.validate()?;
+        return Ok(opts);
+    }
+    let text =
+        std::str::from_utf8(bytes).map_err(|_| invalid_opts("options must be valid UTF-8"))?;
+    let mut p = OptParser::new(text.as_bytes());
+    let opts = p.parse_root(Options::ijson_default())?;
+    opts.validate()?;
+    Ok(opts)
+}
+
+fn parse_emit_options(bytes: &[u8]) -> Result<EmitOptions, Error> {
+    if bytes.is_empty() {
+        let eopts = EmitOptions::default();
+        eopts.validate()?;
+        return Ok(eopts);
+    }
+    let text =
+        std::str::from_utf8(bytes).map_err(|_| invalid_opts("options must be valid UTF-8"))?;
+    let mut p = OptParser::new(text.as_bytes());
+    let eopts = p.parse_emit_root()?;
+    eopts.validate()?;
+    Ok(eopts)
 }
 
 struct OptParser<'a> {
@@ -475,8 +643,7 @@ impl<'a> OptParser<'a> {
         usize::try_from(val).map_err(|_| invalid_opts("options limit exceeds target usize range"))
     }
 
-    fn parse_root(&mut self) -> Result<Options, Error> {
-        let mut opts = Options::default();
+    fn parse_root(&mut self, mut opts: Options) -> Result<Options, Error> {
         self.expect_byte(b'{')?;
         self.skip_ws();
         if self.pos < self.b.len() && self.b[self.pos] == b'}' {
@@ -530,6 +697,91 @@ impl<'a> OptParser<'a> {
             return Err(invalid_opts("trailing data after options JSON"));
         }
         Ok(opts)
+    }
+
+    fn parse_emit_root(&mut self) -> Result<EmitOptions, Error> {
+        let mut eopts = EmitOptions::default();
+        self.expect_byte(b'{')?;
+        self.skip_ws();
+        if self.pos < self.b.len() && self.b[self.pos] == b'}' {
+            self.pos += 1;
+            self.skip_ws();
+            if self.pos != self.b.len() {
+                return Err(invalid_opts("trailing data after options JSON"));
+            }
+            return Ok(eopts);
+        }
+        let mut seen = BTreeSet::new();
+        loop {
+            let key = self.parse_string()?;
+            if !seen.insert(key.clone()) {
+                return Err(invalid_opts("duplicate key in emit options JSON"));
+            }
+            self.expect_byte(b':')?;
+            match key.as_str() {
+                "compat_quoting" => {
+                    let v = self.parse_string()?;
+                    eopts.compat_quoting = match v.as_str() {
+                        "yaml11_safe" | "yaml11-safe" => CompatQuoting::Yaml11Safe,
+                        "core_only" | "core-only" => CompatQuoting::CoreOnly,
+                        _ => return Err(invalid_opts("unknown compat_quoting value")),
+                    };
+                }
+                "limits" => {
+                    self.parse_emit_limits(&mut eopts.limits)?;
+                }
+                _ => return Err(invalid_opts("unknown key in emit options JSON")),
+            }
+            self.skip_ws();
+            if self.pos < self.b.len() && self.b[self.pos] == b',' {
+                self.pos += 1;
+                continue;
+            }
+            self.expect_byte(b'}')?;
+            break;
+        }
+        self.skip_ws();
+        if self.pos != self.b.len() {
+            return Err(invalid_opts("trailing data after emit options JSON"));
+        }
+        Ok(eopts)
+    }
+
+    fn parse_emit_limits(&mut self, limits: &mut EmitLimits) -> Result<(), Error> {
+        self.expect_byte(b'{')?;
+        self.skip_ws();
+        if self.pos < self.b.len() && self.b[self.pos] == b'}' {
+            self.pos += 1;
+            return Ok(());
+        }
+        let mut seen = BTreeSet::new();
+        loop {
+            let key = self.parse_string()?;
+            if !seen.insert(key.clone()) {
+                return Err(invalid_opts("duplicate key in emit limits JSON"));
+            }
+            self.expect_byte(b':')?;
+            let val = self.parse_usize()?;
+            match key.as_str() {
+                "max_depth" => limits.max_depth = val,
+                "max_nodes" => limits.max_nodes = val,
+                "max_scalar_bytes" => limits.max_scalar_bytes = val,
+                "max_key_bytes" => limits.max_key_bytes = val,
+                "max_mapping_entries" => limits.max_mapping_entries = val,
+                "max_tag_bytes" => limits.max_tag_bytes = val,
+                "max_documents" => limits.max_documents = val,
+                "max_output_bytes" => limits.max_output_bytes = val,
+                _ => return Err(invalid_opts("unknown key in emit limits JSON")),
+            }
+            self.skip_ws();
+            if self.pos < self.b.len() && self.b[self.pos] == b',' {
+                self.pos += 1;
+                continue;
+            }
+            self.expect_byte(b'}')?;
+            break;
+        }
+        Ok(())
     }
 
     fn parse_limits(&mut self, limits: &mut Limits) -> Result<(), Error> {

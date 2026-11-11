@@ -256,3 +256,66 @@ fn unicode_filename_with_spaces_is_opened() {
     status(&output, 0);
     assert_eq!(json(&output), true);
 }
+
+#[test]
+fn dump_ijson_enforces_six_rules_and_succeeds_on_valid_single_doc() {
+    for bad in [
+        b"".as_slice(),
+        b"1\n---\n2\n",
+        b"9007199254740992\n",
+        b".nan\n",
+        b"1: a\n",
+        b"!custom hello\n",
+        "\"\\uFDD0\"\n".as_bytes(),
+    ] {
+        let output = run(&["dump", "--ijson", "-"], Some(bad));
+        status(&output, 1);
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(!output.stderr.is_empty());
+    }
+    let output = run(&["dump", "--ijson", "-"], Some(b"b: -0.0\na: [1, true]\n"));
+    status(&output, 0);
+    assert_eq!(output.stdout, b"{\"b\":0,\"a\":[1,true]}\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn emit_cli_supports_empty_multidoc_compat_quoting_and_from_wire() {
+    // Empty file -> 0 bytes under emit
+    let empty_out = run(&["emit", "-"], Some(b""));
+    status(&empty_out, 0);
+    assert!(empty_out.stdout.is_empty());
+    assert!(empty_out.stderr.is_empty());
+
+    // Multi-doc + YAML 1.1 hazard quoting default vs core-only
+    let yaml_in = b"flag: yes\n---\n- 1\n- 2\n";
+    let safe_out = run(&["emit", "-"], Some(yaml_in));
+    status(&safe_out, 0);
+    assert_eq!(safe_out.stdout, b"flag: 'yes'\n---\n- 1\n- 2\n");
+
+    let core_out = run(&["emit", "--compat-quoting=core-only", "-"], Some(yaml_in));
+    status(&core_out, 0);
+    assert_eq!(core_out.stdout, b"flag: yes\n---\n- 1\n- 2\n");
+
+    // --from-wire round-trip
+    let wire_dump = run(&["dump", "-"], Some(yaml_in));
+    status(&wire_dump, 0);
+    let from_wire = run(&["emit", "--from-wire", "-"], Some(&wire_dump.stdout));
+    status(&from_wire, 0);
+    assert_eq!(from_wire.stdout, safe_out.stdout);
+
+    // --from-plain preserves key order and escapes CR/VT so dump --plain round-trips
+    let plain_in = b"{\"z\":1,\"on\":\"yes\",\"ctrl\":\"a\\rb\\u000bc\"}";
+    let from_plain = run(&["emit", "--from-plain", "-"], Some(plain_in));
+    status(&from_plain, 0);
+    assert_eq!(
+        from_plain.stdout,
+        b"z: 1\n'on': 'yes'\nctrl: \"a\\rb\\u000bc\"\n"
+    );
+    let roundtrip_plain = run(&["dump", "--plain", "-"], Some(&from_plain.stdout));
+    status(&roundtrip_plain, 0);
+    assert_eq!(
+        roundtrip_plain.stdout,
+        b"{\"z\":1,\"on\":\"yes\",\"ctrl\":\"a\\rb\\u000bc\"}\n"
+    );
+}

@@ -799,6 +799,12 @@ impl serde::de::Error for Error {
     }
 }
 
+impl serde::ser::Error for Error {
+    fn custom<T: fmt::Display>(msg: T) -> Self {
+        Error::not_source(ErrorKind::Custom, None, msg)
+    }
+}
+
 pub(crate) fn internal(what: &str) -> Error {
     Error::not_source(ErrorKind::Internal, None, format!("internal error: {what}"))
 }

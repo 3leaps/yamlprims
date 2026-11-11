@@ -1,7 +1,8 @@
 //! Stack safety of parser-created trees : at the largest admitted
-//! depth, loading, cleanup and the tree operations finish on a 2 MiB thread, in debug and
-//! release builds, and one level more is LimitExceeded(MaxDepth). A stack overflow aborts
-//! the test binary, which fails the run. These regressions cover parser-created trees only, not arbitrary hand-built depth.
+//! depth, loading, cleanup and the tree operations finish on a 1 MiB thread (matching the
+//! default Windows main-thread stack), in debug and release builds, and one level more is
+//! LimitExceeded(MaxDepth). A stack overflow aborts the test binary, which fails the run.
+//! These regressions cover parser-created trees only, not arbitrary hand-built depth.
 
 use yamlprims::*;
 
@@ -41,9 +42,9 @@ fn opts(max_depth: usize) -> Options {
     o
 }
 
-fn on_2mib<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+fn on_1mib<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     std::thread::Builder::new()
-        .stack_size(2 << 20)
+        .stack_size(1 << 20)
         .spawn(f)
         .unwrap()
         .join()
@@ -53,19 +54,27 @@ fn on_2mib<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
 fn check(max_depth: usize) {
     for (shape, text) in shapes(max_depth) {
         let t = text.clone();
-        on_2mib(move || {
+        on_1mib(move || {
             let o = opts(max_depth);
             let d = load_with(&t, &o).unwrap_or_else(|e| panic!("{shape}: {e}"));
             let copy = d.root().clone();
             assert!(key_eq(copy.value(), d.root().value()));
             let _ = format!("{copy:?}");
-            encode(std::slice::from_ref(&d), &o).unwrap();
+            let wire = encode(std::slice::from_ref(&d), &o).unwrap();
+            match decode_wire(&wire, &o).unwrap() {
+                WireEnvelope::Documents(decoded) => assert_eq!(decoded, std::slice::from_ref(&d)),
+                WireEnvelope::Error(e) => panic!("{shape}: unexpected wire error {e}"),
+            }
+            let mut emit_opts = EmitOptions::default();
+            emit_opts.limits.max_depth = max_depth;
+            emit_all_with(std::slice::from_ref(&d), &emit_opts).unwrap();
+            let _ = encode_ijson(d.root(), &o);
             let _: Value = from_node(d.root(), &o).unwrap();
             drop((copy, d));
         });
     }
     for (shape, text) in shapes(max_depth + 1) {
-        let e = on_2mib(move || load_with(&text, &opts(max_depth)).unwrap_err());
+        let e = on_1mib(move || load_with(&text, &opts(max_depth)).unwrap_err());
         assert_eq!(
             e.kind,
             ErrorKind::LimitExceeded {
@@ -78,12 +87,12 @@ fn check(max_depth: usize) {
 }
 
 #[test]
-fn default_depth_on_2mib_thread() {
+fn default_depth_on_1mib_thread() {
     check(128);
 }
 
 #[test]
-fn largest_depth_on_2mib_thread() {
+fn largest_depth_on_1mib_thread() {
     check(255);
 }
 

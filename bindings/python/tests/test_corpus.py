@@ -15,12 +15,15 @@ from yamlprims import (
     Options,
     YamlprimsError,
     decode_wire,
+    default_emit_options,
     default_options,
+    dump_all,
     encode,
     encode_error,
     encode_plain,
     load_all_bytes,
     load_bytes,
+    load_ijson,
     load_plain,
     validate_options,
 )
@@ -60,7 +63,7 @@ class TestCorpus(unittest.TestCase):
     def test_conformance_vectors_parity(self) -> None:
         raw_lines = [
             line
-            for line in VECTORS_FILE.read_text(encoding="utf-8").split("\n")
+            for line in VECTORS_FILE.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
         self.assertGreaterEqual(len(raw_lines), 150, f"expected >= 150 vectors, got {len(raw_lines)}")
@@ -87,7 +90,11 @@ class TestCorpus(unittest.TestCase):
                 rt = encode_error(decoded.error, def_opts)
                 self.assertEqual(rt, wire, f"{cid}: syntax_code round-trip mismatch")
                 out_lines.append(
-                    json.dumps({"id": cid, "plain": "", "wire": wire}, separators=(",", ":"), ensure_ascii=False)
+                    json.dumps(
+                        {"id": cid, "plain": "", "wire": wire, "emit": "", "ijson": ""},
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    )
                 )
                 continue
 
@@ -97,12 +104,14 @@ class TestCorpus(unittest.TestCase):
                 input_bytes = rec["input"].encode("utf-8")
 
             opts = _build_options(rec)
-            rt_opts = _widen_limits_for_round_trip(opts)
             single = bool(rec.get("single"))
             check_plain = bool(rec.get("check_plain"))
+            rt_opts = _widen_limits_for_round_trip(opts)
 
+            loaded_docs = None
             try:
                 docs = [load_bytes(input_bytes, opts)] if single else load_all_bytes(input_bytes, opts)
+                loaded_docs = docs
                 try:
                     wire = encode(docs, opts)
                 except YamlprimsError as enc_err:
@@ -120,21 +129,21 @@ class TestCorpus(unittest.TestCase):
             self.assertEqual(rt, wire, f"{cid}: decode_wire -> encode round-trip mismatch")
 
             plain = ""
+            kw_wide_out = {
+                k: getattr(opts.limits, k)
+                for k in opts.limits.__dataclass_fields__
+            }
+            kw_wide_out["max_output_bytes"] = max(
+                opts.limits.max_output_bytes, def_opts.limits.max_output_bytes
+            )
+            load_opts_wide_out = Options(
+                merge_keys=opts.merge_keys,
+                unknown_tags=opts.unknown_tags,
+                limits=Limits(**kw_wide_out),
+            )
             if check_plain:
                 try:
-                    kw = {
-                        k: getattr(opts.limits, k)
-                        for k in opts.limits.__dataclass_fields__
-                    }
-                    kw["max_output_bytes"] = max(
-                        opts.limits.max_output_bytes, def_opts.limits.max_output_bytes
-                    )
-                    load_opts_for_plain = Options(
-                        merge_keys=opts.merge_keys,
-                        unknown_tags=opts.unknown_tags,
-                        limits=Limits(**kw),
-                    )
-                    doc = load_bytes(input_bytes, load_opts_for_plain)
+                    doc = load_bytes(input_bytes, load_opts_wide_out)
                     plain_via_host = encode_plain(doc, opts)
                 except YamlprimsError as err:
                     plain_via_host = encode_error(err, rt_opts)
@@ -151,8 +160,42 @@ class TestCorpus(unittest.TestCase):
                 )
                 plain = plain_via_host
 
+            emit_out = ""
+            try:
+                docs_for_emit = (
+                    [load_bytes(input_bytes, load_opts_wide_out)]
+                    if single
+                    else load_all_bytes(input_bytes, load_opts_wide_out)
+                )
+                try:
+                    emit_out = dump_all(docs_for_emit, default_emit_options())
+                except YamlprimsError as emit_err:
+                    emit_out = encode_error(emit_err, rt_opts)
+            except YamlprimsError:
+                emit_out = ""
+
+            ijson_opts = Options(
+                merge_keys=opts.merge_keys,
+                unknown_tags="reject",
+                limits=opts.limits,
+            )
+            try:
+                ijson_out = load_ijson(input_bytes, ijson_opts)
+            except YamlprimsError as ijson_err:
+                ijson_out = encode_error(ijson_err, rt_opts)
+
             out_lines.append(
-                json.dumps({"id": cid, "plain": plain, "wire": wire}, separators=(",", ":"), ensure_ascii=False)
+                json.dumps(
+                    {
+                        "id": cid,
+                        "plain": plain,
+                        "wire": wire,
+                        "emit": emit_out,
+                        "ijson": ijson_out,
+                    },
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
             )
 
         results_out = os.environ.get("YAMLPRIMS_RESULTS_OUT")

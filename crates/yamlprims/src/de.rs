@@ -404,10 +404,8 @@ impl<'de, 'a> de::Deserializer<'de> for NodeDe<'a> {
                 if let (true, Value::String(text)) = (t.inner_plain, &t.value.value) {
                     let v = crate::resolve::core_plain(text)
                         .map_err(|k| self.err(k, "cannot resolve variant payload"))?;
-                    let resolved = Node {
-                        value: v,
-                        ..t.value.clone()
-                    };
+                    let mut resolved = t.value.clone();
+                    resolved.value = v;
                     let d = NodeDe {
                         node: &resolved,
                         ..self.child(&t.value)

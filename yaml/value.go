@@ -7,7 +7,9 @@ import (
 	"math/big"
 	"math/bits"
 	"strconv"
+	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 // Location is a byte and character coordinate in the original input stream (spec-v1.4 §3, §7.2).
@@ -333,6 +335,71 @@ func shiftRight128(hi, lo uint64, shift uint) uint64 {
 	return (lo >> shift) | (hi << (64 - shift))
 }
 
+var coreTagURIs = map[string]struct{}{
+	"tag:yaml.org,2002:null":  {},
+	"tag:yaml.org,2002:bool":  {},
+	"tag:yaml.org,2002:int":   {},
+	"tag:yaml.org,2002:float": {},
+	"tag:yaml.org,2002:str":   {},
+	"tag:yaml.org,2002:seq":   {},
+	"tag:yaml.org,2002:map":   {},
+}
+
+func hasValidURIScheme(uri string) bool {
+	idx := strings.IndexByte(uri, ':')
+	if idx <= 0 {
+		return false
+	}
+	scheme := uri[:idx]
+	c0 := scheme[0]
+	if !((c0 >= 'A' && c0 <= 'Z') || (c0 >= 'a' && c0 <= 'z')) {
+		return false
+	}
+	for i := 1; i < len(scheme); i++ {
+		b := scheme[i]
+		if !((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '+' || b == '-' || b == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func isValidNonCoreTagURI(uri string) bool {
+	if uri == "" || !utf8.ValidString(uri) {
+		return false
+	}
+	if _, isCore := coreTagURIs[uri]; isCore {
+		return false
+	}
+	if strings.HasPrefix(uri, "!") {
+		return len(uri) >= 2
+	}
+	return hasValidURIScheme(uri)
+}
+
+func isValidTagSpelling(uri, handle, suffix string) bool {
+	if !utf8.ValidString(uri) || !utf8.ValidString(handle) || !utf8.ValidString(suffix) {
+		return false
+	}
+	switch handle {
+	case "":
+		return uri == suffix
+	case "!", "!!":
+		return suffix != "" && strings.HasSuffix(uri, suffix) && len(uri) > len(suffix)
+	default:
+		if len(handle) < 3 || handle[0] != '!' || handle[len(handle)-1] != '!' {
+			return false
+		}
+		for i := 1; i < len(handle)-1; i++ {
+			b := handle[i]
+			if !((b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '-') {
+				return false
+			}
+		}
+		return suffix != "" && strings.HasSuffix(uri, suffix) && len(uri) > len(suffix)
+	}
+}
+
 // Tag is a preserved non-Core YAML tag attached to a Tagged node.
 type Tag struct {
 	uri    string
@@ -343,6 +410,25 @@ type Tag struct {
 // NewTag constructs a Tag with its resolved URI, handle, and suffix.
 func NewTag(uri, handle, suffix string) Tag {
 	return Tag{uri: uri, handle: handle, suffix: suffix}
+}
+
+// TryNewTag constructs a validated non-Core Tag with empty handle and suffix == uri (spec-v1.5 §3).
+func TryNewTag(uri string) (Tag, *Error) {
+	if !isValidNonCoreTagURI(uri) {
+		return Tag{}, errInvalidOptions("tag URI must be a non-empty local (!name) or RFC 3986 global non-core URI")
+	}
+	return Tag{uri: uri, handle: "", suffix: uri}, nil
+}
+
+// TryNewTagWithSpelling constructs a validated non-Core Tag with explicit handle and suffix spelling (spec-v1.5 §3).
+func TryNewTagWithSpelling(uri, handle, suffix string) (Tag, *Error) {
+	if !isValidNonCoreTagURI(uri) {
+		return Tag{}, errInvalidOptions("tag URI must be a non-empty local (!name) or RFC 3986 global non-core URI")
+	}
+	if !isValidTagSpelling(uri, handle, suffix) {
+		return Tag{}, errInvalidOptions("tag handle and suffix are inconsistent with tag URI")
+	}
+	return Tag{uri: uri, handle: handle, suffix: suffix}, nil
 }
 
 // URI returns the resolved tag URI (key equality compares only URI).
@@ -370,6 +456,30 @@ type Tagged struct {
 // NewTagged constructs a Tagged wrapper around value.
 func NewTagged(tag Tag, value Node) *Tagged {
 	return &Tagged{tag: tag, value: value}
+}
+
+// TryNewTagged constructs a validated Tagged wrapper enforcing spec-v1.5 §3 and §4.4 inner-kind rules.
+func TryNewTagged(tag Tag, value Node) (*Tagged, *Error) {
+	if !isValidNonCoreTagURI(tag.uri) || !isValidTagSpelling(tag.uri, tag.handle, tag.suffix) {
+		return nil, errInvalidOptions("invalid or core tag on Tagged node")
+	}
+	var validInner bool
+	if tag.uri == "tag:yaml.org,2002:merge" {
+		validInner = value.value.kind == ValueKindString
+	} else {
+		validInner = value.value.kind == ValueKindString ||
+			value.value.kind == ValueKindSequence ||
+			value.value.kind == ValueKindMapping
+	}
+	if !validInner {
+		return nil, newNotSourceError(
+			ErrorKindTagKindMismatch,
+			ErrorDetail{},
+			nil,
+			"Tagged node inner value must be String, Sequence, or Mapping (and String for !!merge)",
+		)
+	}
+	return &Tagged{tag: tag, value: value}, nil
 }
 
 func newTaggedWithPlain(tag Tag, value Node, innerPlain bool) *Tagged {
@@ -593,31 +703,17 @@ func (m *Mapping) Entries() []MappingEntry {
 	return out
 }
 
-// Clone returns a deep structural clone of m.
+// Clone returns a deep structural clone of m using an explicit heap worklist.
 func (m *Mapping) Clone() *Mapping {
 	if m == nil {
 		return NewMapping()
 	}
-	cp := NewMappingWithCapacity(len(m.entries))
-	cp.seed0 = m.seed0
-	cp.seed1 = m.seed1
-	for _, e := range m.entries {
-		cp.entries = append(cp.entries, MappingEntry{
-			Key:   e.Key.Clone(),
-			Value: e.Value.Clone(),
-		})
+	v := Value{kind: ValueKindMapping, m: m}.Clone()
+	if v.m == nil {
+		return NewMapping()
 	}
-	cp.state.count = len(cp.entries)
-	if len(cp.entries) > 0 {
-		if cp.state.buckets == nil {
-			cp.state.buckets = make(map[uint64][]int, len(cp.entries))
-		}
-		for idx := range cp.entries {
-			h := cp.hashValue(cp.entries[idx].Key.value)
-			cp.state.buckets[h] = append(cp.state.buckets[h], idx)
-		}
-	}
-	return cp
+	v.m.state.owner = v.m
+	return v.m
 }
 
 // InsertNew inserts (key, value) if key contains no NaN at any depth and does
@@ -766,6 +862,9 @@ func IntValue(i Integer) Value {
 
 // FloatValue constructs a Float Value.
 func FloatValue(f float64) Value {
+	if math.IsNaN(f) {
+		f = canonicalNaN()
+	}
 	return Value{kind: ValueKindFloat, f: f}
 }
 
@@ -900,35 +999,94 @@ func (v Value) AsTagged() (*Tagged, bool) {
 	return nil, false
 }
 
-// Clone returns a deep copy of v.
-func (v Value) Clone() Value {
-	switch v.kind {
-	case ValueKindSequence:
-		if len(v.seq) == 0 {
-			return Value{kind: ValueKindSequence}
-		}
-		cp := make([]Node, len(v.seq))
-		for idx := range v.seq {
-			cp[idx] = v.seq[idx].Clone()
-		}
-		return Value{kind: ValueKindSequence, seq: cp}
-	case ValueKindMapping:
-		return Value{kind: ValueKindMapping, m: v.m.Clone().freezeInPlace()}
-	case ValueKindTagged:
-		if v.tagged == nil {
-			return Value{kind: ValueKindTagged}
-		}
-		return Value{
-			kind: ValueKindTagged,
-			tagged: &Tagged{
-				tag:        v.tagged.tag,
-				value:      v.tagged.value.Clone(),
-				innerPlain: v.tagged.innerPlain,
-			},
-		}
-	default:
-		return v
+type nodeCloneTask struct {
+	dst *Node
+	src *Node
+}
+
+type mapBucketRebuildTask struct {
+	m *Mapping
+}
+
+func cloneNodeShallow(src *Node, tasks *[]nodeCloneTask, rebuilds *[]mapBucketRebuildTask) Node {
+	out := Node{
+		span: src.span,
 	}
+	if src.via != nil {
+		v := *src.via
+		out.via = &v
+	}
+	if src.tagStart != nil {
+		l := *src.tagStart
+		out.tagStart = &l
+	}
+	switch src.value.kind {
+	case ValueKindSequence:
+		if len(src.value.seq) == 0 {
+			out.value = Value{kind: ValueKindSequence}
+			return out
+		}
+		cp := make([]Node, len(src.value.seq))
+		for idx := len(src.value.seq) - 1; idx >= 0; idx-- {
+			*tasks = append(*tasks, nodeCloneTask{dst: &cp[idx], src: &src.value.seq[idx]})
+		}
+		out.value = Value{kind: ValueKindSequence, seq: cp}
+	case ValueKindMapping:
+		if src.value.m == nil {
+			cp := NewMapping()
+			cp.state.owner = nil
+			out.value = Value{kind: ValueKindMapping, m: cp}
+			return out
+		}
+		m := src.value.m
+		cp := NewMappingWithCapacity(len(m.entries))
+		cp.seed0 = m.seed0
+		cp.seed1 = m.seed1
+		cp.entries = make([]MappingEntry, len(m.entries))
+		cp.state.count = len(cp.entries)
+		cp.state.owner = nil
+		if len(m.entries) > 0 {
+			*rebuilds = append(*rebuilds, mapBucketRebuildTask{m: cp})
+			for idx := len(m.entries) - 1; idx >= 0; idx-- {
+				*tasks = append(*tasks,
+					nodeCloneTask{dst: &cp.entries[idx].Value, src: &m.entries[idx].Value},
+					nodeCloneTask{dst: &cp.entries[idx].Key, src: &m.entries[idx].Key},
+				)
+			}
+		}
+		out.value = Value{kind: ValueKindMapping, m: cp}
+	case ValueKindTagged:
+		if src.value.tagged == nil {
+			out.value = Value{kind: ValueKindTagged}
+			return out
+		}
+		tag := src.value.tagged.tag
+		if tag.handle == "" && tag.suffix == "" {
+			tag.suffix = tag.uri
+		}
+		t := &Tagged{
+			tag:        tag,
+			innerPlain: src.value.tagged.innerPlain,
+		}
+		*tasks = append(*tasks, nodeCloneTask{dst: &t.value, src: &src.value.tagged.value})
+		out.value = Value{kind: ValueKindTagged, tagged: t}
+	case ValueKindFloat:
+		f := src.value.f
+		if math.IsNaN(f) {
+			f = canonicalNaN()
+		}
+		out.value = Value{kind: ValueKindFloat, f: f}
+	default:
+		out.value = src.value
+	}
+	return out
+}
+
+// Clone returns a deep copy of v using an explicit heap worklist.
+func (v Value) Clone() Value {
+	rootSrc := Node{value: v}
+	rootDst := rootSrc.Clone()
+	return rootDst.value
 }
 
 // Node is a Value paired with its source Span, optional Via provenance, and optional TagStart coordinate.
@@ -1022,21 +1180,27 @@ func (n Node) WithTagStart(loc Location) Node {
 	return n
 }
 
-// Clone returns a deep copy of n.
+// Clone returns a deep copy of n using an explicit heap worklist.
 func (n Node) Clone() Node {
-	out := Node{
-		value: n.value.Clone(),
-		span:  n.span,
+	var tasks []nodeCloneTask
+	var rebuilds []mapBucketRebuildTask
+	root := cloneNodeShallow(&n, &tasks, &rebuilds)
+	for len(tasks) > 0 {
+		t := tasks[len(tasks)-1]
+		tasks = tasks[:len(tasks)-1]
+		*t.dst = cloneNodeShallow(t.src, &tasks, &rebuilds)
 	}
-	if n.via != nil {
-		v := *n.via
-		out.via = &v
+	for i := len(rebuilds) - 1; i >= 0; i-- {
+		m := rebuilds[i].m
+		if m.state.buckets == nil {
+			m.state.buckets = make(map[uint64][]int, len(m.entries))
+		}
+		for idx := range m.entries {
+			h := m.hashValue(m.entries[idx].Key.value)
+			m.state.buckets[h] = append(m.state.buckets[h], idx)
+		}
 	}
-	if n.tagStart != nil {
-		l := *n.tagStart
-		out.tagStart = &l
-	}
-	return out
+	return root
 }
 
 func (n Node) sourceSpan() Span {
@@ -1063,6 +1227,26 @@ type Document struct {
 // NewDocument constructs a Document with the given root Node, optional %YAML version, and explicit-start flag.
 func NewDocument(root Node, yamlVersion *[2]uint32, explicitStart bool) Document {
 	return newDocumentOwned(root, yamlVersion, explicitStart)
+}
+
+// NewSimpleDocument constructs a Document with root, nil %YAML version, and explicitStart == false (spec-v1.5 §3).
+func NewSimpleDocument(root Node) Document {
+	return Document{root: root}
+}
+
+// TryNewDocumentWithMetadata constructs a Document after validating that any non-nil yamlVersion has major == 1 and minor <= 999_999_999 (spec-v1.5 §3).
+func TryNewDocumentWithMetadata(root Node, yamlVersion *[2]uint32, explicitStart bool) (Document, *Error) {
+	if yamlVersion != nil {
+		if yamlVersion[0] != 1 || yamlVersion[1] > 999_999_999 {
+			return Document{}, newNotSourceError(
+				ErrorKindUnsupportedYamlVersion,
+				ErrorDetail{},
+				nil,
+				"unsupported YAML version in Document metadata",
+			)
+		}
+	}
+	return newDocumentOwned(root, yamlVersion, explicitStart), nil
 }
 
 func newDocumentOwned(root Node, yamlVersion *[2]uint32, explicitStart bool) Document {
@@ -1219,83 +1403,121 @@ func KeyEq(a, b Value) bool {
 }
 
 func keyHash(root *Value, h *sipHasher) {
+	const (
+		opVal uint8 = iota
+		opMapIter
+		opMapEntryDone
+	)
 	type workItem struct {
-		v        *Value
-		hasToken bool
-		token    uint8
-		u64      uint64
+		op      uint8
+		v       *Value
+		entries []MappingEntry
+		idx     int
+		acc     uint64
+		saved   sipHasher
 	}
-	stack := []workItem{{v: root}}
+	seed0 := h.v0 ^ 0x736f6d6570736575
+	seed1 := h.v1 ^ 0x646f72616e646f6d
+	cur := *h
+	stack := []workItem{{op: opVal, v: root}}
 	for len(stack) > 0 {
 		it := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if it.hasToken {
-			h.writeByte(it.token)
-			h.writeUint64(it.u64)
-			continue
-		}
-		v := it.v
-		switch v.kind {
-		case ValueKindNull:
-			h.writeByte(0)
-		case ValueKindBool:
-			h.writeByte(1)
-			if v.b {
-				h.writeByte(1)
+		switch it.op {
+		case opVal:
+			v := it.v
+			switch v.kind {
+			case ValueKindNull:
+				cur.writeByte(0)
+			case ValueKindBool:
+				cur.writeByte(1)
+				if v.b {
+					cur.writeByte(1)
+				} else {
+					cur.writeByte(0)
+				}
+			case ValueKindInt:
+				cur.writeByte(2)
+				if v.i.negative {
+					cur.writeByte(1)
+				} else {
+					cur.writeByte(0)
+				}
+				cur.writeUint64(v.i.hi)
+				cur.writeUint64(v.i.lo)
+			case ValueKindFloat:
+				cur.writeByte(3)
+				if v.f == 0 {
+					cur.writeUint64(0)
+				} else if math.IsNaN(v.f) {
+					cur.writeUint64(0x7ff8000000000000)
+				} else {
+					cur.writeUint64(math.Float64bits(v.f))
+				}
+			case ValueKindString:
+				cur.writeByte(4)
+				cur.writeString(v.s)
+			case ValueKindTagged:
+				cur.writeByte(5)
+				if v.tagged != nil {
+					cur.writeString(v.tagged.tag.uri)
+					stack = append(stack, workItem{op: opVal, v: &v.tagged.value.value})
+				}
+			case ValueKindSequence:
+				cur.writeByte(6)
+				cur.writeUint64(uint64(len(v.seq)))
+				for i := len(v.seq) - 1; i >= 0; i-- {
+					stack = append(stack, workItem{op: opVal, v: &v.seq[i].value})
+				}
+			case ValueKindMapping:
+				// Order-independent combine via commutative wrapping sum of per-entry hashes.
+				cur.writeByte(7)
+				if v.m == nil {
+					cur.writeUint64(0)
+					cur.writeUint64(0)
+					continue
+				}
+				cur.writeUint64(uint64(len(v.m.entries)))
+				saved := cur
+				stack = append(stack, workItem{
+					op:      opMapIter,
+					entries: v.m.entries,
+					idx:     0,
+					acc:     0,
+					saved:   saved,
+				})
+			}
+		case opMapIter:
+			if it.idx < len(it.entries) {
+				cur.init(seed0^0x517cc1b727220a95, seed1^0x9e3779b97f4a7c15)
+				e := &it.entries[it.idx]
+				stack = append(stack,
+					workItem{
+						op:      opMapEntryDone,
+						entries: it.entries,
+						idx:     it.idx + 1,
+						acc:     it.acc,
+						saved:   it.saved,
+					},
+					workItem{op: opVal, v: &e.Value.value},
+					workItem{op: opVal, v: &e.Key.value},
+				)
 			} else {
-				h.writeByte(0)
+				cur = it.saved
+				cur.writeUint64(it.acc)
 			}
-		case ValueKindInt:
-			h.writeByte(2)
-			if v.i.negative {
-				h.writeByte(1)
-			} else {
-				h.writeByte(0)
-			}
-			h.writeUint64(v.i.hi)
-			h.writeUint64(v.i.lo)
-		case ValueKindFloat:
-			h.writeByte(3)
-			if v.f == 0 {
-				h.writeUint64(0)
-			} else {
-				h.writeUint64(math.Float64bits(v.f))
-			}
-		case ValueKindString:
-			h.writeByte(4)
-			h.writeString(v.s)
-		case ValueKindTagged:
-			h.writeByte(5)
-			if v.tagged != nil {
-				h.writeString(v.tagged.tag.uri)
-				stack = append(stack, workItem{v: &v.tagged.value.value})
-			}
-		case ValueKindSequence:
-			h.writeByte(6)
-			h.writeUint64(uint64(len(v.seq)))
-			for i := len(v.seq) - 1; i >= 0; i-- {
-				stack = append(stack, workItem{v: &v.seq[i].value})
-			}
-		case ValueKindMapping:
-			// Order-independent combine via commutative wrapping sum of per-entry hashes.
-			h.writeByte(7)
-			if v.m == nil {
-				h.writeUint64(0)
-				h.writeUint64(0)
-				continue
-			}
-			h.writeUint64(uint64(len(v.m.entries)))
-			var sum uint64
-			for i := range v.m.entries {
-				var entryH sipHasher
-				entryH.init(0x517cc1b727220a95, 0x9e3779b97f4a7c15)
-				keyHash(&v.m.entries[i].Key.value, &entryH)
-				keyHash(&v.m.entries[i].Value.value, &entryH)
-				sum += entryH.finish()
-			}
-			h.writeUint64(sum)
+		case opMapEntryDone:
+			acc := it.acc + cur.finish()
+			stack = append(stack, workItem{
+				op:      opMapIter,
+				entries: it.entries,
+				idx:     it.idx,
+				acc:     acc,
+				saved:   it.saved,
+			})
 		}
 	}
+	*h = cur
 }
 
 // sipHasher implements SipHash-1-3 for collision-resistant mapping indexing.

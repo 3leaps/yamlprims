@@ -98,15 +98,19 @@ rust_proc = subprocess.run(
     input=jsonl_payload,
     capture_output=True,
     text=True,
-    check=True,
 )
+if rust_proc.returncode != 0:
+    sys.stderr.write(rust_proc.stderr)
+    sys.exit(f"rust_driver exited with {rust_proc.returncode}")
 go_proc = subprocess.run(
     [str(go_driver), "--crosscheck-jsonl"],
     input=jsonl_payload,
     capture_output=True,
     text=True,
-    check=True,
 )
+if go_proc.returncode != 0:
+    sys.stderr.write(go_proc.stderr)
+    sys.exit(f"go_driver exited with {go_proc.returncode}")
 
 rust_lines = [json.loads(l) for l in rust_proc.stdout.split("\n") if l.strip()]
 go_lines = [json.loads(l) for l in go_proc.stdout.split("\n") if l.strip()]
@@ -122,15 +126,21 @@ for r, g in zip(rust_lines, go_lines):
         continue
     if r["wire"] != g["wire"]:
         mismatches.append(f"{rid} [wire]:\n  rust: {r['wire']}\n  go:   {g['wire']}")
+    if r["roundtrip"] != r["wire"]:
+        mismatches.append(f"{rid} [rust-roundtrip]:\n  rust: {r['wire']}\n  rt:   {r['roundtrip']}")
     if g["roundtrip"] != r["wire"]:
-        mismatches.append(f"{rid} [roundtrip]:\n  rust: {r['wire']}\n  rt:   {g['roundtrip']}")
+        mismatches.append(f"{rid} [go-roundtrip]:\n  rust: {r['wire']}\n  rt:   {g['roundtrip']}")
     if r["plain"] != g["plain"]:
         mismatches.append(f"{rid} [plain]:\n  rust: {r['plain']}\n  go:   {g['plain']}")
+    if r["emit"] != g["emit"]:
+        mismatches.append(f"{rid} [emit]:\n  rust: {r['emit']!r}\n  go:   {g['emit']!r}")
+    if r["ijson"] != g["ijson"]:
+        mismatches.append(f"{rid} [ijson]:\n  rust: {r['ijson']}\n  go:   {g['ijson']}")
 
 if mismatches:
     for m in mismatches[:20]:
         print("FAIL:", m, file=sys.stderr)
     sys.exit(f"crosscheck FAILED: {len(mismatches)} mismatches out of {len(records)} checks")
 
-print(f"crosscheck PASS: {vector_count} local vectors + {corpus_count} structcorpus expectations ({len(records)} total) byte-identical across wire, DecodeWire round-trip, and plain JSON")
+print(f"crosscheck PASS: {vector_count} local vectors + {corpus_count} structcorpus expectations ({len(records)} total) byte-identical across wire, DecodeWire round-trip, plain JSON, emit_all, and encode_ijson")
 PY

@@ -212,10 +212,26 @@ func floatBitsHex(f float64) string {
 	return fmt.Sprintf("%016x", b)
 }
 
-func writeWireNode(o *outBuf, n *Node, withSpans bool) *Error {
-	if err := writeWireValue(o, &n.value, withSpans); err != nil {
-		return err
-	}
+const (
+	wireWriteOpNode uint8 = iota
+	wireWriteOpValue
+	wireWriteOpFinishNode
+	wireWriteOpSeqStep
+	wireWriteOpMapStep
+	wireWriteOpAfterKey
+	wireWriteOpAfterVal
+)
+
+type wireWriteFrame struct {
+	op      uint8
+	node    *Node
+	val     *Value
+	seq     []Node
+	entries []MappingEntry
+	idx     int
+}
+
+func writeWireNodeMeta(o *outBuf, n *Node, withSpans bool) *Error {
 	if err := o.push(`,"span":`); err != nil {
 		return err
 	}
@@ -278,58 +294,126 @@ func writeWireNode(o *outBuf, n *Node, withSpans bool) *Error {
 	return o.push("}")
 }
 
-func writeWireValue(o *outBuf, v *Value, withSpans bool) *Error {
-	if err := o.push(`{"kind":`); err != nil {
-		return err
-	}
-	if err := o.string(v.KindName()); err != nil {
-		return err
-	}
-	switch v.kind {
-	case ValueKindNull:
-		return nil
-	case ValueKindBool:
-		if v.b {
-			return o.push(`,"value":true`)
-		}
-		return o.push(`,"value":false`)
-	case ValueKindInt:
-		if err := o.push(`,"value":`); err != nil {
-			return err
-		}
-		return o.string(v.i.String())
-	case ValueKindFloat:
-		if err := o.push(`,"bits":`); err != nil {
-			return err
-		}
-		return o.string(floatBitsHex(v.f))
-	case ValueKindString:
-		if err := o.push(`,"value":`); err != nil {
-			return err
-		}
-		return o.string(v.s)
-	case ValueKindSequence:
-		if err := o.push(`,"items":[`); err != nil {
-			return err
-		}
-		for i := range v.seq {
-			if i > 0 {
-				if err := o.push(","); err != nil {
-					return err
-				}
-			}
-			if err := writeWireNode(o, &v.seq[i], withSpans); err != nil {
+func runWireStack(o *outBuf, stack []wireWriteFrame, withSpans bool) *Error {
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch f.op {
+		case wireWriteOpNode:
+			stack = append(stack,
+				wireWriteFrame{op: wireWriteOpFinishNode, node: f.node},
+				wireWriteFrame{op: wireWriteOpValue, val: &f.node.value},
+			)
+		case wireWriteOpFinishNode:
+			if err := writeWireNodeMeta(o, f.node, withSpans); err != nil {
 				return err
 			}
-		}
-		return o.push("]")
-	case ValueKindMapping:
-		if err := o.push(`,"entries":[`); err != nil {
-			return err
-		}
-		if v.m != nil {
-			for i := range v.m.entries {
-				if i > 0 {
+		case wireWriteOpValue:
+			v := f.val
+			if err := o.push(`{"kind":`); err != nil {
+				return err
+			}
+			if err := o.string(v.KindName()); err != nil {
+				return err
+			}
+			switch v.kind {
+			case ValueKindNull:
+			case ValueKindBool:
+				if v.b {
+					if err := o.push(`,"value":true`); err != nil {
+						return err
+					}
+				} else {
+					if err := o.push(`,"value":false`); err != nil {
+						return err
+					}
+				}
+			case ValueKindInt:
+				if err := o.push(`,"value":`); err != nil {
+					return err
+				}
+				if err := o.string(v.i.String()); err != nil {
+					return err
+				}
+			case ValueKindFloat:
+				if err := o.push(`,"bits":`); err != nil {
+					return err
+				}
+				if err := o.string(floatBitsHex(v.f)); err != nil {
+					return err
+				}
+			case ValueKindString:
+				if err := o.push(`,"value":`); err != nil {
+					return err
+				}
+				if err := o.string(v.s); err != nil {
+					return err
+				}
+			case ValueKindSequence:
+				if err := o.push(`,"items":[`); err != nil {
+					return err
+				}
+				stack = append(stack, wireWriteFrame{op: wireWriteOpSeqStep, seq: v.seq, idx: 0})
+			case ValueKindMapping:
+				if err := o.push(`,"entries":[`); err != nil {
+					return err
+				}
+				var entries []MappingEntry
+				if v.m != nil {
+					entries = v.m.entries
+				}
+				stack = append(stack, wireWriteFrame{op: wireWriteOpMapStep, entries: entries, idx: 0})
+			case ValueKindTagged:
+				if v.tagged == nil {
+					return errInternal("nil Tagged pointer")
+				}
+				if err := o.push(`,"tag":{"uri":`); err != nil {
+					return err
+				}
+				if err := o.string(v.tagged.tag.uri); err != nil {
+					return err
+				}
+				if err := o.push(`,"handle":`); err != nil {
+					return err
+				}
+				if err := o.string(v.tagged.tag.handle); err != nil {
+					return err
+				}
+				if err := o.push(`,"suffix":`); err != nil {
+					return err
+				}
+				if err := o.string(v.tagged.tag.suffix); err != nil {
+					return err
+				}
+				if err := o.push(`},"value":`); err != nil {
+					return err
+				}
+				stack = append(stack, wireWriteFrame{op: wireWriteOpNode, node: &v.tagged.value})
+			default:
+				return errInternal("unknown ValueKind")
+			}
+		case wireWriteOpSeqStep:
+			if f.idx >= len(f.seq) {
+				if err := o.push("]"); err != nil {
+					return err
+				}
+			} else {
+				if f.idx > 0 {
+					if err := o.push(","); err != nil {
+						return err
+					}
+				}
+				item := &f.seq[f.idx]
+				f.idx++
+				stack = append(stack, f, wireWriteFrame{op: wireWriteOpNode, node: item})
+			}
+		case wireWriteOpMapStep:
+			if f.idx >= len(f.entries) {
+				if err := o.push("]"); err != nil {
+					return err
+				}
+			} else {
+				if f.idx > 0 {
 					if err := o.push(","); err != nil {
 						return err
 					}
@@ -337,50 +421,34 @@ func writeWireValue(o *outBuf, v *Value, withSpans bool) *Error {
 				if err := o.push(`{"key":`); err != nil {
 					return err
 				}
-				if err := writeWireNode(o, &v.m.entries[i].Key, withSpans); err != nil {
-					return err
-				}
-				if err := o.push(`,"value":`); err != nil {
-					return err
-				}
-				if err := writeWireNode(o, &v.m.entries[i].Value, withSpans); err != nil {
-					return err
-				}
-				if err := o.push("}"); err != nil {
-					return err
-				}
+				e := &f.entries[f.idx]
+				stack = append(stack,
+					wireWriteFrame{op: wireWriteOpAfterVal, entries: f.entries, idx: f.idx + 1},
+					wireWriteFrame{op: wireWriteOpNode, node: &e.Value},
+					wireWriteFrame{op: wireWriteOpAfterKey},
+					wireWriteFrame{op: wireWriteOpNode, node: &e.Key},
+				)
 			}
+		case wireWriteOpAfterKey:
+			if err := o.push(`,"value":`); err != nil {
+				return err
+			}
+		case wireWriteOpAfterVal:
+			if err := o.push("}"); err != nil {
+				return err
+			}
+			stack = append(stack, wireWriteFrame{op: wireWriteOpMapStep, entries: f.entries, idx: f.idx})
 		}
-		return o.push("]")
-	case ValueKindTagged:
-		if v.tagged == nil {
-			return errInternal("nil Tagged pointer")
-		}
-		if err := o.push(`,"tag":{"uri":`); err != nil {
-			return err
-		}
-		if err := o.string(v.tagged.tag.uri); err != nil {
-			return err
-		}
-		if err := o.push(`,"handle":`); err != nil {
-			return err
-		}
-		if err := o.string(v.tagged.tag.handle); err != nil {
-			return err
-		}
-		if err := o.push(`,"suffix":`); err != nil {
-			return err
-		}
-		if err := o.string(v.tagged.tag.suffix); err != nil {
-			return err
-		}
-		if err := o.push(`},"value":`); err != nil {
-			return err
-		}
-		return writeWireNode(o, &v.tagged.value, withSpans)
-	default:
-		return errInternal("unknown ValueKind")
 	}
+	return nil
+}
+
+func writeWireNode(o *outBuf, n *Node, withSpans bool) *Error {
+	return runWireStack(o, []wireWriteFrame{{op: wireWriteOpNode, node: n}}, withSpans)
+}
+
+func writeWireValue(o *outBuf, v *Value, withSpans bool) *Error {
+	return runWireStack(o, []wireWriteFrame{{op: wireWriteOpValue, val: v}}, withSpans)
 }
 
 // Encode serializes docs into a canonical yamlprims-value/1 documents envelope,
@@ -533,15 +601,16 @@ func validateErrorPair(e *Error) (string, *Error) {
 	}
 }
 
+func notSourceLimit(limit LimitKind, configured int, msg string) *Error {
+	return newNotSourceError(
+		ErrorKindLimitExceeded,
+		ErrorDetail{Limit: limit, Configured: uint64(configured), HasConfigured: true},
+		nil,
+		msg,
+	)
+}
+
 func preflightError(e *Error, l Limits) *Error {
-	notSourceLimit := func(limit LimitKind, configured int, msg string) *Error {
-		return newNotSourceError(
-			ErrorKindLimitExceeded,
-			ErrorDetail{Limit: limit, Configured: uint64(configured), HasConfigured: true},
-			nil,
-			msg,
-		)
-	}
 	if len(e.Path) > l.MaxDepth {
 		return notSourceLimit(
 			LimitMaxDepth,
@@ -890,72 +959,117 @@ func formatPlainFloat(f float64) string {
 	return prefix + mant + "e" + strconv.Itoa(exp)
 }
 
-func writePlainNode(o *outBuf, n *Node) *Error {
-	switch n.value.kind {
-	case ValueKindNull:
-		return o.push("null")
-	case ValueKindBool:
-		if n.value.b {
-			return o.push("true")
-		}
-		return o.push("false")
-	case ValueKindInt:
-		return o.push(n.value.i.String())
-	case ValueKindFloat:
-		if math.IsNaN(n.value.f) || math.IsInf(n.value.f, 0) {
-			return plainLossError(n, "non-finite float")
-		}
-		return o.push(formatPlainFloat(n.value.f))
-	case ValueKindString:
-		return o.string(n.value.s)
-	case ValueKindSequence:
-		if err := o.push("["); err != nil {
-			return err
-		}
-		for i := range n.value.seq {
-			if i > 0 {
-				if err := o.push(","); err != nil {
+func writePlainNode(o *outBuf, root *Node) *Error {
+	const (
+		plainOpNode uint8 = iota
+		plainOpSeqStep
+		plainOpMapStep
+	)
+	type plainFrame struct {
+		op      uint8
+		node    *Node
+		seq     []Node
+		entries []MappingEntry
+		idx     int
+	}
+	stack := []plainFrame{{op: plainOpNode, node: root}}
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch f.op {
+		case plainOpNode:
+			n := f.node
+			switch n.value.kind {
+			case ValueKindNull:
+				if err := o.push("null"); err != nil {
 					return err
 				}
-			}
-			if err := writePlainNode(o, &n.value.seq[i]); err != nil {
-				return err
-			}
-		}
-		return o.push("]")
-	case ValueKindMapping:
-		if err := o.push("{"); err != nil {
-			return err
-		}
-		if n.value.m != nil {
-			for i := range n.value.m.entries {
-				k := &n.value.m.entries[i].Key
-				v := &n.value.m.entries[i].Value
-				if k.value.kind != ValueKindString {
-					return plainLossError(k, "non-string key")
+			case ValueKindBool:
+				if n.value.b {
+					if err := o.push("true"); err != nil {
+						return err
+					}
+				} else {
+					if err := o.push("false"); err != nil {
+						return err
+					}
 				}
-				if i > 0 {
+			case ValueKindInt:
+				if err := o.push(n.value.i.String()); err != nil {
+					return err
+				}
+			case ValueKindFloat:
+				if math.IsNaN(n.value.f) || math.IsInf(n.value.f, 0) {
+					return plainLossError(n, "non-finite float")
+				}
+				if err := o.push(formatPlainFloat(n.value.f)); err != nil {
+					return err
+				}
+			case ValueKindString:
+				if err := o.string(n.value.s); err != nil {
+					return err
+				}
+			case ValueKindSequence:
+				if err := o.push("["); err != nil {
+					return err
+				}
+				stack = append(stack, plainFrame{op: plainOpSeqStep, seq: n.value.seq, idx: 0})
+			case ValueKindMapping:
+				if err := o.push("{"); err != nil {
+					return err
+				}
+				var entries []MappingEntry
+				if n.value.m != nil {
+					entries = n.value.m.entries
+				}
+				stack = append(stack, plainFrame{op: plainOpMapStep, entries: entries, idx: 0})
+			case ValueKindTagged:
+				return plainLossError(n, "tagged value")
+			default:
+				return errInternal("unknown ValueKind")
+			}
+		case plainOpSeqStep:
+			if f.idx >= len(f.seq) {
+				if err := o.push("]"); err != nil {
+					return err
+				}
+			} else {
+				if f.idx > 0 {
 					if err := o.push(","); err != nil {
 						return err
 					}
 				}
-				if err := o.string(k.value.s); err != nil {
+				item := &f.seq[f.idx]
+				f.idx++
+				stack = append(stack, f, plainFrame{op: plainOpNode, node: item})
+			}
+		case plainOpMapStep:
+			if f.idx >= len(f.entries) {
+				if err := o.push("}"); err != nil {
+					return err
+				}
+			} else {
+				e := &f.entries[f.idx]
+				if e.Key.value.kind != ValueKindString {
+					return plainLossError(&e.Key, "non-string key")
+				}
+				if f.idx > 0 {
+					if err := o.push(","); err != nil {
+						return err
+					}
+				}
+				if err := o.string(e.Key.value.s); err != nil {
 					return err
 				}
 				if err := o.push(":"); err != nil {
 					return err
 				}
-				if err := writePlainNode(o, v); err != nil {
-					return err
-				}
+				f.idx++
+				stack = append(stack, f, plainFrame{op: plainOpNode, node: &e.Value})
 			}
 		}
-		return o.push("}")
-	case ValueKindTagged:
-		return plainLossError(n, "tagged value")
-	default:
-		return errInternal("unknown ValueKind")
 	}
+	return nil
 }
 
 // EncodePlain serializes node as plain JSON text bounded by opts.Limits.MaxOutputBytes,
@@ -1106,15 +1220,14 @@ func DecodeWire(text string, opts ...Options) (WireEnvelope, *Error) {
 		}
 	}
 	if len(text) > o.Limits.MaxInputBytes {
-		return WireEnvelope{}, errLimit(LimitMaxInputBytes, o.Limits.MaxInputBytes, Location{ByteOffset: 0, Line: 1, Column: 1})
+		return WireEnvelope{}, notSourceLimit(LimitMaxInputBytes, o.Limits.MaxInputBytes, "wire input exceeds max_input_bytes")
 	}
 	if !utf8.ValidString(text) {
 		return WireEnvelope{}, errInvalidUtf8(Location{ByteOffset: 0, Line: 1, Column: 1}, nil)
 	}
 	p := wireParser{
-		src:       text,
-		maxDepth:  o.Limits.MaxDepth,
-		nodesLeft: o.Limits.MaxNodes,
+		src:    text,
+		limits: o.Limits,
 	}
 	env, err := p.parseEnvelope()
 	if err != nil {
@@ -1124,14 +1237,35 @@ func DecodeWire(text string, opts ...Options) (WireEnvelope, *Error) {
 }
 
 type wireParser struct {
-	src       string
-	pos       int
-	maxDepth  int
-	nodesLeft int
+	src        string
+	pos        int
+	limits     Limits
+	nodesUsed  int
+	ownedBytes uint64
 }
 
 func (p *wireParser) fail(msg string) *Error {
-	return newNotSourceError(ErrorKindCustom, ErrorDetail{}, nil, "wire decode error: "+msg)
+	return errInternal("wire decode error: " + msg)
+}
+
+func (p *wireParser) limitErr(kind LimitKind, configured int) *Error {
+	return notSourceLimit(kind, configured, "wire decode exceeded resource limit")
+}
+
+func (p *wireParser) chargeOwnedBytes(add uint64) *Error {
+	p.ownedBytes = satAdd64(p.ownedBytes, add)
+	if p.ownedBytes > uint64(p.limits.MaxOwnedBytes) {
+		return p.limitErr(LimitMaxOwnedBytes, p.limits.MaxOwnedBytes)
+	}
+	return nil
+}
+
+func (p *wireParser) chargeNode(extraBytes uint64) *Error {
+	p.nodesUsed++
+	if p.nodesUsed > p.limits.MaxNodes {
+		return p.limitErr(LimitMaxNodes, p.limits.MaxNodes)
+	}
+	return p.chargeOwnedBytes(satAdd64(NodeOverhead, extraBytes))
 }
 
 func (p *wireParser) skipWS() {
@@ -1501,6 +1635,9 @@ func (p *wireParser) parseDocuments() ([]Document, *Error) {
 			}
 		}
 		first = false
+		if len(docs)+1 > p.limits.MaxDocuments {
+			return nil, p.limitErr(LimitMaxDocuments, p.limits.MaxDocuments)
+		}
 		doc, err := p.parseDocument()
 		if err != nil {
 			return nil, err
@@ -1517,13 +1654,23 @@ func (p *wireParser) parseDocument() (Document, *Error) {
 	var ver *[2]uint32
 	var explicit bool
 	var root Node
+	first := true
 
-	for i := 0; i < 3; i++ {
-		if i > 0 {
+	for {
+		b, ok := p.peekByte()
+		if !ok {
+			return Document{}, p.fail("unexpected EOF in document")
+		}
+		if b == '}' {
+			p.pos++
+			break
+		}
+		if !first {
 			if err := p.expectByte(','); err != nil {
 				return Document{}, err
 			}
 		}
+		first = false
 		key, err := p.parseString()
 		if err != nil {
 			return Document{}, err
@@ -1579,9 +1726,6 @@ func (p *wireParser) parseDocument() (Document, *Error) {
 			return Document{}, p.fail("unknown document field: " + key)
 		}
 	}
-	if err := p.expectByte('}'); err != nil {
-		return Document{}, err
-	}
 	if !seen["yaml_version"] || !seen["explicit_start"] || !seen["root"] {
 		return Document{}, p.fail("missing required document field")
 	}
@@ -1633,18 +1777,32 @@ func isLowerHex16(s string) (float64, bool) {
 }
 
 func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, *Error) {
-	if p.nodesLeft <= 0 {
-		return Node{}, p.fail("wire node count exceeds max_nodes")
+	const (
+		payloadNone uint8 = iota
+		payloadBool
+		payloadStrOrInt
+		payloadTaggedInner
+		payloadFloat
+		payloadSequence
+		payloadMapping
+	)
+	if err := p.chargeNode(0); err != nil {
+		return Node{}, err
 	}
-	p.nodesLeft--
 
 	if err := p.expectByte('{'); err != nil {
 		return Node{}, err
 	}
 	seen := make(map[string]bool, 6)
 	var kindStr string
-	var val Value
-	var hasPayload bool
+	var payloadKind uint8 = payloadNone
+	var payBool bool
+	var payStr string
+	var payStrCharged bool
+	var payInner Node
+	var payFloat float64
+	var paySeq []Node
+	var payMap *Mapping
 	var tagVal Tag
 	var hasTag bool
 	var nodeSpan NodeSpan = SyntheticNodeSpan()
@@ -1685,10 +1843,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 				return Node{}, err
 			}
 			switch k {
-			case "null":
-				val = NullValue()
-				hasPayload = true
-			case "bool", "int", "float", "string", "sequence", "mapping":
+			case "null", "bool", "int", "float", "string", "sequence", "mapping":
 			case "tagged":
 				if inTagged {
 					return Node{}, p.fail("nested tagged wrapper in wire node")
@@ -1699,51 +1854,62 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 			kindStr = k
 
 		case "value":
-			if !seen["kind"] {
-				return Node{}, p.fail("node value before kind")
+			if payloadKind != payloadNone {
+				return Node{}, p.fail("conflicting node payload members")
 			}
-			switch kindStr {
-			case "bool":
+			vb, ok := p.peekByte()
+			if !ok {
+				return Node{}, p.fail("unexpected EOF in node value")
+			}
+			switch vb {
+			case 't', 'f':
+				if seen["kind"] && kindStr != "bool" {
+					return Node{}, p.fail("unexpected bool value for kind " + kindStr)
+				}
 				bv, err := p.parseBool()
 				if err != nil {
 					return Node{}, err
 				}
-				val = BoolValue(bv)
-				hasPayload = true
-			case "int":
+				payBool = bv
+				payloadKind = payloadBool
+			case '"':
+				if seen["kind"] && kindStr != "int" && kindStr != "string" {
+					return Node{}, p.fail("unexpected string value for kind " + kindStr)
+				}
 				s, err := p.parseString()
 				if err != nil {
 					return Node{}, err
 				}
-				iv, ok := isCanonicalWireInt(s)
-				if !ok {
-					return Node{}, p.fail("non-canonical wire integer: " + s)
+				if kindStr == "string" || len(s) > 64 {
+					if len(s) > p.limits.MaxScalarBytes {
+						return Node{}, p.limitErr(LimitMaxScalarBytes, p.limits.MaxScalarBytes)
+					}
+					if err := p.chargeOwnedBytes(uint64(len(s))); err != nil {
+						return Node{}, err
+					}
+					payStrCharged = true
 				}
-				val = IntValue(iv)
-				hasPayload = true
-			case "string":
-				s, err := p.parseString()
-				if err != nil {
-					return Node{}, err
+				payStr = s
+				payloadKind = payloadStrOrInt
+			case '{':
+				if inTagged {
+					return Node{}, p.fail("nested tagged wrapper in wire node")
 				}
-				val = StringValue(s)
-				hasPayload = true
-			case "tagged":
-				if !hasTag {
-					return Node{}, p.fail("tagged node value before tag")
+				if seen["kind"] && kindStr != "tagged" {
+					return Node{}, p.fail("unexpected object value for kind " + kindStr)
 				}
 				inner, err := p.parseNode(depth, isPathKey, true)
 				if err != nil {
 					return Node{}, err
 				}
-				val = taggedValueOwned(newTaggedWithPlain(tagVal, inner, false))
-				hasPayload = true
+				payInner = inner
+				payloadKind = payloadTaggedInner
 			default:
-				return Node{}, p.fail("unexpected value member for kind " + kindStr)
+				return Node{}, p.fail("invalid value token in wire node")
 			}
 
 		case "bits":
-			if kindStr != "float" {
+			if payloadKind != payloadNone || (seen["kind"] && kindStr != "float") {
 				return Node{}, p.fail("unexpected bits member for kind " + kindStr)
 			}
 			s, err := p.parseString()
@@ -1754,15 +1920,15 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 			if !ok {
 				return Node{}, p.fail("invalid float bits: " + s)
 			}
-			val = FloatValue(fv)
-			hasPayload = true
+			payFloat = fv
+			payloadKind = payloadFloat
 
 		case "items":
-			if kindStr != "sequence" {
+			if payloadKind != payloadNone || (seen["kind"] && kindStr != "sequence") {
 				return Node{}, p.fail("unexpected items member for kind " + kindStr)
 			}
-			if depth+1 > p.maxDepth {
-				return Node{}, p.fail("wire collection nesting exceeds max_depth")
+			if !isPathKey && depth+1 > p.limits.MaxDepth {
+				return Node{}, p.limitErr(LimitMaxDepth, p.limits.MaxDepth)
 			}
 			if err := p.expectByte('['); err != nil {
 				return Node{}, err
@@ -1784,21 +1950,24 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 					}
 				}
 				fItem = false
+				if isPathKey && depth+1 > p.limits.MaxDepth {
+					return Node{}, p.limitErr(LimitMaxDepth, p.limits.MaxDepth)
+				}
 				it, err := p.parseNode(depth+1, isPathKey, false)
 				if err != nil {
 					return Node{}, err
 				}
 				items = append(items, it)
 			}
-			val = sequenceValueOwned(items)
-			hasPayload = true
+			paySeq = items
+			payloadKind = payloadSequence
 
 		case "entries":
-			if kindStr != "mapping" {
+			if payloadKind != payloadNone || (seen["kind"] && kindStr != "mapping") {
 				return Node{}, p.fail("unexpected entries member for kind " + kindStr)
 			}
-			if depth+1 > p.maxDepth {
-				return Node{}, p.fail("wire collection nesting exceeds max_depth")
+			if !isPathKey && depth+1 > p.limits.MaxDepth {
+				return Node{}, p.limitErr(LimitMaxDepth, p.limits.MaxDepth)
 			}
 			if err := p.expectByte('['); err != nil {
 				return Node{}, err
@@ -1820,23 +1989,39 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 					}
 				}
 				fEntry = false
+				if isPathKey && depth+1 > p.limits.MaxDepth {
+					return Node{}, p.limitErr(LimitMaxDepth, p.limits.MaxDepth)
+				}
 				kn, vn, err := p.parseMappingEntry(depth+1, isPathKey)
 				if err != nil {
 					return Node{}, err
+				}
+				_, kw, _ := metrics(kn)
+				if kw > uint64(p.limits.MaxKeyBytes) {
+					return Node{}, p.limitErr(LimitMaxKeyBytes, p.limits.MaxKeyBytes)
+				}
+				if err := p.chargeOwnedBytes(EntryOverhead); err != nil {
+					return Node{}, err
+				}
+				if m.Len() >= p.limits.MaxMappingEntries {
+					return Node{}, p.limitErr(LimitMaxMappingEntries, p.limits.MaxMappingEntries)
 				}
 				if insErr := m.insertNewOwned(kn, vn); insErr != nil {
 					return Node{}, p.fail("invalid or duplicate key in wire mapping")
 				}
 			}
-			val = mappingValueOwned(m)
-			hasPayload = true
+			payMap = m
+			payloadKind = payloadMapping
 
 		case "tag":
-			if kindStr != "tagged" {
+			if seen["kind"] && kindStr != "tagged" {
 				return Node{}, p.fail("unexpected tag member for kind " + kindStr)
 			}
 			t, err := p.parseTagObject()
 			if err != nil {
+				return Node{}, err
+			}
+			if err := p.chargeOwnedBytes(tagBytes(t)); err != nil {
 				return Node{}, err
 			}
 			tagVal = t
@@ -1889,7 +2074,78 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 		}
 	}
 
-	if !seen["kind"] || !hasPayload || !seen["span"] || !seen["via"] || !seen["tag_start"] {
+	if !seen["kind"] || !seen["span"] || !seen["via"] || !seen["tag_start"] {
+		return Node{}, p.fail("incomplete wire node")
+	}
+	if hasTag && kindStr != "tagged" {
+		return Node{}, p.fail("unexpected tag member for kind " + kindStr)
+	}
+	var val Value
+	switch kindStr {
+	case "null":
+		if payloadKind != payloadNone {
+			return Node{}, p.fail("unexpected payload for null node")
+		}
+		val = NullValue()
+	case "bool":
+		if payloadKind != payloadBool {
+			return Node{}, p.fail("incomplete or mismatched bool node")
+		}
+		val = BoolValue(payBool)
+	case "int":
+		if payloadKind != payloadStrOrInt || payStrCharged {
+			return Node{}, p.fail("non-canonical wire integer")
+		}
+		iv, ok := isCanonicalWireInt(payStr)
+		if !ok {
+			return Node{}, p.fail("non-canonical wire integer: " + payStr)
+		}
+		val = IntValue(iv)
+	case "string":
+		if payloadKind != payloadStrOrInt {
+			return Node{}, p.fail("incomplete or mismatched string node")
+		}
+		if !payStrCharged {
+			if len(payStr) > p.limits.MaxScalarBytes {
+				return Node{}, p.limitErr(LimitMaxScalarBytes, p.limits.MaxScalarBytes)
+			}
+			if err := p.chargeOwnedBytes(uint64(len(payStr))); err != nil {
+				return Node{}, err
+			}
+		}
+		val = StringValue(payStr)
+	case "float":
+		if payloadKind != payloadFloat {
+			return Node{}, p.fail("incomplete or mismatched float node")
+		}
+		val = FloatValue(payFloat)
+	case "sequence":
+		if payloadKind != payloadSequence {
+			return Node{}, p.fail("incomplete or mismatched sequence node")
+		}
+		val = sequenceValueOwned(paySeq)
+	case "mapping":
+		if payloadKind != payloadMapping {
+			return Node{}, p.fail("incomplete or mismatched mapping node")
+		}
+		val = mappingValueOwned(payMap)
+	case "tagged":
+		if !hasTag || payloadKind != payloadTaggedInner {
+			return Node{}, p.fail("incomplete or mismatched tagged node")
+		}
+		validInner := false
+		if tagVal.uri == "tag:yaml.org,2002:merge" {
+			validInner = payInner.value.kind == ValueKindString
+		} else {
+			validInner = payInner.value.kind == ValueKindString ||
+				payInner.value.kind == ValueKindSequence ||
+				payInner.value.kind == ValueKindMapping
+		}
+		if !validInner {
+			return Node{}, p.fail("invalid inner value kind for tagged node")
+		}
+		val = taggedValueOwned(newTaggedWithPlain(tagVal, payInner, false))
+	default:
 		return Node{}, p.fail("incomplete wire node")
 	}
 	return Node{
@@ -1906,12 +2162,22 @@ func (p *wireParser) parseMappingEntry(depth int, isPathKey bool) (Node, Node, *
 	}
 	seen := make(map[string]bool, 2)
 	var kNode, vNode Node
-	for i := 0; i < 2; i++ {
-		if i > 0 {
+	first := true
+	for {
+		b, ok := p.peekByte()
+		if !ok {
+			return Node{}, Node{}, p.fail("unexpected EOF in mapping entry")
+		}
+		if b == '}' {
+			p.pos++
+			break
+		}
+		if !first {
 			if err := p.expectByte(','); err != nil {
 				return Node{}, Node{}, err
 			}
 		}
+		first = false
 		k, err := p.parseString()
 		if err != nil {
 			return Node{}, Node{}, err
@@ -1940,9 +2206,6 @@ func (p *wireParser) parseMappingEntry(depth int, isPathKey bool) (Node, Node, *
 			return Node{}, Node{}, p.fail("unknown mapping entry member: " + k)
 		}
 	}
-	if err := p.expectByte('}'); err != nil {
-		return Node{}, Node{}, err
-	}
 	if !seen["key"] || !seen["value"] {
 		return Node{}, Node{}, p.fail("incomplete mapping entry")
 	}
@@ -1955,12 +2218,22 @@ func (p *wireParser) parseTagObject() (Tag, *Error) {
 	}
 	seen := make(map[string]bool, 3)
 	var uri, handle, suffix string
-	for i := 0; i < 3; i++ {
-		if i > 0 {
+	first := true
+	for {
+		b, ok := p.peekByte()
+		if !ok {
+			return Tag{}, p.fail("unexpected EOF in tag")
+		}
+		if b == '}' {
+			p.pos++
+			break
+		}
+		if !first {
 			if err := p.expectByte(','); err != nil {
 				return Tag{}, err
 			}
 		}
+		first = false
 		k, err := p.parseString()
 		if err != nil {
 			return Tag{}, err
@@ -1987,11 +2260,11 @@ func (p *wireParser) parseTagObject() (Tag, *Error) {
 			return Tag{}, p.fail("unknown tag member: " + k)
 		}
 	}
-	if err := p.expectByte('}'); err != nil {
-		return Tag{}, err
-	}
 	if !seen["uri"] || !seen["handle"] || !seen["suffix"] {
 		return Tag{}, p.fail("incomplete tag object")
+	}
+	if !isValidNonCoreTagURI(uri) || !isValidTagSpelling(uri, handle, suffix) {
+		return Tag{}, p.fail("invalid or empty tag object")
 	}
 	return NewTag(uri, handle, suffix), nil
 }
@@ -2024,19 +2297,43 @@ func (p *wireParser) parseViaObject() (Via, *Error) {
 	}
 }
 
+type rawErrorDetail struct {
+	seen           map[string]bool
+	invalidUtf8Len *int
+	hasInvalidUtf8 bool
+	syntaxKind     SyntaxKind
+	limit          LimitKind
+	configured     uint64
+	hasConfigured  bool
+	expected       string
+	found          string
+	field          string
+}
+
 func (p *wireParser) parseWireError() (*Error, *Error) {
 	if err := p.expectByte('{'); err != nil {
 		return nil, err
 	}
 	seen := make(map[string]bool, 6)
 	out := &Error{}
+	var rawDetail rawErrorDetail
+	first := true
 
-	for i := 0; i < 6; i++ {
-		if i > 0 {
+	for {
+		b, ok := p.peekByte()
+		if !ok {
+			return nil, p.fail("unexpected EOF in error")
+		}
+		if b == '}' {
+			p.pos++
+			break
+		}
+		if !first {
 			if err := p.expectByte(','); err != nil {
 				return nil, err
 			}
 		}
+		first = false
 		k, err := p.parseString()
 		if err != nil {
 			return nil, err
@@ -2061,14 +2358,11 @@ func (p *wireParser) parseWireError() (*Error, *Error) {
 			out.Kind = ek
 
 		case "detail":
-			if !seen["kind"] {
-				return nil, p.fail("error detail before kind")
-			}
-			d, err := p.parseErrorDetail(out.Kind)
+			d, err := p.parseRawErrorDetail()
 			if err != nil {
 				return nil, err
 			}
-			out.Detail = d
+			rawDetail = d
 
 		case "site":
 			site, err := p.parseErrorSite()
@@ -2102,177 +2396,157 @@ func (p *wireParser) parseWireError() (*Error, *Error) {
 			return nil, p.fail("unknown error member: " + k)
 		}
 	}
-	if err := p.expectByte('}'); err != nil {
-		return nil, err
-	}
 	if !seen["kind"] || !seen["detail"] || !seen["site"] || !seen["related"] || !seen["path"] || !seen["message"] {
 		return nil, p.fail("incomplete wire error object")
 	}
+	detail, err := p.validateErrorDetail(out.Kind, rawDetail)
+	if err != nil {
+		return nil, err
+	}
+	out.Detail = detail
 	return out, nil
 }
 
-func (p *wireParser) parseErrorDetail(kind ErrorKind) (ErrorDetail, *Error) {
+func (p *wireParser) parseRawErrorDetail() (rawErrorDetail, *Error) {
 	if err := p.expectByte('{'); err != nil {
-		return ErrorDetail{}, err
+		return rawErrorDetail{}, err
 	}
+	d := rawErrorDetail{
+		seen: make(map[string]bool, 2),
+	}
+	first := true
+	for {
+		b, ok := p.peekByte()
+		if !ok {
+			return rawErrorDetail{}, p.fail("unexpected EOF in error detail")
+		}
+		if b == '}' {
+			p.pos++
+			break
+		}
+		if !first {
+			if err := p.expectByte(','); err != nil {
+				return rawErrorDetail{}, err
+			}
+		}
+		first = false
+		k, err := p.parseString()
+		if err != nil {
+			return rawErrorDetail{}, err
+		}
+		if d.seen[k] {
+			return rawErrorDetail{}, p.fail("duplicate error detail member: " + k)
+		}
+		d.seen[k] = true
+		if err := p.expectByte(':'); err != nil {
+			return rawErrorDetail{}, err
+		}
+		switch k {
+		case "invalid_len":
+			if !p.consumeLiteral("null") {
+				n, err := p.parseMetaInt()
+				if err != nil {
+					return rawErrorDetail{}, err
+				}
+				d.invalidUtf8Len = &n
+			}
+			d.hasInvalidUtf8 = true
+		case "syntax_kind":
+			code, err := p.parseString()
+			if err != nil {
+				return rawErrorDetail{}, err
+			}
+			sk, ok := SyntaxKindFromCode(code)
+			if !ok {
+				return rawErrorDetail{}, p.fail("unknown syntax_kind code: " + code)
+			}
+			d.syntaxKind = sk
+		case "limit":
+			ls, err := p.parseString()
+			if err != nil {
+				return rawErrorDetail{}, err
+			}
+			lk := LimitKind(ls)
+			if !lk.IsValid() {
+				return rawErrorDetail{}, p.fail("unknown limit kind: " + ls)
+			}
+			d.limit = lk
+		case "configured":
+			c, err := p.parseMetaUint()
+			if err != nil || c == 0 {
+				return rawErrorDetail{}, p.fail("invalid configured limit")
+			}
+			d.configured = c
+			d.hasConfigured = true
+		case "expected":
+			v, err := p.parseString()
+			if err != nil {
+				return rawErrorDetail{}, err
+			}
+			d.expected = v
+		case "found":
+			v, err := p.parseString()
+			if err != nil {
+				return rawErrorDetail{}, err
+			}
+			d.found = v
+		case "field":
+			v, err := p.parseString()
+			if err != nil {
+				return rawErrorDetail{}, err
+			}
+			d.field = v
+		default:
+			return rawErrorDetail{}, p.fail("unknown error detail member: " + k)
+		}
+	}
+	return d, nil
+}
+
+func (p *wireParser) validateErrorDetail(kind ErrorKind, raw rawErrorDetail) (ErrorDetail, *Error) {
 	var d ErrorDetail
 	switch kind {
 	case ErrorKindInvalidUtf8:
-		k, err := p.parseString()
-		if err != nil {
-			return ErrorDetail{}, err
-		}
-		if k != "invalid_len" {
+		if len(raw.seen) != 1 || !raw.seen["invalid_len"] {
 			return ErrorDetail{}, p.fail("expected invalid_len in invalid_utf8 detail")
 		}
-		if err := p.expectByte(':'); err != nil {
-			return ErrorDetail{}, err
-		}
-		if !p.consumeLiteral("null") {
-			n, err := p.parseMetaInt()
-			if err != nil {
-				return ErrorDetail{}, err
-			}
-			d.InvalidUtf8Len = &n
-		}
+		d.InvalidUtf8Len = raw.invalidUtf8Len
 		d.HasInvalidUtf8 = true
-
 	case ErrorKindSyntax:
-		k, err := p.parseString()
-		if err != nil {
-			return ErrorDetail{}, err
-		}
-		if k != "syntax_kind" {
+		if len(raw.seen) != 1 || !raw.seen["syntax_kind"] {
 			return ErrorDetail{}, p.fail("expected syntax_kind in syntax detail")
 		}
-		if err := p.expectByte(':'); err != nil {
-			return ErrorDetail{}, err
-		}
-		code, err := p.parseString()
-		if err != nil {
-			return ErrorDetail{}, err
-		}
-		sk, ok := SyntaxKindFromCode(code)
-		if !ok {
-			return ErrorDetail{}, p.fail("unknown syntax_kind code: " + code)
-		}
-		d.SyntaxKind = sk
-
+		d.SyntaxKind = raw.syntaxKind
 	case ErrorKindLimitExceeded:
-		seen := make(map[string]bool, 2)
-		for i := 0; i < 2; i++ {
-			if i > 0 {
-				if err := p.expectByte(','); err != nil {
-					return ErrorDetail{}, err
-				}
-			}
-			k, err := p.parseString()
-			if err != nil {
-				return ErrorDetail{}, err
-			}
-			if seen[k] {
-				return ErrorDetail{}, p.fail("duplicate limit_exceeded detail member: " + k)
-			}
-			seen[k] = true
-			if err := p.expectByte(':'); err != nil {
-				return ErrorDetail{}, err
-			}
-			switch k {
-			case "limit":
-				ls, err := p.parseString()
-				if err != nil {
-					return ErrorDetail{}, err
-				}
-				lk := LimitKind(ls)
-				if !lk.IsValid() {
-					return ErrorDetail{}, p.fail("unknown limit kind: " + ls)
-				}
-				d.Limit = lk
-			case "configured":
-				c, err := p.parseMetaUint()
-				if err != nil || c == 0 {
-					return ErrorDetail{}, p.fail("invalid configured limit")
-				}
-				d.Configured = c
-				d.HasConfigured = true
-			default:
-				return ErrorDetail{}, p.fail("unknown limit_exceeded detail member: " + k)
-			}
+		if len(raw.seen) != 2 || !raw.seen["limit"] || !raw.seen["configured"] {
+			return ErrorDetail{}, p.fail("incomplete limit_exceeded detail")
 		}
-
+		d.Limit = raw.limit
+		d.Configured = raw.configured
+		d.HasConfigured = true
 	case ErrorKindType:
-		seen := make(map[string]bool, 2)
-		for i := 0; i < 2; i++ {
-			if i > 0 {
-				if err := p.expectByte(','); err != nil {
-					return ErrorDetail{}, err
-				}
-			}
-			k, err := p.parseString()
-			if err != nil {
-				return ErrorDetail{}, err
-			}
-			if seen[k] {
-				return ErrorDetail{}, p.fail("duplicate type detail member: " + k)
-			}
-			seen[k] = true
-			if err := p.expectByte(':'); err != nil {
-				return ErrorDetail{}, err
-			}
-			v, err := p.parseString()
-			if err != nil {
-				return ErrorDetail{}, err
-			}
-			switch k {
-			case "expected":
-				d.Expected = v
-			case "found":
-				d.Found = v
-			default:
-				return ErrorDetail{}, p.fail("unknown type detail member: " + k)
-			}
+		if len(raw.seen) != 2 || !raw.seen["expected"] || !raw.seen["found"] {
+			return ErrorDetail{}, p.fail("incomplete type detail")
 		}
+		d.Expected = raw.expected
+		d.Found = raw.found
 		d.HasType = true
-
 	case ErrorKindMissingField, ErrorKindUnknownField:
-		k, err := p.parseString()
-		if err != nil {
-			return ErrorDetail{}, err
-		}
-		if k != "field" {
+		if len(raw.seen) != 1 || !raw.seen["field"] {
 			return ErrorDetail{}, p.fail("expected field in detail")
 		}
-		if err := p.expectByte(':'); err != nil {
-			return ErrorDetail{}, err
-		}
-		f, err := p.parseString()
-		if err != nil {
-			return ErrorDetail{}, err
-		}
-		d.Field = f
+		d.Field = raw.field
 		d.HasField = true
-
 	case ErrorKindOutputLimitExceeded:
-		k, err := p.parseString()
-		if err != nil {
-			return ErrorDetail{}, err
-		}
-		if k != "configured" {
+		if len(raw.seen) != 1 || !raw.seen["configured"] {
 			return ErrorDetail{}, p.fail("expected configured in output_limit_exceeded detail")
 		}
-		if err := p.expectByte(':'); err != nil {
-			return ErrorDetail{}, err
-		}
-		c, err := p.parseMetaUint()
-		if err != nil || c == 0 {
-			return ErrorDetail{}, p.fail("invalid configured output limit")
-		}
-		d.Configured = c
+		d.Configured = raw.configured
 		d.HasConfigured = true
-	}
-
-	if err := p.expectByte('}'); err != nil {
-		return ErrorDetail{}, err
+	default:
+		if len(raw.seen) != 0 {
+			return ErrorDetail{}, p.fail("expected empty detail object")
+		}
 	}
 	return d, nil
 }
@@ -2357,12 +2631,22 @@ func (p *wireParser) parseErrorRelated() ([]Related, *Error) {
 		}
 		seen := make(map[string]bool, 2)
 		var r Related
-		for i := 0; i < 2; i++ {
-			if i > 0 {
+		fRel := true
+		for {
+			rb, ok := p.peekByte()
+			if !ok {
+				return nil, p.fail("unexpected EOF in related item")
+			}
+			if rb == '}' {
+				p.pos++
+				break
+			}
+			if !fRel {
 				if err := p.expectByte(','); err != nil {
 					return nil, err
 				}
 			}
+			fRel = false
 			k, err := p.parseString()
 			if err != nil {
 				return nil, err
@@ -2395,8 +2679,8 @@ func (p *wireParser) parseErrorRelated() ([]Related, *Error) {
 				return nil, p.fail("unknown related member: " + k)
 			}
 		}
-		if err := p.expectByte('}'); err != nil {
-			return nil, err
+		if !seen["role"] || !seen["span"] {
+			return nil, p.fail("incomplete related item")
 		}
 		rel = append(rel, r)
 	}
@@ -2423,8 +2707,8 @@ func (p *wireParser) parseErrorPath() ([]PathSegment, *Error) {
 			}
 		}
 		first = false
-		if len(path)+1 > p.maxDepth {
-			return nil, p.fail("wire error path exceeds max_depth")
+		if len(path)+1 > p.limits.MaxDepth {
+			return nil, p.limitErr(LimitMaxDepth, p.limits.MaxDepth)
 		}
 		if err := p.expectByte('{'); err != nil {
 			return nil, err
@@ -2447,6 +2731,10 @@ func (p *wireParser) parseErrorPath() ([]PathSegment, *Error) {
 			n, err := p.parseNode(0, true, false)
 			if err != nil {
 				return nil, err
+			}
+			_, kw, _ := metrics(n)
+			if kw > uint64(p.limits.MaxKeyBytes) {
+				return nil, p.limitErr(LimitMaxKeyBytes, p.limits.MaxKeyBytes)
 			}
 			path = append(path, PathKey(n.value))
 		default:

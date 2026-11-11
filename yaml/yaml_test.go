@@ -169,7 +169,7 @@ func truthJS(s string) string {
 
 func truthUnJS(t *testing.T, s string) string {
 	t.Helper()
-	p := wireParser{src: s, maxDepth: 16, nodesLeft: 16}
+	p := wireParser{src: s, limits: DefaultLimits()}
 	out, err := p.parseString()
 	if err != nil {
 		t.Fatalf("truthUnJS(%s): %v", s, err)
@@ -1001,15 +1001,19 @@ func TestClosedSyntaxVocabularyAndUTF8Boundaries(t *testing.T) {
 		t.Fatalf("ToPlain U+FFFD: got (%v, %v)", toPlainFFFD, err)
 	}
 
-	// 4. DecodeWire rejects nested Tagged-in-Tagged wire nodes and yaml_version components > math.MaxUint32
+	// 4. DecodeWire rejects nested Tagged-in-Tagged wire nodes, invalid tagged inner kinds, and yaml_version components > math.MaxUint32
 	// while accepting identical valid-envelope controls without the targeted fault.
-	validTaggedWire := `{"format":"yamlprims-value","version":1,"documents":[{"yaml_version":null,"explicit_start":false,"root":{"kind":"tagged","tag":{"uri":"!a","handle":"!","suffix":"a"},"value":{"kind":"null","span":null,"via":null,"tag_start":null},"span":null,"via":null,"tag_start":null}}]}`
+	validTaggedWire := `{"format":"yamlprims-value","version":1,"documents":[{"yaml_version":null,"explicit_start":false,"root":{"kind":"tagged","tag":{"uri":"!a","handle":"!","suffix":"a"},"value":{"kind":"string","value":"x","span":null,"via":null,"tag_start":null},"span":null,"via":null,"tag_start":null}}]}`
 	if _, err := DecodeWire(validTaggedWire, DefaultOptions()); err != nil {
 		t.Fatalf("DecodeWire rejected valid single-tagged control envelope: %v", err)
 	}
-	nestedTaggedWire := `{"format":"yamlprims-value","version":1,"documents":[{"yaml_version":null,"explicit_start":false,"root":{"kind":"tagged","tag":{"uri":"!a","handle":"!","suffix":"a"},"value":{"kind":"tagged","tag":{"uri":"!b","handle":"!","suffix":"b"},"value":{"kind":"null","span":null,"via":null,"tag_start":null},"span":null,"via":null,"tag_start":null},"span":null,"via":null,"tag_start":null}}]}`
-	if _, err := DecodeWire(nestedTaggedWire, DefaultOptions()); err == nil {
-		t.Fatal("DecodeWire accepted nested Tagged-in-Tagged wire node")
+	taggedNullWire := `{"format":"yamlprims-value","version":1,"documents":[{"yaml_version":null,"explicit_start":false,"root":{"kind":"tagged","tag":{"uri":"!a","handle":"!","suffix":"a"},"value":{"kind":"null","span":null,"via":null,"tag_start":null},"span":null,"via":null,"tag_start":null}}]}`
+	if _, err := DecodeWire(taggedNullWire, DefaultOptions()); err == nil || err.Kind != ErrorKindInternal {
+		t.Fatalf("DecodeWire accepted or returned wrong error for tagged null wire node: %+v", err)
+	}
+	nestedTaggedWire := `{"format":"yamlprims-value","version":1,"documents":[{"yaml_version":null,"explicit_start":false,"root":{"kind":"tagged","tag":{"uri":"!a","handle":"!","suffix":"a"},"value":{"kind":"tagged","tag":{"uri":"!b","handle":"!","suffix":"b"},"value":{"kind":"string","value":"x","span":null,"via":null,"tag_start":null},"span":null,"via":null,"tag_start":null},"span":null,"via":null,"tag_start":null}}]}`
+	if _, err := DecodeWire(nestedTaggedWire, DefaultOptions()); err == nil || err.Kind != ErrorKindInternal {
+		t.Fatalf("DecodeWire accepted nested Tagged-in-Tagged wire node: %+v", err)
 	}
 	validMaxVerWire := `{"format":"yamlprims-value","version":1,"documents":[{"yaml_version":[4294967295,4294967295],"explicit_start":false,"root":{"kind":"null","span":null,"via":null,"tag_start":null}}]}`
 	if _, err := DecodeWire(validMaxVerWire, DefaultOptions()); err != nil {

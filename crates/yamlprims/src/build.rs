@@ -295,7 +295,24 @@ impl<'a> Loader<'a> {
     /// Load every document in the stream.
     /// `single` selects the one-document API: a second document is `MultipleDocuments`.
     /// Otherwise the configured `max_documents` applies (`LimitExceeded`), whatever its value.
-    pub(crate) fn load_all(mut self, single: bool) -> Result<Vec<Document>, Error> {
+    pub(crate) fn load_all(self, single: bool) -> Result<Vec<Document>, Error> {
+        self.load_stream(single, true)
+    }
+
+    /// Load a single explicit document for `load_ijson*`: rejects zero-document streams with
+    /// `ErrorKind::Type { expected: "single YAML document", found: "empty_stream" }` at EOF
+    /// and a second document with `ErrorKind::MultipleDocuments` at its start.
+    pub(crate) fn load_single_non_empty(self) -> Result<Document, Error> {
+        let mut docs = self.load_stream(true, false)?;
+        docs.pop()
+            .ok_or_else(|| internal("missing single document"))
+    }
+
+    fn load_stream(
+        mut self,
+        single: bool,
+        allow_empty_single: bool,
+    ) -> Result<Vec<Document>, Error> {
         let max_docs = if single {
             1
         } else {
@@ -311,9 +328,19 @@ impl<'a> Loader<'a> {
             match self.next()? {
                 (Event::StreamEnd, span) => {
                     if docs.is_empty() && single {
+                        let end = self.eof(&span);
+                        if !allow_empty_single {
+                            return Err(Error::at(
+                                ErrorKind::Type {
+                                    expected: "single YAML document".into(),
+                                    found: "empty_stream".into(),
+                                },
+                                end,
+                                "empty YAML stream has no document",
+                            ));
+                        }
                         // `load` of empty or comment-only input: Null with an empty span at
                         // end of input. `load_all` returns no documents.
-                        let end = self.eof(&span);
                         docs.push(Document {
                             root: Node {
                                 value: Value::Null,
@@ -653,14 +680,10 @@ impl<'a> Loader<'a> {
                         key_use,
                     ));
                 }
-                let key_node = if is_directive {
-                    Node {
-                        value: Value::String("<<".into()),
-                        ..k.node
-                    }
-                } else {
-                    k.node
-                };
+                let mut key_node = k.node;
+                if is_directive {
+                    key_node.value = Value::String("<<".into());
+                }
                 self.path
                     .push(PathSegment::Key(Box::new(key_node.value.clone())));
                 *pending = Some(Box::new(PendingKey {
@@ -880,21 +903,23 @@ impl<'a> Loader<'a> {
     ) -> Result<(Mapping, u64, u64, usize), Error> {
         let src_span = source.source_span().unwrap_or(dspan);
         let src_use = alias_use(&source);
-        let sources: Vec<Mapping> = match source.value {
+        let sources: Vec<Mapping> = match source.into_value() {
             Value::Mapping(m) => vec![m],
             Value::Sequence(items) => {
                 let mut v = Vec::new();
                 for it in items {
-                    match it.value {
+                    let it_span = it.source_span();
+                    let it_use = alias_use(&it);
+                    match it.into_value() {
                         Value::Mapping(m) => v.push(m),
                         _ => {
-                            let at = it.source_span().map(|s| s.start).unwrap_or(src_span.start);
+                            let at = it_span.map(|s| s.start).unwrap_or(src_span.start);
                             let e = self.err(
                                 ErrorKind::MergeSource,
                                 at,
                                 "merge source must be a mapping",
                             );
-                            return Err(with_alias_use(with_alias_use(e, alias_use(&it)), src_use)
+                            return Err(with_alias_use(with_alias_use(e, it_use), src_use)
                                 .with_related(RelatedRole::MergeDirective, dspan));
                         }
                     }

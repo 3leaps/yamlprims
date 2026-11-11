@@ -312,6 +312,21 @@ func (l *loader) charge(count, weight uint64, at Location, expanded bool) *Error
 }
 
 func (l *loader) loadAll(single bool) ([]Document, *Error) {
+	return l.loadStream(single, true)
+}
+
+func (l *loader) loadSingleNonEmpty() (Document, *Error) {
+	docs, err := l.loadStream(true, false)
+	if err != nil {
+		return Document{}, err
+	}
+	if len(docs) == 0 {
+		return Document{}, errInternal("missing single document")
+	}
+	return docs[0], nil
+}
+
+func (l *loader) loadStream(single bool, allowEmptySingle bool) ([]Document, *Error) {
 	maxDocs := l.opts.Limits.MaxDocuments
 	if single {
 		maxDocs = 1
@@ -336,6 +351,14 @@ func (l *loader) loadAll(single bool) ([]Document, *Error) {
 		case engine.EventStreamEnd:
 			if len(docs) == 0 && single {
 				end := l.eof(evSpan)
+				if !allowEmptySingle {
+					return nil, errTypeAtSite(
+						SiteSource(end),
+						"single YAML document",
+						"empty_stream",
+						"empty YAML stream has no document",
+					)
+				}
 				docs = append(docs, newDocumentOwned(
 					newNodeOwned(NullValue(), Span{Start: end, End: end}),
 					nil,
