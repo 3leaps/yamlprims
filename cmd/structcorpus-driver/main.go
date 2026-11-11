@@ -35,6 +35,7 @@ var limitsProfiles = map[string]bool{
 	"yamlprims-core-limits":   true,
 	"yamlprims-core-stress":   true,
 	"yamlprims-core-depth128": true,
+	"yamlprims-core-depth255": true,
 	"yamlprims-core-entries2": true,
 }
 
@@ -96,12 +97,13 @@ func makeProfiles() []profileSpec {
 		p("yamlprims-core-merge-as-key", 3, "target", yaml.MergeKeysAsKey, "plain-key", true),
 		p("yamlprims-core-limits", 2, "target", yaml.MergeKeysReject, "reject", true),
 		p("yamlprims-core-stress", 1, "target", yaml.MergeKeysReject, "reject", true),
-		// Spec 1.4 (DDR-0010, DDR-0011).
+		// Spec 1.4 (DDR-0010, DDR-0011, DDR-0012).
 		p("yamlprims-core", 4, "target", yaml.MergeKeysReject, "reject", true),
 		p("yamlprims-core-stream", 4, "target", yaml.MergeKeysReject, "reject", false),
 		p("yamlprims-core-merge-apply", 4, "target", yaml.MergeKeysApply, "apply", true),
 		p("yamlprims-core-merge-as-key", 4, "target", yaml.MergeKeysAsKey, "plain-key", true),
 		p("yamlprims-core-depth128", 1, "target", yaml.MergeKeysReject, "reject", true),
+		p("yamlprims-core-depth255", 1, "target", yaml.MergeKeysReject, "reject", true),
 		p("yamlprims-core-entries2", 1, "target", yaml.MergeKeysReject, "reject", true),
 	}
 }
@@ -548,8 +550,8 @@ func parseJSONAny(s string) (any, error) {
 }
 
 func parseDeepJSON(s *string, depth int) (any, error) {
-	if depth > 512 {
-		return nil, fmt.Errorf("JSON nesting exceeds 512")
+	if depth > 1024 {
+		return nil, fmt.Errorf("JSON nesting exceeds 1024")
 	}
 	*s = trimJSONStart(*s)
 	if len(*s) == 0 {
@@ -1663,41 +1665,6 @@ func runCrosscheckJSONL() int {
 			}
 		}
 
-		var docs []yaml.Document
-		var lerr *yaml.Error
-		if single {
-			d, err := yaml.LoadBytes(input, opts)
-			if err != nil {
-				lerr = err
-			} else {
-				docs = []yaml.Document{d}
-			}
-		} else {
-			docs, lerr = yaml.LoadAllBytes(input, opts)
-		}
-
-		var wire string
-		if lerr != nil {
-			w, e2 := yaml.EncodeError(lerr, defOpts)
-			if e2 != nil {
-				fmt.Fprintf(os.Stderr, "%s: EncodeError: %v\n", id, e2)
-				return 2
-			}
-			wire = w
-		} else {
-			w, encErr := yaml.Encode(docs, opts)
-			if encErr != nil {
-				w2, e2 := yaml.EncodeError(encErr, defOpts)
-				if e2 != nil {
-					fmt.Fprintf(os.Stderr, "%s: EncodeError(encErr): %v\n", id, e2)
-					return 2
-				}
-				wire = w2
-			} else {
-				wire = w
-			}
-		}
-
 		rtOpts := defOpts
 		if opts.Validate() == nil {
 			if opts.Limits.MaxInputBytes > rtOpts.Limits.MaxInputBytes {
@@ -1738,6 +1705,41 @@ func runCrosscheckJSONL() int {
 			}
 		}
 
+		var docs []yaml.Document
+		var lerr *yaml.Error
+		if single {
+			d, err := yaml.LoadBytes(input, opts)
+			if err != nil {
+				lerr = err
+			} else {
+				docs = []yaml.Document{d}
+			}
+		} else {
+			docs, lerr = yaml.LoadAllBytes(input, opts)
+		}
+
+		var wire string
+		if lerr != nil {
+			w, e2 := yaml.EncodeError(lerr, rtOpts)
+			if e2 != nil {
+				fmt.Fprintf(os.Stderr, "%s: EncodeError: %v\n", id, e2)
+				return 2
+			}
+			wire = w
+		} else {
+			w, encErr := yaml.Encode(docs, opts)
+			if encErr != nil {
+				w2, e2 := yaml.EncodeError(encErr, rtOpts)
+				if e2 != nil {
+					fmt.Fprintf(os.Stderr, "%s: EncodeError(encErr): %v\n", id, e2)
+					return 2
+				}
+				wire = w2
+			} else {
+				wire = w
+			}
+		}
+
 		env, decErr := yaml.DecodeWire(wire, rtOpts)
 		if decErr != nil {
 			fmt.Fprintf(os.Stderr, "%s: DecodeWire(%s): %v\n", id, wire, decErr)
@@ -1759,7 +1761,7 @@ func runCrosscheckJSONL() int {
 		if checkPlain {
 			doc, perr := yaml.LoadBytes(input, opts)
 			if perr != nil {
-				p, e2 := yaml.EncodeError(perr, defOpts)
+				p, e2 := yaml.EncodeError(perr, rtOpts)
 				if e2 != nil {
 					fmt.Fprintf(os.Stderr, "%s: plain EncodeError: %v\n", id, e2)
 					return 2
@@ -1768,7 +1770,7 @@ func runCrosscheckJSONL() int {
 			} else {
 				p, perr := yaml.EncodePlain(doc.IntoRoot(), opts)
 				if perr != nil {
-					p2, e2 := yaml.EncodeError(perr, defOpts)
+					p2, e2 := yaml.EncodeError(perr, rtOpts)
 					if e2 != nil {
 						fmt.Fprintf(os.Stderr, "%s: EncodePlain error: %v\n", id, e2)
 						return 2

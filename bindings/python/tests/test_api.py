@@ -343,6 +343,25 @@ class TestApi(unittest.TestCase):
         self.assertEqual(cm.exception.message, "native panic in yamlprims")
         self.assertIsNone(cm.exception.location())
 
+    def test_depth_255_ceiling_roundtrip(self) -> None:
+        opts = Options(
+            limits=Limits(
+                max_depth=255,
+                max_nodes=1024,
+                max_owned_bytes=262144,
+                max_scalar_bytes=1024,
+                max_key_bytes=1024,
+                max_output_bytes=262144,
+            )
+        )
+        deep_tagged = ("!t [" * 255) + "0" + ("]" * 255) + "\n"
+        doc = load_bytes(deep_tagged.encode("utf-8"), opts)
+        wire = encode([doc], opts)
+        decoded = decode_wire(wire, opts)
+        self.assertEqual(decoded.kind, "documents")
+        assert decoded.documents is not None
+        self.assertEqual(encode(decoded.documents, opts), wire)
+
 
 if __name__ == "__main__":
     unittest.main()

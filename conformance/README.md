@@ -2,11 +2,11 @@
 
 The core baseline is tested against specification revision 1.4, the included
 synthetic truth/wire regressions and the exact structcorpus inventory at
-`c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99`.
+`6b1266e16676dc456328eb64c0eed028060845c3`.
 
-The lock in `pins/pin-c8b7421.json` fixes source files, profile revisions,
+The lock in `pins/pin-6b1266e.json` fixes source files, profile revisions,
 hydrated inventory hashes, review-status counts and per-profile result rows.
-Earlier locks (`pins/pin-400ae34.json`, `pins/pin-d37ce93.json`,
+Earlier locks (`pins/pin-c8b7421.json`, `pins/pin-400ae34.json`, `pins/pin-d37ce93.json`,
 `pins/pin-444bc12.json`, `pins/pin-03ba2de.json`) remain historical evidence.
 Do not regenerate expectations from the implementation. The gate rejects pin
 generation; wire golden blessing is disabled. Expectation changes require
@@ -30,17 +30,19 @@ profiles are present, `structcorpus_gate_probes.py` and `node_selectors.py`).
 The controls include three positive and three deliberately corrupted node
 selectors for UTF-8 sequence items, alias definition spans and stream documents,
 plus synthetic positive and negative controls for `yamlprims-core-depth128` r1,
+`yamlprims-core-depth255` r1 (when present),
 `yamlprims-core-entries2` r1 and the four revision 4 policy profiles.
 Failed tests/builds stop execution before the driver. Core package tests need
 only the included fixtures; full corpus qualification needs the pinned corpus.
 
-The baseline inventory at `c8b7421` contains 61,360 provisional records and
-90,982 compared expectations across 19 result rows, including 21 node spans,
-6 expectations under `yamlprims-core-depth128` r1 and 6 expectations under
+The baseline inventory at `6b1266e` contains 61,366 provisional records and
+90,988 compared expectations across 20 result rows, including 21 node spans,
+6 expectations under `yamlprims-core-depth128` r1, 6 expectations under
+`yamlprims-core-depth255` r1 and 6 expectations under
 `yamlprims-core-entries2` r1, with eight explicit exclusions (`yaml-core` r1).
 The four revision 4 policy profiles (`yamlprims-core`, `yamlprims-core-stream`,
 `yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key` r4) carry zero
-shipped corpus records in `c8b7421`; the driver validates their policy bindings
+shipped corpus records in `6b1266e`; the driver validates their policy bindings
 and `structcorpus_probes_v14.py` exercises them synthetically without adding
 unbacked rows to the frozen corpus pin.
 Passing comparisons do not promote provisional records. Semantic acceptance,

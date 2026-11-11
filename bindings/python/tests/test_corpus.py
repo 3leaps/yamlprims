@@ -60,7 +60,7 @@ class TestCorpus(unittest.TestCase):
     def test_conformance_vectors_parity(self) -> None:
         raw_lines = [
             line
-            for line in VECTORS_FILE.read_text(encoding="utf-8").splitlines()
+            for line in VECTORS_FILE.read_text(encoding="utf-8").split("\n")
             if line.strip()
         ]
         self.assertGreaterEqual(len(raw_lines), 150, f"expected >= 150 vectors, got {len(raw_lines)}")
@@ -97,6 +97,7 @@ class TestCorpus(unittest.TestCase):
                 input_bytes = rec["input"].encode("utf-8")
 
             opts = _build_options(rec)
+            rt_opts = _widen_limits_for_round_trip(opts)
             single = bool(rec.get("single"))
             check_plain = bool(rec.get("check_plain"))
 
@@ -105,11 +106,10 @@ class TestCorpus(unittest.TestCase):
                 try:
                     wire = encode(docs, opts)
                 except YamlprimsError as enc_err:
-                    wire = encode_error(enc_err, def_opts)
+                    wire = encode_error(enc_err, rt_opts)
             except YamlprimsError as load_err:
-                wire = encode_error(load_err, def_opts)
+                wire = encode_error(load_err, rt_opts)
 
-            rt_opts = _widen_limits_for_round_trip(opts)
             decoded = decode_wire(wire, rt_opts)
             if decoded.kind == "documents":
                 assert decoded.documents is not None
@@ -137,12 +137,12 @@ class TestCorpus(unittest.TestCase):
                     doc = load_bytes(input_bytes, load_opts_for_plain)
                     plain_via_host = encode_plain(doc, opts)
                 except YamlprimsError as err:
-                    plain_via_host = encode_error(err, def_opts)
+                    plain_via_host = encode_error(err, rt_opts)
 
                 try:
                     plain_via_native = load_plain(input_bytes, opts)
                 except YamlprimsError as err:
-                    plain_via_native = encode_error(err, def_opts)
+                    plain_via_native = encode_error(err, rt_opts)
 
                 self.assertEqual(
                     plain_via_native,

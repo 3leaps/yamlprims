@@ -1,4 +1,5 @@
 /target/
+/dist/
 /bindings/python/target
 /bindings/typescript/target
 /bindings/typescript/node_modules

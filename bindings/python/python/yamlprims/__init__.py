@@ -1019,11 +1019,113 @@ class _WireJsonParser:
         self.tokens_left = max_tokens
 
     def parse_root(self) -> _JVal:
-        val = self._parse_value(0)
-        self._skip_ws()
-        if self.pos != self.n:
-            raise _not_source_error("internal", {}, "trailing characters after wire JSON value")
-        return val
+        stack: list[tuple[str, Any, str | None]] = []
+        while True:
+            self._skip_ws()
+            if self.pos >= self.n:
+                raise _not_source_error("internal", {}, "unexpected EOF in wire JSON")
+            self._consume_token()
+            ch = self.text[self.pos]
+            val: _JVal | None = None
+
+            if ch == "{":
+                if len(stack) + 1 > self.max_depth:
+                    raise _not_source_error("internal", {}, "wire JSON nesting exceeds max_depth")
+                self.pos += 1
+                self._skip_ws()
+                if self.pos < self.n and self.text[self.pos] == "}":
+                    self.pos += 1
+                    val = _JVal("obj", {})
+                else:
+                    if self.pos >= self.n or self.text[self.pos] != '"':
+                        raise _not_source_error("internal", {}, "expected string key in wire JSON object")
+                    first_key = self._parse_string()
+                    self._skip_ws()
+                    if self.pos >= self.n or self.text[self.pos] != ":":
+                        raise _not_source_error("internal", {}, "expected ':' after key in wire JSON object")
+                    self.pos += 1
+                    stack.append(("obj", {}, first_key))
+                    continue
+            elif ch == "[":
+                if len(stack) + 1 > self.max_depth:
+                    raise _not_source_error("internal", {}, "wire JSON nesting exceeds max_depth")
+                self.pos += 1
+                self._skip_ws()
+                if self.pos < self.n and self.text[self.pos] == "]":
+                    self.pos += 1
+                    val = _JVal("arr", [])
+                else:
+                    stack.append(("arr", [], None))
+                    continue
+            elif ch == '"':
+                val = _JVal("str", self._parse_string())
+            elif ch == "t":
+                if self.text.startswith("true", self.pos):
+                    self.pos += 4
+                    val = _JVal("bool", True)
+                else:
+                    raise _not_source_error("internal", {}, "invalid literal in wire JSON")
+            elif ch == "f":
+                if self.text.startswith("false", self.pos):
+                    self.pos += 5
+                    val = _JVal("bool", False)
+                else:
+                    raise _not_source_error("internal", {}, "invalid literal in wire JSON")
+            elif ch == "n":
+                if self.text.startswith("null", self.pos):
+                    self.pos += 4
+                    val = _JVal("null", None)
+                else:
+                    raise _not_source_error("internal", {}, "invalid literal in wire JSON")
+            elif ch == "-" or ("0" <= ch <= "9"):
+                val = self._parse_number()
+            else:
+                raise _not_source_error("internal", {}, f"unexpected character {ch!r} in wire JSON")
+
+            while True:
+                assert val is not None
+                if not stack:
+                    self._skip_ws()
+                    if self.pos != self.n:
+                        raise _not_source_error("internal", {}, "trailing characters after wire JSON value")
+                    return val
+                frame_kind, container, pending_key = stack[-1]
+                if frame_kind == "arr":
+                    container.append(val)
+                    self._skip_ws()
+                    if self.pos < self.n and self.text[self.pos] == ",":
+                        self.pos += 1
+                        break
+                    if self.pos < self.n and self.text[self.pos] == "]":
+                        self.pos += 1
+                        stack.pop()
+                        val = _JVal("arr", container)
+                        continue
+                    raise _not_source_error("internal", {}, "expected ',' or ']' in wire JSON array")
+                else:
+                    assert pending_key is not None
+                    container[pending_key] = val
+                    self._skip_ws()
+                    if self.pos < self.n and self.text[self.pos] == ",":
+                        self.pos += 1
+                        self._skip_ws()
+                        if self.pos >= self.n or self.text[self.pos] != '"':
+                            raise _not_source_error("internal", {}, "expected string key in wire JSON object")
+                        next_key = self._parse_string()
+                        if next_key in container:
+                            raise _not_source_error("internal", {}, f"duplicate JSON object key: {next_key}")
+                        self._skip_ws()
+                        if self.pos >= self.n or self.text[self.pos] != ":":
+                            raise _not_source_error("internal", {}, "expected ':' after key in wire JSON object")
+                        self.pos += 1
+                        stack[-1] = ("obj", container, next_key)
+                        break
+                    if self.pos < self.n and self.text[self.pos] == "}":
+                        self.pos += 1
+                        stack.pop()
+                        val = _JVal("obj", container)
+                        continue
+                    raise _not_source_error("internal", {}, "expected ',' or '}' in wire JSON object")
 
     def _consume_token(self) -> None:
         if self.tokens_left <= 0:
@@ -1037,41 +1139,6 @@ class _WireJsonParser:
         while p < n and t[p] in (" ", "\t", "\n", "\r"):
             p += 1
         self.pos = p
-
-    def _parse_value(self, depth: int) -> _JVal:
-        self._skip_ws()
-        if self.pos >= self.n:
-            raise _not_source_error("internal", {}, "unexpected EOF in wire JSON")
-        self._consume_token()
-        ch = self.text[self.pos]
-        if ch == "{":
-            if depth + 1 > self.max_depth:
-                raise _not_source_error("internal", {}, "wire JSON nesting exceeds max_depth")
-            return self._parse_object(depth + 1)
-        if ch == "[":
-            if depth + 1 > self.max_depth:
-                raise _not_source_error("internal", {}, "wire JSON nesting exceeds max_depth")
-            return self._parse_array(depth + 1)
-        if ch == '"':
-            return _JVal("str", self._parse_string())
-        if ch == "t":
-            if self.text.startswith("true", self.pos):
-                self.pos += 4
-                return _JVal("bool", True)
-            raise _not_source_error("internal", {}, "invalid literal in wire JSON")
-        if ch == "f":
-            if self.text.startswith("false", self.pos):
-                self.pos += 5
-                return _JVal("bool", False)
-            raise _not_source_error("internal", {}, "invalid literal in wire JSON")
-        if ch == "n":
-            if self.text.startswith("null", self.pos):
-                self.pos += 4
-                return _JVal("null", None)
-            raise _not_source_error("internal", {}, "invalid literal in wire JSON")
-        if ch == "-" or ("0" <= ch <= "9"):
-            return self._parse_number()
-        raise _not_source_error("internal", {}, f"unexpected character {ch!r} in wire JSON")
 
     def _parse_string(self) -> str:
         if self.pos >= self.n or self.text[self.pos] != '"':
@@ -1189,53 +1256,6 @@ class _WireJsonParser:
         if not math.isfinite(fval):
             raise _not_source_error("internal", {}, "non-finite number literal in wire JSON")
         return _JVal("float", fval, raw)
-
-    def _parse_array(self, depth: int) -> _JVal:
-        self.pos += 1  # '['
-        self._skip_ws()
-        items: list[_JVal] = []
-        if self.pos < self.n and self.text[self.pos] == "]":
-            self.pos += 1
-            return _JVal("arr", items)
-        while True:
-            items.append(self._parse_value(depth))
-            self._skip_ws()
-            if self.pos < self.n and self.text[self.pos] == ",":
-                self.pos += 1
-                continue
-            if self.pos < self.n and self.text[self.pos] == "]":
-                self.pos += 1
-                return _JVal("arr", items)
-            raise _not_source_error("internal", {}, "expected ',' or ']' in wire JSON array")
-
-    def _parse_object(self, depth: int) -> _JVal:
-        self.pos += 1  # '{'
-        self._skip_ws()
-        obj: dict[str, _JVal] = {}
-        if self.pos < self.n and self.text[self.pos] == "}":
-            self.pos += 1
-            return _JVal("obj", obj)
-        while True:
-            self._skip_ws()
-            if self.pos >= self.n or self.text[self.pos] != '"':
-                raise _not_source_error("internal", {}, "expected string key in wire JSON object")
-            key = self._parse_string()
-            if key in obj:
-                raise _not_source_error("internal", {}, f"duplicate JSON object key: {key}")
-            self._skip_ws()
-            if self.pos >= self.n or self.text[self.pos] != ":":
-                raise _not_source_error("internal", {}, "expected ':' after key in wire JSON object")
-            self.pos += 1
-            val = self._parse_value(depth)
-            obj[key] = val
-            self._skip_ws()
-            if self.pos < self.n and self.text[self.pos] == ",":
-                self.pos += 1
-                continue
-            if self.pos < self.n and self.text[self.pos] == "}":
-                self.pos += 1
-                return _JVal("obj", obj)
-            raise _not_source_error("internal", {}, "expected ',' or '}' in wire JSON object")
 
 
 def _expect_exact_keys(obj: dict[str, _JVal], required: Sequence[str], optional: Sequence[str] = ()) -> None:
@@ -1793,7 +1813,7 @@ def _format_wire_float(f: float) -> str:
     )
 
 
-def _write_node_value(
+def _write_node(
     w: _BoundedWriter,
     node: Node,
     with_spans: bool,
@@ -1820,21 +1840,16 @@ def _write_node_value(
     w.push_string(node.kind)
 
     if node.kind == "null":
-        return
-
-    if node.kind == "bool":
+        pass
+    elif node.kind == "bool":
         w.push_raw(',"value":true' if node.value else ',"value":false')
-        return
-
-    if node.kind == "int":
+    elif node.kind == "int":
         iv = node.value
         if type(iv) is not int or iv < I128_MIN or iv > U128_MAX:
             raise _not_source_error("integer_out_of_range", {}, "integer outside 128-bit range")
         w.push_raw(',"value":')
         w.push_string(str(iv))
-        return
-
-    if node.kind == "float":
+    elif node.kind == "float":
         fval = float(node.value)
         bits_hex = node.bits if node.bits is not None else _float_to_bits_hex(fval)
         if not _HEX16_LOWER_RE.match(bits_hex):
@@ -1845,14 +1860,10 @@ def _write_node_value(
         ) != 0
         canonical_bits = CANONICAL_NAN_BITS if (math.isnan(fval) or is_nan_bits) else bits_hex
         w.push_raw(f',"bits":"{canonical_bits}"')
-        return
-
-    if node.kind == "string":
+    elif node.kind == "string":
         w.push_raw(',"value":')
         w.push_string(node.value)
-        return
-
-    if node.kind == "sequence":
+    elif node.kind == "sequence":
         if depth + 1 > st.opts.limits.max_depth:
             raise _not_source_error(
                 "limit_exceeded",
@@ -1876,9 +1887,7 @@ def _write_node_value(
         w.push_raw("]")
         st.active_ids.remove(seq_id)
         st.active_ids.remove(nid)
-        return
-
-    if node.kind == "mapping":
+    elif node.kind == "mapping":
         if depth + 1 > st.opts.limits.max_depth:
             raise _not_source_error(
                 "limit_exceeded",
@@ -1924,9 +1933,7 @@ def _write_node_value(
         w.push_raw("]")
         st.active_ids.remove(map_id)
         st.active_ids.remove(nid)
-        return
-
-    if node.kind == "tagged":
+    elif node.kind == "tagged":
         t: Tagged = node.value
         if not isinstance(t, Tagged) or not t.tag.uri:
             raise _not_source_error("internal", {}, "tagged node must carry a non-empty Tag.uri")
@@ -1944,19 +1951,9 @@ def _write_node_value(
         w.push_raw('},"value":')
         _write_node(w, t.value, with_spans, st, depth)
         st.active_ids.remove(nid)
-        return
+    else:
+        raise _not_source_error("internal", {}, f"unknown Node kind: {node.kind}")
 
-    raise _not_source_error("internal", {}, f"unknown Node kind: {node.kind}")
-
-
-def _write_node(
-    w: _BoundedWriter,
-    node: Node,
-    with_spans: bool,
-    st: _EncodeState,
-    depth: int,
-) -> None:
-    _write_node_value(w, node, with_spans, st, depth)
     w.push_raw(',"span":')
     if with_spans and node.span is not None:
         w.push_span(node.span)
@@ -2199,8 +2196,8 @@ def encode_error(
             w.push_raw("}")
         elif p.kind == "key" and p.key is not None:
             w.push_raw('{"key":')
-            _write_node_value(w, p.key, False, st, 0)
-            w.push_raw(',"span":null,"via":null,"tag_start":null}}')
+            _write_node(w, p.key, False, st, 0)
+            w.push_raw("}")
         else:
             raise _not_source_error("internal", {}, "invalid PathSegment")
 
