@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 prefix_only=false
-pin="$root/conformance/pins/pin-6b1266e.json"
+pin="$root/conformance/pins/pin-b52fcd0.json"
 if [ "${1:-}" = --prefix-only ] && [ "$#" -eq 1 ]; then
   prefix_only=true
 else
@@ -54,6 +54,9 @@ if [ -f "$corpus/manifests/profiles/yamlprims-core-depth128.r1.json" ]; then
   v14_flags=()
   if [ -f "$corpus/manifests/profiles/yamlprims-core-depth255.r1.json" ]; then
     v14_flags=(--require-depth255)
+  fi
+  if [ -f "$corpus/manifests/profiles/yamlprims-core.r5.json" ]; then
+    v14_flags+=(--require-r5)
   fi
   "$python" -I conformance/scripts/structcorpus_probes_v14.py ${v14_flags[@]+"${v14_flags[@]}"} "$corpus" "$driver" > "$out/probes-v14.tsv"
 fi
