@@ -80,8 +80,9 @@ PY
 fixture_repo() {
 	local repo="$1" version="$2" spec_version="${3:-1.4}"
 	mkdir -p "$repo/scripts" "$repo/config/release" "$repo/docs/security" "$repo/keys"
-	cp "$fixture_root"/scripts/{release-workflow-pin.py,release-tag-common.sh,release-tag-operator.sh,release-record-anchor.sh,release-decernor.sh,release-prepare-tag-message.py,release-tag-body.sh,verify-pinned-tag.sh,validate-release-anchors.sh,release-insert-anchors.sh,install-release-anchors.sh,release-validate-pin.sh,verify-public-keys.sh} "$repo/scripts/"
+	cp "$fixture_root"/scripts/{release-workflow-pin.py,yaml_json.py,release-tag-common.sh,release-tag-operator.sh,release-record-anchor.sh,release-decernor.sh,release-prepare-tag-message.py,release-tag-body.sh,verify-pinned-tag.sh,validate-release-anchors.sh,release-insert-anchors.sh,install-release-anchors.sh,release-validate-pin.sh,verify-public-keys.sh} "$repo/scripts/"
 	cp "$fixture_root"/config/release/tagger-identity.txt "$repo/config/release/"
+	cp "$fixture_root"/config/yamlprims-cli.txt "$repo/config/"
 	printf '%s\n' "$version" >"$repo/VERSION"
 	printf '%s\n' "$spec_version" >"$repo/SPEC_VERSION"
 	fixture_workflow_pin "$repo"

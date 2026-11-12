@@ -29,8 +29,9 @@ git -C "$src" config user.name '3 Leaps Infosec Team'
 git -C "$src" config user.email infosec@3leaps.net
 mkdir -p "$src/scripts" "$src/docs/security" "$src/keys" "$src/config/release"
 verifier=(verify-pinned-tag.sh validate-release-anchors.sh release-verify-published-tag.sh release-tag-common.sh release-gh.sh release-workflow-pin.py
-    release-decernor.sh release-insert-anchors.sh install-release-anchors.sh)
+    yaml_json.py release-decernor.sh release-insert-anchors.sh install-release-anchors.sh)
 for script in ${verifier[@]+"${verifier[@]}"}; do cp "$root/scripts/$script" "$src/scripts/"; done
+cp "$root/config/yamlprims-cli.txt" "$src/config/"
 cp "$root/config/release/tagger-identity.txt" "$src/config/release/"
 printf '1.2.3\n' >"$src/VERSION"
 printf 'module github.com/3leaps/yamlprims\n' >"$src/go.mod"

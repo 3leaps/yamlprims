@@ -1,0 +1,33 @@
+# The yamlprims release CLI reads and writes YAML for the workflow checkers
+# (scripts/release-workflow-pin.py, scripts/release-workflow-permissions.py)
+# through scripts/yaml_json.py. The checkers use a published release, never
+# this working tree's build, so the code under review does not vet its own
+# release workflows. It is a host tool for CI and release validation only:
+# nothing built or shipped from this repository depends on it.
+#
+# minimum: the oldest version the version probe accepts. Releases through
+# 0.2.0 have no --version flag and probe as 0.1.0; the binary digests below
+# identify the release, and scripts/yaml_json.py checks the emit writer.
+minimum 0.1.0
+#
+# CI download (scripts/ci-install-yamlprims.sh): the release, then one line
+# per runner archive, "<sha256>  <archive>", each digest as listed in that
+# release's SHA256SUMS (signed with the release minisign key,
+# docs/security/yamlprims-minisign.pub).
+# https://github.com/3leaps/yamlprims/releases/tag/v0.2.0
+release 0.2.0
+8e50c7e11356eff115d54c245d7c978c59ec10efa19b0d2d06aa0d97affed028  yamlprims-0.2.0-darwin-arm64.tar.gz
+e7ea4f32a8fe318053840a2d4828b26da4e633fe1f7bfeb3c7f3dbb81b916c95  yamlprims-0.2.0-linux-amd64.tar.gz
+2bdc9ce2545226e1d03606d194d76110a71c8a5c1b3688878cb0622fb22d3763  yamlprims-0.2.0-linux-arm64.tar.gz
+c3dbfbfeb676f118b7ef06d5936e4f78856de8a4bc572b2473fb4b274a9a8e6c  yamlprims-0.2.0-windows-amd64.zip
+9c421521e841f3793bbfb8fb7f0b9a2733364ea1bdcb34e50e1c7eaa197c7ed7  yamlprims-0.2.0-windows-arm64.zip
+#
+# The trust anchor for the binary itself: the SHA-256 of the executable in
+# each archive above (yamlprims, or yamlprims.exe in the zips). The checkers
+# copy the file named by YAMLPRIMS_YAML_BIN and run the copy only if its
+# digest is listed here for a platform the host runs.
+binary darwin-arm64 4d419c869a592ce5b43ac68449301819ad50dd843d63abe9f02f624ac9ca13b3
+binary linux-amd64 26db1a59832042ef4b5c51c964105470a5299035f400cd9c3fe2915e7feec65a
+binary linux-arm64 52514d4b1269a6377bf7398c9e6f243e1bb1ee9bca13d2d7444c614e1f73537b
+binary windows-amd64 2cf92d19af2a29051d32c8bba98c64599889ff728f4f2aa406e90cd7a57c92a0
+binary windows-arm64 8376e5aa25753b82e9b7079027cbd3c0785ebda1ea49a63912cb3d2aac3f37c2

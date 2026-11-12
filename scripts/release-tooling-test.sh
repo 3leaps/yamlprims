@@ -5,8 +5,9 @@
 # access is the crate publication test's Cargo, which reads the public
 # crates.io index and dependency sources (unauthenticated) and uploads to a
 # local test registry. Needs gpg, minisign, git, jq, cargo with the MSRV
-# toolchain, python3 >= 3.11 and decernor >= 0.1.8 (YAMLPRIMS_DECERNOR_BIN, or
-# decernor on PATH for tests).
+# toolchain, python3 >= 3.11, decernor >= 0.1.8 (YAMLPRIMS_DECERNOR_BIN, or
+# decernor on PATH for tests) and the pinned yamlprims release CLI
+# (YAMLPRIMS_YAML_BIN; config/yamlprims-cli.txt).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 # Test imports must not leave bytecode in the source tree.

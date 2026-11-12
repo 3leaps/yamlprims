@@ -18,7 +18,7 @@ signature is not independent authentication.
 | `keys/expected-fingerprints.txt` | Two lines: the OpenPGP primary fingerprint, then the minisign public-blob SHA-256 |
 | `keys/expected-fingerprints.ndjson` | The checker's fingerprint records for the same two keys |
 | `config/release/decernor-ci-sha256.txt` | Digest and filename of the checker archive the tag workflow downloads |
-| `config/ci-python-requirements.txt` | Python packages the CI gates import, pinned by version and source-archive hash |
+| `config/yamlprims-cli.txt` | The yamlprims release CLI the workflow checkers run: release archive and per-platform binary SHA-256 digests |
 | `config/release/release-workflow.sha256` | Digests of every reviewed workflow and local action (workflows must be read-only) |
 
 Release staging extracts the public keys from the verified tagged commit as
