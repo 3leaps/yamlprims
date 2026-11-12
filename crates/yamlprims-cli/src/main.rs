@@ -10,7 +10,7 @@ use yamlprims::{
     Node, Options, Site, Value, WireEnvelope,
 };
 
-const USAGE: &str = "usage: yamlprims [--merge=reject|apply|as_key] check FILE...\n       yamlprims [--merge=reject|apply|as_key] dump [--plain|--ijson] [--max-output-bytes=N] FILE\n       yamlprims [--merge=reject|apply|as_key] emit [--from-wire|--from-plain] [--compat-quoting=yaml11-safe|core-only] [--max-output-bytes=N] FILE\nUse - for stdin, and -- before filenames beginning with -.";
+const USAGE: &str = "usage: yamlprims [--merge=reject|apply|as_key] check FILE...\n       yamlprims [--merge=reject|apply|as_key] dump [--plain|--ijson] [--max-output-bytes=N] FILE\n       yamlprims [--merge=reject|apply|as_key] emit [--from-wire|--from-plain] [--compat-quoting=yaml11-safe|core-only] [--max-output-bytes=N] FILE\n       yamlprims --help|-h\n       yamlprims --version|-V\nUse - for stdin, and -- before filenames beginning with -.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -875,10 +875,23 @@ fn run(command: Command) -> u8 {
     status
 }
 
+fn version_line() -> String {
+    format!("yamlprims {}", env!("CARGO_PKG_VERSION"))
+}
+
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && (args[0] == "--help" || args[0] == "-h") {
         return ExitCode::from(match write_line(io::stdout().lock(), USAGE) {
+            Ok(()) => 0,
+            Err(e) => {
+                diagnostic(format!("cannot write stdout: {e}"));
+                2
+            }
+        });
+    }
+    if args.len() == 1 && (args[0] == "--version" || args[0] == "-V") {
+        return ExitCode::from(match write_line(io::stdout().lock(), &version_line()) {
             Ok(()) => 0,
             Err(e) => {
                 diagnostic(format!("cannot write stdout: {e}"));

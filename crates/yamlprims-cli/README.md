@@ -40,8 +40,10 @@ Current command behavior:
   begin with `-`. The path `-` is always stdin.
 - `--merge=reject|apply|as_key` selects the core merge policy. Reject is the
   default, and both parsing passes remain strict. Unknown or repeated options,
-  extra dump inputs, and `--plain` on `check` are usage errors. `--help` prints
-  usage successfully; invalid usage prints to stderr and exits 2.
+  extra dump inputs, and `--plain` on `check` are usage errors. `--help` (or `-h`)
+  prints usage successfully. `--version` (or `-V`), as the only argument,
+  prints `yamlprims <version>` to stdout and exits 0; combined with any other
+  argument it is a usage error. Invalid usage prints to stderr and exits 2.
 
 Input reads stop at the core's default raw-input limit plus one byte, allowing
 its size gate to report the error before UTF-8 validation. Core defaults bound
