@@ -83,6 +83,39 @@ class RequalifyTests(unittest.TestCase):
                 self.assertEqual(len(calls), 4 if fail_go_phase == "test" else 5)
                 self.assertFalse("prefix passed" in result.stdout)
 
+    def test_v14_probes_without_r5_profiles_omit_require_r5(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self._make_fake_cargo(tmp)
+            py = self._make_fake_python(tmp)
+            corpus = tmp / "corpus"
+            (corpus / "manifests/profiles").mkdir(parents=True)
+            (corpus / "manifests/profiles/yamlprims-core-depth128.r1.json").write_text("{}\n")
+            (corpus / "manifests/profiles/yamlprims-core-depth255.r1.json").write_text("{}\n")
+            hydrated = tmp / "hydrated"
+            hydrated.mkdir()
+            py_log = tmp / "py.log"
+            env = dict(
+                os.environ,
+                PATH=str(tmp) + os.pathsep + os.environ["PATH"],
+                PYTHON=str(py),
+                CALL_LOG=str(tmp / "cargo.log"),
+                PY_LOG=str(py_log),
+            )
+            result = subprocess.run(
+                ["bash", str(ROOT / "conformance/requalify.sh"), str(corpus), str(hydrated), str(tmp / "evidence")],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            v14 = [c for c in py_log.read_text().splitlines() if "structcorpus_probes_v14.py" in c]
+            self.assertEqual(len(v14), 2, v14)
+            for call in v14:
+                self.assertIn("structcorpus_probes_v14.py --require-depth255 ", call)
+                self.assertNotIn("--require-r5", call)
+
     def test_default_pin_and_v14_probes_when_depth128_profile_present(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)

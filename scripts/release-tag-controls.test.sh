@@ -289,11 +289,20 @@ git -C "$repo" config --unset gpg.program
 
 # Post-push anchor exports name the annotated object and its commit, and refuse
 # absent or lightweight tags.
-expect_fail_with 'tag v9.9.8 is absent' call 'tag_print_anchor_exports v9.9.8'
+zero=0000000000000000000000000000000000000000
+expect_fail_with 'the verified object for v9.9.8 is required' call 'tag_print_anchor_exports v9.9.8'
+expect_fail_with 'tag v9.9.8 is absent' call "tag_print_anchor_exports v9.9.8 $zero"
 git -C "$repo" tag lw-anchor-probe HEAD
-expect_fail_with 'lw-anchor-probe must be an annotated tag' call 'tag_print_anchor_exports lw-anchor-probe'
+lw="$(git -C "$repo" rev-parse refs/tags/lw-anchor-probe)"
+expect_fail_with 'lw-anchor-probe must be an annotated tag' call "tag_print_anchor_exports lw-anchor-probe $lw"
 git -C "$repo" -c user.name=probe -c user.email=probe@example.invalid tag -a -m probe annotated-anchor-probe HEAD
-exports_out="$(call 'tag_print_anchor_exports annotated-anchor-probe')"
+verified="$(git -C "$repo" rev-parse refs/tags/annotated-anchor-probe)"
+# A tag moved to another annotated object after verification is refused.
+git -C "$repo" -c user.name=probe -c user.email=probe@example.invalid tag -f -a -m moved annotated-anchor-probe HEAD >/dev/null
+expect_fail_with 'annotated-anchor-probe moved after verification' call "tag_print_anchor_exports annotated-anchor-probe $verified"
+git -C "$repo" -c user.name=probe -c user.email=probe@example.invalid tag -f -a -m probe2 annotated-anchor-probe HEAD >/dev/null
+verified="$(git -C "$repo" rev-parse refs/tags/annotated-anchor-probe)"
+exports_out="$(call "tag_print_anchor_exports annotated-anchor-probe $verified")"
 [[ "$(sed -n 2p <<<"$exports_out")" == "export YAMLPRIMS_EXPECTED_TAG_OBJECT=$(git -C "$repo" rev-parse refs/tags/annotated-anchor-probe)" ]]
 [[ "$(sed -n 3p <<<"$exports_out")" == "export YAMLPRIMS_EXPECTED_COMMIT=$(git -C "$repo" rev-parse HEAD)" ]]
 [[ "$(wc -l <<<"$exports_out" | tr -d ' ')" == 3 ]]

@@ -440,12 +440,22 @@ tag_verify_object() {
 
 # Print the shell exports that bind the post-push ceremony (release-record-anchor
 # and the post-tag fetch/publish steps) to this tag's annotated object and
-# commit. The values are read from the local verified tag; the operator compares
-# them with the approval record before using them.
+# commit. VERIFIED is the object the caller already verified; the tag must
+# still name exactly it, so a ref moved after verification is refused rather
+# than printed. The operator compares the values with the approval record.
+# Usage: tag_print_anchor_exports TAG VERIFIED_OBJECT
 tag_print_anchor_exports() {
-	local tag="$1" object commit
+	local tag="$1" verified="${2:-}" object commit
+	[[ "$verified" =~ ^[0-9a-f]{40}$ ]] || {
+		tag_die "the verified object for $tag is required"
+		return 1
+	}
 	object="$(git rev-parse --verify --quiet "refs/tags/$tag")" || {
 		tag_die "tag $tag is absent"
+		return 1
+	}
+	[[ "$object" == "$verified" ]] || {
+		tag_die "tag $tag moved after verification ($verified -> $object)"
 		return 1
 	}
 	[[ "$(git cat-file -t "$object")" == tag ]] || {

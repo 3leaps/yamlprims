@@ -22,12 +22,24 @@ _here = os.path.dirname(os.path.abspath(__file__))
 _untrusted = {os.path.realpath(p) for p in (_here, os.getcwd())}
 sys.path[:] = [p for p in sys.path if p not in ("", ".") and os.path.realpath(p) not in _untrusted]
 sys.dont_write_bytecode = True
-import importlib.util  # noqa: E402
 import re  # noqa: E402
+import types  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location("yamlprims_yaml_json", os.path.join(_here, "yaml_json.py"))
-yaml_json = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(yaml_json)
+
+def _load_reader():
+    """Compile and run the reader from its source bytes. Never through the
+    import system, which would execute a cached .pyc from the untracked
+    scripts/__pycache__ whenever its recorded source size and mtime match."""
+    path = os.path.join(_here, "yaml_json.py")
+    with open(path, "rb") as handle:
+        source = handle.read()
+    module = types.ModuleType("yamlprims_yaml_json")
+    module.__file__ = path
+    exec(compile(source, path, "exec", dont_inherit=True), module.__dict__)
+    return module
+
+
+yaml_json = _load_reader()
 
 ACTIONS = {"actions/checkout", "actions/upload-artifact", "dtolnay/rust-toolchain"}
 RUNNERS = {"ubuntu-24.04", "macos-15", "windows-2025", "ubuntu-latest-arm64-s", "windows-latest-arm64-s"}

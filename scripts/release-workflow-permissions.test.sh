@@ -129,6 +129,45 @@ if python3 -B -E "$root/scripts/release-workflow-permissions.py" check "$scratch
 	exit 1
 fi
 grep -q 'duplicate_key' "$scratch/out" || { cat "$scratch/out" >&2; exit 1; }
+# A forged bytecode cache for the reader is never executed: a .pyc in the
+# untracked scripts/__pycache__ whose recorded source size and mtime match
+# yaml_json.py, and whose code exits 0, must not let any gate mode pass.
+forge="$scratch/forge"
+mkdir -p "$forge/scripts" "$forge/config"
+cp "$root/scripts/release-workflow-pin.py" "$root/scripts/release-workflow-permissions.py" "$root/scripts/yaml_json.py" "$forge/scripts/"
+cp "$root/config/yamlprims-cli.txt" "$forge/config/"
+python3 -I -B - "$forge/scripts/yaml_json.py" <<'PY'
+import importlib.util, os, py_compile, sys
+real = sys.argv[1]
+st = os.stat(real)
+body = b"import sys\nsys.exit(0)\n"
+if len(body) > st.st_size:
+    raise SystemExit("forge body larger than the reader")
+evil = real + ".forged"
+with open(evil, "wb") as handle:
+    handle.write(body + b"#" * (st.st_size - len(body) - 1) + b"\n")
+os.utime(evil, ns=(st.st_atime_ns, st.st_mtime_ns))
+cache = importlib.util.cache_from_source(real)
+os.makedirs(os.path.dirname(cache), exist_ok=True)
+py_compile.compile(evil, cfile=cache, dfile=real, doraise=True,
+                   invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+os.remove(evil)
+os.utime(real, ns=(st.st_atime_ns, st.st_mtime_ns))
+PY
+[[ -n "$(find "$forge/scripts/__pycache__" -name 'yaml_json.*.pyc')" ]] || { echo 'error: forged cache not written' >&2; exit 1; }
+forged_modes=(
+	"python3 -B -E $forge/scripts/release-workflow-pin.py check"
+	"python3 -B -E $forge/scripts/release-workflow-pin.py verify-commit HEAD"
+	"python3 -B -E $forge/scripts/release-workflow-permissions.py check $root/.github/workflows/release.yml"
+	"python3 -B -E $forge/scripts/release-workflow-permissions.py mutations $root/.github/workflows/release.yml"
+)
+for mode in ${forged_modes[@]+"${forged_modes[@]}"}; do
+	# shellcheck disable=SC2086 # Each mode is a word list built above.
+	if (cd "$repo" && env -u YAMLPRIMS_YAML_BIN ${mode}) >"$scratch/out" 2>&1; then
+		echo "error: a forged reader bytecode cache passed: $mode" >&2
+		exit 1
+	fi
+done
 # Without an authenticated reader binary the checkers fail closed.
 for bad in "" relative/yamlprims "$scratch/absent" "$(command -v python3)"; do
 	if (cd "$root" && YAMLPRIMS_YAML_BIN="$bad" python3 -B -E scripts/release-workflow-pin.py check) >"$scratch/out" 2>&1; then

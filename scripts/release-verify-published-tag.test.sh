@@ -229,6 +229,19 @@ anchored() {
         ./scripts/release-verify-published-tag.sh)
 }
 anchored >/dev/null
+# The first, unbound verification (make release-verify-remote-tag) prints the
+# exports for release-record-anchor from the verified object; a bound run or
+# an anchor-file run prints none.
+unbound="$(cd "$op" && ./scripts/release-verify-published-tag.sh)"
+[[ "$(grep -c '^export ' <<<"$unbound")" == 2 ]]
+grep -qx "export YAMLPRIMS_EXPECTED_TAG_OBJECT=$anchor_object" <<<"$unbound"
+grep -qx "export YAMLPRIMS_EXPECTED_COMMIT=$anchor_commit" <<<"$unbound"
+for bound in "$(anchored)" "$(cd "$op" && YAMLPRIMS_ANCHOR_OUT="$scratch/anchor2" ./scripts/release-verify-published-tag.sh)"; do
+    if grep -q '^export ' <<<"$bound"; then
+        echo 'error: a bound verification printed anchor exports' >&2
+        exit 1
+    fi
+done
 # Same version, approved key, DIFFERENT target commit: fails before any ref change.
 printf 'other build\n' >>"$src/file"
 git -C "$src" add file
