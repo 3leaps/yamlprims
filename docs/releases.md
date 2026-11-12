@@ -44,7 +44,8 @@ make release-github-preflight
 make release-tag                 # interactive GPG pinentry; local tag only
 make release-verify-tag
 make release-push-tag            # explicit, single-tag push without force
-make release-verify-remote-tag   # matching object and GitHub verified status
+make release-verify-remote-tag   # matching object and GitHub verified status; prints the anchor exports
+make release-record-anchor       # needs YAMLPRIMS_EXPECTED_TAG_OBJECT, YAMLPRIMS_EXPECTED_COMMIT, YAMLPRIMS_RELEASE_ANCHOR_FILE
 ```
 
 The controls reject existing tags, lightweight tags, unexpected tag messages,

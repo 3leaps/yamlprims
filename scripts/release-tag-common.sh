@@ -437,3 +437,30 @@ tag_verify_object() {
 	fi
 	rm -f "$actual"
 }
+
+# Print the shell exports that bind the post-push ceremony (release-record-anchor
+# and the post-tag fetch/publish steps) to this tag's annotated object and
+# commit. The values are read from the local verified tag; the operator compares
+# them with the approval record before using them.
+tag_print_anchor_exports() {
+	local tag="$1" object commit
+	object="$(git rev-parse --verify --quiet "refs/tags/$tag")" || {
+		tag_die "tag $tag is absent"
+		return 1
+	}
+	[[ "$(git cat-file -t "$object")" == tag ]] || {
+		tag_die "$tag must be an annotated tag"
+		return 1
+	}
+	commit="$(git rev-parse --verify --quiet "${object}^{commit}")" || {
+		tag_die "$tag does not resolve to a commit"
+		return 1
+	}
+	[[ "$object" =~ ^[0-9a-f]{40}$ && "$commit" =~ ^[0-9a-f]{40}$ ]] || {
+		tag_die "$tag object or commit is not a 40-hex SHA-1"
+		return 1
+	}
+	printf '# %s: compare with the approval record, then export for release-record-anchor:\n' "$tag"
+	printf 'export YAMLPRIMS_EXPECTED_TAG_OBJECT=%s\n' "$object"
+	printf 'export YAMLPRIMS_EXPECTED_COMMIT=%s\n' "$commit"
+}

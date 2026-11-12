@@ -24,6 +24,11 @@ verified against the pinned Sigstore production trust root:
   - in-toto Statement v1 subject digest and SLSA workflow identity.
 Pass --bootstrap-no-provenance only for a first-time manual bootstrap upload
 before Trusted Publishing is configured (refused in CI).
+
+Polling: YAMLPRIMS_REGISTRY_POLL_ATTEMPTS (default 12) requests per URL,
+YAMLPRIMS_REGISTRY_POLL_SLEEP (default 10) seconds between them. npm can keep
+a successful Trusted Publishing upload in its post-upload validation queue
+for many minutes; raise the attempts or re-run this check once it finishes.
 """
 
 import base64
@@ -936,12 +941,19 @@ def read_manifest(path: pathlib.Path, width: int) -> dict[str, str]:
     return entries
 
 
+NPM_VALIDATING_HINT = (
+    "if npm publish succeeded, npm may still be validating the upload (this has taken over "
+    "15 minutes); re-run the registry verification later or raise YAMLPRIMS_REGISTRY_POLL_ATTEMPTS"
+)
+
+
 def fetch_json_with_retry(
     url: str,
     label: str,
     attempts: int,
     sleep_sec: float,
     accept: str = "application/json",
+    not_found_hint: str = "",
 ) -> dict:
     last_err = ""
     for attempt in range(1, attempts + 1):
@@ -960,7 +972,8 @@ def fetch_json_with_retry(
             if err.code == 404 and attempt < attempts:
                 time.sleep(sleep_sec)
                 continue
-            fail(f"{label} unavailable ({last_err}) at {url}")
+            hint = f"; {not_found_hint}" if err.code == 404 and not_found_hint else ""
+            fail(f"{label} unavailable ({last_err}) at {url} after {attempt} attempt(s){hint}")
         except (OSError, ValueError) as err:
             fail(f"{label} request failed at {url}: {err}")
     fail(f"{label} unavailable ({last_err}) at {url}")
@@ -1333,6 +1346,7 @@ def verify_npm(
         f"npm @3leaps/yamlprims@{version}",
         attempts,
         sleep_sec,
+        not_found_hint=NPM_VALIDATING_HINT,
     )
     if doc.get("name") != "@3leaps/yamlprims" or doc.get("version") != version:
         fail(f"npm metadata mismatch: name={doc.get('name')!r} version={doc.get('version')!r}")
@@ -1379,10 +1393,13 @@ def main() -> None:
     if scope not in ("all", "pypi", "npm"):
         fail(f"unknown registry scope {scope!r} (all, pypi, or npm)")
 
-    attempts = int(os.environ.get("YAMLPRIMS_REGISTRY_POLL_ATTEMPTS", "12"))
-    sleep_sec = float(os.environ.get("YAMLPRIMS_REGISTRY_POLL_SLEEP", "10"))
-    if attempts < 1 or sleep_sec < 0:
-        fail("invalid poll settings")
+    try:
+        attempts = int(os.environ.get("YAMLPRIMS_REGISTRY_POLL_ATTEMPTS", "12"))
+        sleep_sec = float(os.environ.get("YAMLPRIMS_REGISTRY_POLL_SLEEP", "10"))
+    except ValueError:
+        fail("invalid poll settings: YAMLPRIMS_REGISTRY_POLL_ATTEMPTS must be an integer, YAMLPRIMS_REGISTRY_POLL_SLEEP a number")
+    if not (1 <= attempts <= 1000) or not (0 <= sleep_sec <= 600):
+        fail("invalid poll settings: need 1 <= attempts <= 1000 and 0 <= sleep <= 600 seconds")
 
     sha256s = read_manifest(stage / "SHA256SUMS", 64)
     sha512s = read_manifest(stage / "SHA512SUMS", 128)

@@ -752,6 +752,23 @@ run_verify all
 run_verify pypi
 run_verify npm
 
+# npm metadata still 404 after every attempt names the validation queue and the knob.
+mv "$scratch/http/npm/@3leaps/yamlprims/$version" "$scratch/npm.hidden.json"
+refused npm "npm @3leaps/yamlprims@$version unavailable \(HTTP 404\) .* after 2 attempt\(s\); if npm publish succeeded, npm may still be validating .*YAMLPRIMS_REGISTRY_POLL_ATTEMPTS"
+mv "$scratch/npm.hidden.json" "$scratch/http/npm/@3leaps/yamlprims/$version"
+# Poll settings are validated, not parsed with a traceback.
+for bad in "YAMLPRIMS_REGISTRY_POLL_ATTEMPTS=x" "YAMLPRIMS_REGISTRY_POLL_ATTEMPTS=0" "YAMLPRIMS_REGISTRY_POLL_SLEEP=-1"; do
+	if env "$bad" python3 -I -B "$root/scripts/release-verify-registries.py" "$stage" "$version" npm >"$scratch/out" 2>&1; then
+		echo "error: accepted $bad" >&2
+		exit 1
+	fi
+	if ! grep -q 'invalid poll settings' "$scratch/out" || grep -q Traceback "$scratch/out"; then
+		echo "error: $bad not reported as invalid poll settings" >&2
+		cat "$scratch/out" >&2
+		exit 1
+	fi
+done
+
 # Without YAMLPRIMS_SIGSTORE_TEST_ROOT, synthetic test CA certs must be rejected by the pinned production Fulcio CA root!
 if YAMLPRIMS_PYPI_API_URL="$pypi_base" \
 	YAMLPRIMS_REGISTRY_POLL_ATTEMPTS=1 \
@@ -1068,6 +1085,17 @@ else
 fi
 SH
 chmod +x "$fixture/scripts/"*.sh "$scratch/fake-decernor"
+# Operators source the helper from interactive shells; zsh has no BASH_REMATCH.
+if command -v zsh >/dev/null 2>&1; then
+	got="$(YAMLPRIMS_DECERNOR_BIN="$scratch/fake-decernor" zsh -c '. "$1" && resolve_release_decernor && print -r -- "$RELEASE_DECERNOR_BIN"' zsh "$root/scripts/release-decernor.sh")" || {
+		echo 'error: release-decernor.sh does not resolve when sourced from zsh' >&2
+		exit 1
+	}
+	[[ "$got" == "$scratch/fake-decernor" ]] || {
+		echo "error: zsh-sourced release-decernor.sh resolved '$got'" >&2
+		exit 1
+	}
+fi
 git -C "$fixture" add -A
 git -C "$fixture" commit -qm "fixture v$version"
 git -C "$fixture" tag "v$version"

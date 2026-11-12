@@ -20,3 +20,6 @@ for tag in ${tag_names[@]+"${tag_names[@]}"}; do
 done
 "$tag_root/scripts/verify-pinned-tag.sh" --published
 echo '[ok] remote tags match the verified local tags'
+for tag in ${tag_names[@]+"${tag_names[@]}"}; do
+	tag_print_anchor_exports "$tag"
+done

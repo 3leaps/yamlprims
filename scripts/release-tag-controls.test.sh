@@ -287,4 +287,16 @@ grep -q "note: git config gpg.program is '/nonexistent/wrapper'; release signing
 git -C "$repo" config --unset gpg.format
 git -C "$repo" config --unset gpg.program
 
+# Post-push anchor exports name the annotated object and its commit, and refuse
+# absent or lightweight tags.
+expect_fail_with 'tag v9.9.8 is absent' call 'tag_print_anchor_exports v9.9.8'
+git -C "$repo" tag lw-anchor-probe HEAD
+expect_fail_with 'lw-anchor-probe must be an annotated tag' call 'tag_print_anchor_exports lw-anchor-probe'
+git -C "$repo" -c user.name=probe -c user.email=probe@example.invalid tag -a -m probe annotated-anchor-probe HEAD
+exports_out="$(call 'tag_print_anchor_exports annotated-anchor-probe')"
+[[ "$(sed -n 2p <<<"$exports_out")" == "export YAMLPRIMS_EXPECTED_TAG_OBJECT=$(git -C "$repo" rev-parse refs/tags/annotated-anchor-probe)" ]]
+[[ "$(sed -n 3p <<<"$exports_out")" == "export YAMLPRIMS_EXPECTED_COMMIT=$(git -C "$repo" rev-parse HEAD)" ]]
+[[ "$(wc -l <<<"$exports_out" | tr -d ' ')" == 3 ]]
+git -C "$repo" tag -d lw-anchor-probe annotated-anchor-probe >/dev/null
+
 echo '[ok] tag input controls passed'
