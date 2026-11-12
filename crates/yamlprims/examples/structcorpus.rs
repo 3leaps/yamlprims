@@ -19,12 +19,13 @@
 //! without `limits` runs with the defaults.
 //!
 //! Row status:
-//! - `target`: revision 4 policy profiles, `yamlprims-core-depth128` r1 and
-//!   `yamlprims-core-entries2` r1 cite spec 1.4; revision 3 profiles,
+//! - `target`: revision 5 policy profiles cite spec 1.5 (the source-loader policy of revision
+//!   4); revision 4 policy profiles, `yamlprims-core-depth128` r1, `yamlprims-core-depth255`
+//!   r1 and `yamlprims-core-entries2` r1 cite spec 1.4; revision 3 profiles,
 //!   `yamlprims-core-limits` r2 and `yamlprims-core-stress` r1 cite spec 1.3; revision 2
-//!   profiles and `yamlprims-core-limits` r1 cite spec 1.1. The candidate implements 1.4,
-//!   which restates 1.3 and 1.1 apart from the profile-bound records that exercise the newer
-//!   revisions.
+//!   profiles and `yamlprims-core-limits` r1 cite spec 1.1. The candidate implements 1.5,
+//!   which keeps the 1.4 source-loader rules; 1.4 restates 1.3 and 1.1 apart from the
+//!   profile-bound records that exercise the newer revisions.
 //! - `historical`: revision 1 profiles cite spec 1.0 (lenient flow indentation). The driver
 //!   runs them under the current strict target: they are historical expectations checked
 //!   against the candidate, not a qualified 1.0 configuration.
@@ -268,6 +269,39 @@ fn profiles() -> Vec<Profile> {
             "target",
             MergeKeys::Reject,
             "reject",
+            true,
+        ),
+        // Spec 1.5 (DDR-0013): source-loader policy fields unchanged from r4.
+        p(
+            "yamlprims-core",
+            5,
+            "target",
+            MergeKeys::Reject,
+            "reject",
+            true,
+        ),
+        p(
+            "yamlprims-core-stream",
+            5,
+            "target",
+            MergeKeys::Reject,
+            "reject",
+            false,
+        ),
+        p(
+            "yamlprims-core-merge-apply",
+            5,
+            "target",
+            MergeKeys::Apply,
+            "apply",
+            true,
+        ),
+        p(
+            "yamlprims-core-merge-as-key",
+            5,
+            "target",
+            MergeKeys::AsKey,
+            "plain-key",
             true,
         ),
     ]

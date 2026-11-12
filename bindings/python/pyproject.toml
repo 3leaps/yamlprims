@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "yamlprims"
-version = "0.2.0"
+version = "0.2.1"
 description = "YAML 1.2.2 Core Schema value loader, strict wire decoder and canonical encoder (yamlprims-value/1)"
 readme = "README.md"
 requires-python = ">=3.10"

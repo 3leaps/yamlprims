@@ -1,7 +1,7 @@
 # Specification and code releases
 
 Specification tags use `spec-v<SPEC_VERSION>` (governed by `SPEC_VERSION` and [RELEASE_NOTES.md](../RELEASE_NOTES.md)). Code and CLI releases use `v<VERSION>` (governed by `VERSION` and `docs/releases/v<VERSION>.md`).
-Tags `spec-v1.0` through `spec-v1.4` exist (`SPEC_VERSION` is `1.5`, preparing `spec-v1.5`). The current code release line is `0.2.0` (`VERSION` is `0.2.0`), shipping the Rust core crate (`yamlprims` on crates.io), the pure-Go twin (`github.com/3leaps/yamlprims/yaml`), the TypeScript WebAssembly package (`@3leaps/yamlprims` on npm), the Python `abi3` wheels (`yamlprims` on PyPI), and the multi-platform CLI (`yamlprims`); see [docs/releases/v0.2.0.md](releases/v0.2.0.md) and [the build specification](build-spec.md).
+Tags `spec-v1.0` through `spec-v1.5` exist (`SPEC_VERSION` is `1.5`). The current code release line is `0.2.1` (`VERSION` is `0.2.1`), shipping the Rust core crate (`yamlprims` on crates.io), the pure-Go twin (`github.com/3leaps/yamlprims/yaml`), the TypeScript WebAssembly package (`@3leaps/yamlprims` on npm), the Python `abi3` wheels (`yamlprims` on PyPI), and the multi-platform CLI (`yamlprims`); see [docs/releases/v0.2.1.md](releases/v0.2.1.md) and [the build specification](build-spec.md).
 
 The immutable `spec-v1.1`, `spec-v1.2`, `spec-v1.3` and `spec-v1.4` specifications retain their original
 "Unreleased draft" wording inside the tagged specification file. Status updates on `main` do not replace those
@@ -32,7 +32,7 @@ The maintainer configures these environment variables in their signing terminal:
 | `YAMLPRIMS_MINISIGN_KEY`            | External Minisign secret key path (for `v<VERSION>` asset signs) |
 | `YAMLPRIMS_MINISIGN_PUB`            | Repository Minisign public key (`docs/security/yamlprims-minisign.pub`) |
 
-Prerequisites: Bash, Git, GnuPG, Minisign, Python 3.11+ (with `PyYAML` for workflow pin checks; see `scripts/ci-install-pyyaml.sh`) and Make. GitHub verification and release asset staging also
+Prerequisites: Bash, Git, GnuPG, Minisign, Python 3.11+, the pinned yamlprims release CLI for the workflow checkers (`YAMLPRIMS_YAML_BIN`, the absolute path to the binary from a release archive listed in `config/yamlprims-cli.txt`) and Make. GitHub verification and release asset staging also
 require authenticated `gh` and `jq`. Use the intended repository's `origin`.
 The checkout must be clean on `main`; HEAD and freshly fetched `origin/main`
 must both equal the explicit release commit.
@@ -44,7 +44,8 @@ make release-github-preflight
 make release-tag                 # interactive GPG pinentry; local tag only
 make release-verify-tag
 make release-push-tag            # explicit, single-tag push without force
-make release-verify-remote-tag   # matching object and GitHub verified status
+make release-verify-remote-tag   # matching object and GitHub verified status; prints the anchor exports
+make release-record-anchor       # needs YAMLPRIMS_EXPECTED_TAG_OBJECT, YAMLPRIMS_EXPECTED_COMMIT, YAMLPRIMS_RELEASE_ANCHOR_FILE
 ```
 
 The controls reject existing tags, lightweight tags, unexpected tag messages,

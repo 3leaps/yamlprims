@@ -48,18 +48,19 @@ and the individual lint targets; full prepush still needs a Unix host or CI.
 
 Install Python 3.11+, Make, Bash, Git, GnuPG, actionlint, ShellCheck, yamlfmt,
 yamllint and **goneat v0.6.4** (or newer) before full prepush. Repository scripts
-use only the Python 3.11+ standard library except the release-workflow digest and
-AST pin checks (`make workflow-pin`, `make prepush` and `make release-tooling-test`),
-which import `PyYAML`; provide `PyYAML` via a system package (`python3-yaml`), a
-virtual environment, or `scripts/ci-install-pyyaml.sh python3 --user` (which copies
-the SHA-256-verified pure-Python source archive without `pip`). `.goneat-version` records the
+use only the Python 3.11+ standard library. The release-workflow checkers
+(`make workflow-pin`, `make prepush` and `make release-tooling-test`) read YAML
+through a published yamlprims release CLI, never this working tree's build: set
+`YAMLPRIMS_YAML_BIN` to the absolute path of the binary from a release archive
+listed in `config/yamlprims-cli.txt`. `scripts/yaml_json.py` runs it only if its
+SHA-256 matches the committed digest for your platform. `.goneat-version` records the
 minimum goneat version; `make check-tooling` rejects older versions. Obtain goneat
 from its [release](https://github.com/fulmenhq/goneat/releases/tag/v0.6.4).
 The workflow-lint container is the digest-pinned fulmen-toolbox **v0.5.10**
 `goneat-tools-runner-glibc` image and verifies this same goneat pin.
 These targets do not install or upgrade tools automatically. Executable paths can be selected
 with `PYTHON`, `ACTIONLINT`, `GONEAT`, `SHELLCHECK`, `YAMLFMT` and `YAMLLINT` Make
-variables. `make check` and `make test-docs` do not require goneat, `PyYAML` or lint tools.
+variables. `make check` and `make test-docs` do not require goneat, the yamlprims release CLI or lint tools.
 
 Full prepush also checks Rust formatting, all targets, the core tests and
 qualification-script failure propagation. Install a Rust toolchain meeting the

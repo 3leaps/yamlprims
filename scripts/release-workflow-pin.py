@@ -16,23 +16,37 @@ Usage:
   release-workflow-pin.py verify-commit COMMIT  git blobs at COMMIT (ceremony)
 """
 
-import hashlib
-import re
-import subprocess
+import os
 import sys
 
-# Import PyYAML from the installed environment only: never from this script's
-# directory or the working directory (a yaml.py there would be the parser).
-import os  # noqa: E402
-
-_untrusted = {os.path.realpath(p) for p in (os.path.dirname(os.path.abspath(__file__)), os.getcwd())}
+# Import the standard library only: never a module from this script's
+# directory or the working directory. YAML is read by the pinned yamlprims
+# release CLI through scripts/yaml_json.py, loaded by its path
+# (YAMLPRIMS_YAML_BIN).
+_here = os.path.dirname(os.path.abspath(__file__))
+_untrusted = {os.path.realpath(p) for p in (_here, os.getcwd())}
 sys.path[:] = [p for p in sys.path if p not in ("", ".") and os.path.realpath(p) not in _untrusted]
-try:
-    import yaml  # noqa: E402
-except ModuleNotFoundError:
-    sys.exit(
-        "error: the workflow pin check needs PyYAML (install python3-yaml or run: scripts/ci-install-pyyaml.sh python3 --user)"
-    )
+sys.dont_write_bytecode = True
+import hashlib  # noqa: E402
+import re  # noqa: E402
+import subprocess  # noqa: E402
+import types  # noqa: E402
+
+
+def _load_reader():
+    """Compile and run the reader from its source bytes. Never through the
+    import system, which would execute a cached .pyc from the untracked
+    scripts/__pycache__ whenever its recorded source size and mtime match."""
+    path = os.path.join(_here, "yaml_json.py")
+    with open(path, "rb") as handle:
+        source = handle.read()
+    module = types.ModuleType("yamlprims_yaml_json")
+    module.__file__ = path
+    exec(compile(source, path, "exec", dont_inherit=True), module.__dict__)
+    return module
+
+
+yaml_json = _load_reader()
 
 PIN = "config/release/release-workflow.sha256"
 WORKFLOWS = ".github/workflows/"
@@ -48,11 +62,11 @@ def fail(reason):
 def read_only(path, text):
     """Top-level contents: read, and no job grants anything wider (except the
     two environment-gated OIDC publish jobs in registry-publish.yml)."""
-    data = yaml.safe_load(text)
+    data = yaml_json.load(text, path)
     if not isinstance(data, dict) or data.get("permissions") != {"contents": "read"}:
         fail(f"{path} must declare top-level permissions: contents: read")
     if path == OIDC_WORKFLOW:
-        trigger = data.get("on") if "on" in data else data.get(True)
+        trigger = data.get("on")
         if not isinstance(trigger, dict) or set(trigger) != {"workflow_dispatch"}:
             fail(f"{path} must trigger on workflow_dispatch only")
     for name, job in (data.get("jobs") or {}).items():
@@ -127,6 +141,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, yaml.YAMLError, subprocess.CalledProcessError, UnicodeDecodeError) as error:
-        detail = str(error) if isinstance(error, ValueError) else "unreadable workflow or pin"
+    except (ValueError, yaml_json.ReaderError, OSError, subprocess.CalledProcessError, UnicodeDecodeError) as error:
+        detail = str(error) if isinstance(error, (ValueError, yaml_json.ReaderError)) else "unreadable workflow or pin"
         sys.exit("error: " + detail)

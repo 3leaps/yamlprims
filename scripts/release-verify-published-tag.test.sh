@@ -29,8 +29,9 @@ git -C "$src" config user.name '3 Leaps Infosec Team'
 git -C "$src" config user.email infosec@3leaps.net
 mkdir -p "$src/scripts" "$src/docs/security" "$src/keys" "$src/config/release"
 verifier=(verify-pinned-tag.sh validate-release-anchors.sh release-verify-published-tag.sh release-tag-common.sh release-gh.sh release-workflow-pin.py
-    release-decernor.sh release-insert-anchors.sh install-release-anchors.sh)
+    yaml_json.py release-decernor.sh release-insert-anchors.sh install-release-anchors.sh)
 for script in ${verifier[@]+"${verifier[@]}"}; do cp "$root/scripts/$script" "$src/scripts/"; done
+cp "$root/config/yamlprims-cli.txt" "$src/config/"
 cp "$root/config/release/tagger-identity.txt" "$src/config/release/"
 printf '1.2.3\n' >"$src/VERSION"
 printf 'module github.com/3leaps/yamlprims\n' >"$src/go.mod"
@@ -228,6 +229,19 @@ anchored() {
         ./scripts/release-verify-published-tag.sh)
 }
 anchored >/dev/null
+# The first, unbound verification (make release-verify-remote-tag) prints the
+# exports for release-record-anchor from the verified object; a bound run or
+# an anchor-file run prints none.
+unbound="$(cd "$op" && ./scripts/release-verify-published-tag.sh)"
+[[ "$(grep -c '^export ' <<<"$unbound")" == 2 ]]
+grep -qx "export YAMLPRIMS_EXPECTED_TAG_OBJECT=$anchor_object" <<<"$unbound"
+grep -qx "export YAMLPRIMS_EXPECTED_COMMIT=$anchor_commit" <<<"$unbound"
+for bound in "$(anchored)" "$(cd "$op" && YAMLPRIMS_ANCHOR_OUT="$scratch/anchor2" ./scripts/release-verify-published-tag.sh)"; do
+    if grep -q '^export ' <<<"$bound"; then
+        echo 'error: a bound verification printed anchor exports' >&2
+        exit 1
+    fi
+done
 # Same version, approved key, DIFFERENT target commit: fails before any ref change.
 printf 'other build\n' >>"$src/file"
 git -C "$src" add file

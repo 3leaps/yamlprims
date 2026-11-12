@@ -33,6 +33,14 @@ make release-push-tag
 make release-verify-remote-tag
 ```
 
+`make release-verify-remote-tag` ends by printing `export YAMLPRIMS_EXPECTED_TAG_OBJECT=…` and `export YAMLPRIMS_EXPECTED_COMMIT=…` for the pushed tag. Compare both values with the approval record, export them, and record the original ceremony anchor at an absent absolute path outside the checkout:
+
+```sh
+export YAMLPRIMS_EXPECTED_TAG_OBJECT=<40-hex tag object>
+export YAMLPRIMS_EXPECTED_COMMIT=<40-hex commit>
+YAMLPRIMS_RELEASE_ANCHOR_FILE=/absolute/path/outside/checkout/anchor.txt make release-record-anchor
+```
+
 ## 4. Code release artifact assembly, signing, and verification (`v<VERSION>`)
 
 After the `Release` workflow succeeds on the pushed `v<VERSION>` tag:

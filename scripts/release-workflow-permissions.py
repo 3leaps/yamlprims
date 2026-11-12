@@ -11,19 +11,35 @@ FILE is one of the reviewed workflows in PROFILES (by file name); any other
 file is refused.
 """
 
-import re
+import os
 import sys
 
-import os  # noqa: E402
-
-_untrusted = {os.path.realpath(p) for p in (os.path.dirname(os.path.abspath(__file__)), os.getcwd())}
+# Import the standard library only: never a module from this script's
+# directory or the working directory. YAML is read and written by the pinned
+# yamlprims release CLI through scripts/yaml_json.py, loaded by its path
+# (YAMLPRIMS_YAML_BIN).
+_here = os.path.dirname(os.path.abspath(__file__))
+_untrusted = {os.path.realpath(p) for p in (_here, os.getcwd())}
 sys.path[:] = [p for p in sys.path if p not in ("", ".") and os.path.realpath(p) not in _untrusted]
-try:
-    import yaml  # noqa: E402
-except ModuleNotFoundError:
-    sys.exit(
-        "error: the workflow permission check needs PyYAML (install python3-yaml or run: scripts/ci-install-pyyaml.sh python3 --user)"
-    )
+sys.dont_write_bytecode = True
+import re  # noqa: E402
+import types  # noqa: E402
+
+
+def _load_reader():
+    """Compile and run the reader from its source bytes. Never through the
+    import system, which would execute a cached .pyc from the untracked
+    scripts/__pycache__ whenever its recorded source size and mtime match."""
+    path = os.path.join(_here, "yaml_json.py")
+    with open(path, "rb") as handle:
+        source = handle.read()
+    module = types.ModuleType("yamlprims_yaml_json")
+    module.__file__ = path
+    exec(compile(source, path, "exec", dont_inherit=True), module.__dict__)
+    return module
+
+
+yaml_json = _load_reader()
 
 ACTIONS = {"actions/checkout", "actions/upload-artifact", "dtolnay/rust-toolchain"}
 RUNNERS = {"ubuntu-24.04", "macos-15", "windows-2025", "ubuntu-latest-arm64-s", "windows-latest-arm64-s"}
@@ -102,7 +118,7 @@ PROFILES = {
                 "env": None,
                 "run": [
                     "set -euo pipefail",
-                    "scripts/ci-install-pyyaml.sh python3 --user",
+                    "scripts/ci-install-yamlprims.sh python3",
                     'tool_dir="$(mktemp -d "$RUNNER_TEMP/decernor.XXXXXX")"',
                     'name="$(awk \'{print $2}\' config/release/decernor-ci-sha256.txt)"',
                     'version="${name#decernor_}"',
@@ -175,7 +191,7 @@ PROFILES = {
                 "env": None,
                 "run": [
                     "set -euo pipefail",
-                    "scripts/ci-install-pyyaml.sh python3 --user",
+                    "scripts/ci-install-yamlprims.sh python3",
                     'tool_dir="$(mktemp -d "$RUNNER_TEMP/decernor.XXXXXX")"',
                     'name="$(awk \'{print $2}\' config/release/decernor-ci-sha256.txt)"',
                     'version="${name#decernor_}"',
@@ -268,7 +284,7 @@ PROFILES = {
                     "set -euo pipefail",
                     "sudo apt-get update -qq",
                     "sudo apt-get install -y -qq minisign",
-                    "scripts/ci-install-pyyaml.sh python3 --user",
+                    "scripts/ci-install-yamlprims.sh python3",
                     "minisign -v",
                     'tool_dir="$(mktemp -d "$RUNNER_TEMP/decernor.XXXXXX")"',
                     'name="$(awk \'{print $2}\' config/release/decernor-ci-sha256.txt)"',
@@ -534,10 +550,10 @@ def strings(node):
 
 
 def check(text, profile):
-    data = yaml.safe_load(text)
+    data = yaml_json.load(text, "workflow")
     if not isinstance(data, dict):
         fail("workflow is not a mapping")
-    if not set(data).issubset({"name", "on", True, "permissions", "env", "jobs"}) or ("on" in data) == (True in data):
+    if not set(data).issubset({"name", "on", "permissions", "env", "jobs"}) or "on" not in data:
         fail("workflow has unreviewed top-level keys")
     if data.get("permissions") != {"contents": "read"}:
         fail("workflow permissions must be exactly contents: read")
@@ -545,7 +561,7 @@ def check(text, profile):
         fail("workflow-level defaults are not reviewed")
     if data.get("env") != profile["workflow_env"]:
         fail("workflow-level env differs from reviewed profile")
-    trigger = data.get("on") if "on" in data else data.get(True)
+    trigger = data.get("on")
     if trigger != profile["trigger"]:
         fail("workflow trigger differs from reviewed profile")
     jobs = data.get("jobs")
@@ -773,31 +789,31 @@ def registry_publish_mutations(text):
         return text.replace(old, new, 1)
 
     def preflight_sep_mutation(sep_char):
-        doc = yaml.safe_load(text)
+        doc = yaml_json.load(text, "workflow")
         step = doc["jobs"]["verify"]["steps"][2]
         step["run"] = step["run"].replace(
             "\n./scripts/release-github-preflight.sh\n",
             f"\n# skipped{sep_char}./scripts/release-github-preflight.sh\n",
             1,
         )
-        return yaml.safe_dump(doc, sort_keys=False)
+        return yaml_json.dump(doc, "mutated workflow")
 
     def reorder_pypi_publish_before_verify():
-        doc = yaml.safe_load(text)
+        doc = yaml_json.load(text, "workflow")
         steps = doc["jobs"]["publish-pypi"]["steps"]
         steps[2], steps[3] = steps[3], steps[2]
-        return yaml.safe_dump(doc, sort_keys=False)
+        return yaml_json.dump(doc, "mutated workflow")
 
     def drop_pypi_publish_step():
-        doc = yaml.safe_load(text)
+        doc = yaml_json.load(text, "workflow")
         del doc["jobs"]["publish-pypi"]["steps"][3]
-        return yaml.safe_dump(doc, sort_keys=False)
+        return yaml_json.dump(doc, "mutated workflow")
 
     def drop_dry_run_input():
-        doc = yaml.safe_load(text)
-        trig = doc.get("on") if "on" in doc else doc.get(True)
+        doc = yaml_json.load(text, "workflow")
+        trig = doc["on"]
         del trig["workflow_dispatch"]["inputs"]["dry_run"]
-        return yaml.safe_dump(doc, sort_keys=False)
+        return yaml_json.dump(doc, "mutated workflow")
 
     first_runs_on = "    runs-on: ubuntu-24.04\n"
     return shared_mutations(text) + [
@@ -814,7 +830,9 @@ def registry_publish_mutations(text):
         sub(first_runs_on, first_runs_on + "    permissions:\n      contents: read\n      id-token: write\n"),
         sub("    environment: publish-pypi\n", ""),
         sub("    environment: publish-npm\n", "    environment: publish-pypi\n"),
-        sub("      id-token: write\n", "      id-token: write\n      contents: write\n"),
+        # Escalation in place: a duplicate `contents` key is refused by the
+        # reader before these rules (release-workflow-permissions.test.sh).
+        sub("      contents: read\n      id-token: write\n", "      contents: write\n      id-token: write\n"),
         sub("    if: inputs.dry_run != true && (inputs.registry == 'all' || inputs.registry == 'pypi')\n", ""),
         sub("    if: inputs.dry_run != true && (inputs.registry == 'all' || inputs.registry == 'npm')\n", "    if: true\n"),
         sub("    needs: verify\n", ""),
@@ -983,6 +1001,20 @@ def mutations(text):
     ]
 
 
+def run_mutations(cases, profile):
+    """Every mutation must be refused by a reviewed rule. A mutation the YAML
+    reader refuses or fails on never counts as a rejection: it fails the run,
+    so a reader fault cannot hide an untested rule."""
+    for index, mutated in enumerate(cases):
+        try:
+            check(mutated, profile)
+        except ValueError:
+            continue
+        except yaml_json.ReaderError as error:
+            fail(f"mutation {index} failed in the YAML reader: {error}")
+        fail(f"mutation {index} was accepted")
+
+
 def main():
     if len(sys.argv) != 3 or sys.argv[1] not in ("check", "mutations"):
         fail("usage: release-workflow-permissions.py check|mutations FILE")
@@ -999,16 +1031,11 @@ def main():
             cases = crates_verify_mutations(text)
         else:
             cases = registry_publish_mutations(text)
-        for index, mutated in enumerate(cases):
-            try:
-                check(mutated, profile)
-            except ValueError:
-                continue
-            fail(f"mutation {index} was accepted")
+        run_mutations(cases, profile)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, yaml.YAMLError) as error:
+    except (ValueError, yaml_json.ReaderError, OSError) as error:
         sys.exit(f"error: {error}")

@@ -71,4 +71,8 @@ echo "[ok] published $tag verified against the committed pin and GitHub"
 # Machine-readable anchor for callers that bind later steps to this result.
 if [[ -n "${YAMLPRIMS_ANCHOR_OUT:-}" ]]; then
     printf 'tag=%s\nobject=%s\ncommit=%s\n' "$tag" "$remote_object" "$commit" >"$YAMLPRIMS_ANCHOR_OUT"
+elif [[ -z "$expected_object" ]]; then
+    # First, unbound verification (make release-verify-remote-tag): print the
+    # exports for release-record-anchor from the object verified above.
+    tag_print_anchor_exports "$tag" "$remote_object"
 fi

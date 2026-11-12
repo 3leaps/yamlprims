@@ -219,6 +219,37 @@ fn usage_rejects_extra_dump_inputs_unknown_flags_and_repeated_stdin() {
 }
 
 #[test]
+fn version_flag_prints_package_version_alone() {
+    let expected = format!("yamlprims {}\n", env!("CARGO_PKG_VERSION"));
+    for flag in ["--version", "-V"] {
+        let output = run(&[flag], None);
+        status(&output, 0);
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+        assert!(output.stderr.is_empty());
+    }
+    for args in [
+        vec!["--version", "check", "-"],
+        vec!["check", "--version", "-"],
+        vec!["check", "-", "--version"],
+        vec!["-V", "dump", "-"],
+        vec!["--version", "--version"],
+        vec!["--version", "-V"],
+        vec!["--help", "--version"],
+        vec!["--version=1"],
+        vec!["-v"],
+        vec!["--", "--version"],
+    ] {
+        let output = run(&args, Some(b"a: 1\n"));
+        status(&output, 2);
+        assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+        assert!(String::from_utf8(output.stderr).unwrap().contains("usage:"));
+    }
+    let output = run(&["--help"], None);
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("--version|-V"), "{help}");
+}
+
+#[test]
 fn double_dash_admits_option_shaped_filename() {
     let files = Files::new();
     files.write("--plain", b"yes\n");

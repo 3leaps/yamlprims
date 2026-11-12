@@ -66,10 +66,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: Ensure PyYAML for workflow pin checks
+      - name: Install the pinned yamlprims reader for workflow checks
         shell: bash
         run: |
-          python3 -B -E -c 'import yaml' 2>/dev/null || scripts/ci-install-pyyaml.sh python3 --user
+          scripts/ci-install-yamlprims.sh python3
       - name: Install ShellCheck
         shell: bash
         run: |

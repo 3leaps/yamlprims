@@ -1,14 +1,16 @@
 """Controls for the driver's spec 1.4 profile bindings: each corruption must fail (exit != 0).
 
-Usage: python3 -I conformance/scripts/structcorpus_probes_v14.py [--require-depth255] SOURCE_DIR DRIVER
+Usage: python3 -I conformance/scripts/structcorpus_probes_v14.py [--require-depth255] [--require-r5] SOURCE_DIR DRIVER
 
 SOURCE_DIR is a structcorpus checkout at c8b7421 or later. It must have the spec 1.4 profiles:
 `yamlprims-core-depth128` r1, `yamlprims-core-entries2` r1, and the four r4 policy profiles
 (`yamlprims-core`, `yamlprims-core-stream`, `yamlprims-core-merge-apply`,
 `yamlprims-core-merge-as-key` r4). When `yamlprims-core-depth255` r1 is present (6b1266e or
 later, or required via `--require-depth255`), 10 additional depth-255 ceiling controls run.
+When the four r5 policy profiles are present (b52fcd0 or later, or required via
+`--require-r5`), the same policy-binding controls run at revision 5 (spec 1.5).
 
-The four r4 profiles carry no corpus cases; these synthetic driver controls exercise their
+The four r4 and r5 profiles carry no corpus cases; these synthetic driver controls exercise their
 strict policy, merge mode (`Reject`/`Apply`/`AsKey`), single/stream cardinality, and profile
 file validation without adding synthetic rows to the frozen corpus pin.
 """
@@ -21,8 +23,12 @@ from pathlib import Path
 
 args = sys.argv[1:]
 require_depth255 = False
-if args and args[0] == "--require-depth255":
-    require_depth255 = True
+require_r5 = False
+while args and args[0] in ("--require-depth255", "--require-r5"):
+    if args[0] == "--require-depth255":
+        require_depth255 = True
+    else:
+        require_r5 = True
     args = args[1:]
 src, driver = map(Path, args[:2])
 cases = {
@@ -121,6 +127,21 @@ ENTRIES2_FILE = "manifests/profiles/yamlprims-core-entries2.r1.json"
 has_depth255 = (src / DEPTH255_FILE).is_file()
 if require_depth255 and not has_depth255:
     sys.exit(f"missing required profile file: {src / DEPTH255_FILE}")
+R5_FILES = [
+    f"manifests/profiles/{p}.r5.json"
+    for p in (
+        "yamlprims-core",
+        "yamlprims-core-stream",
+        "yamlprims-core-merge-apply",
+        "yamlprims-core-merge-as-key",
+    )
+]
+r5_present = [(src / f).is_file() for f in R5_FILES]
+if any(r5_present) and not all(r5_present):
+    sys.exit(f"partial r5 profile set: {[f for f, ok in zip(R5_FILES, r5_present) if not ok]}")
+has_r5 = all(r5_present)
+if require_r5 and not has_r5:
+    sys.exit(f"missing required profile files: {R5_FILES}")
 
 # 1. yamlprims-core-depth128 r1 (explicit 12 limits, max_depth 128, strict policy).
 drive(
@@ -305,72 +326,8 @@ drive(
     (ENTRIES2_FILE, lambda d: d["policy"].update(duplicate_keys="allow")),
 )
 
-# 3. Four r4 policy bindings (synthetic dispatch/policy controls only; 0 shipped corpus cases).
-CORE_R4 = "manifests/profiles/yamlprims-core.r4.json"
-STREAM_R4 = "manifests/profiles/yamlprims-core-stream.r4.json"
-APPLY_R4 = "manifests/profiles/yamlprims-core-merge-apply.r4.json"
-ASKEY_R4 = "manifests/profiles/yamlprims-core-merge-as-key.r4.json"
-
-drive(
-    "r4-core-control",
-    [
-        probe_case("entries2", "yamlprims-core", 4, map2),
-        probe_case("merge-apply", "yamlprims-core", 4, struct_err("merge_rejected")),
-        probe_case("stream2", "yamlprims-core", 4, struct_err("multiple_documents")),
-        rebind_first("yaml.syntax.flow-under-indented", "yamlprims-core", 4),
-    ],
-    True,
-)
-drive(
-    "r4-core-wrong-value",
-    [probe_case("entries2", "yamlprims-core", 4, {"documents": [{"t": "null"}]})],
-    False,
-)
-drive(
-    "r4-core-changed-policy",
-    [probe_case("entries2", "yamlprims-core", 4, map2)],
-    False,
-    (CORE_R4, lambda d: d["policy"].update(merge_keys="apply")),
-)
-drive(
-    "r4-core-unexpected-limits",
-    [probe_case("entries2", "yamlprims-core", 4, map2)],
-    False,
-    (
-        CORE_R4,
-        lambda d: d.update(
-            limits=json.loads((src / DEPTH128_FILE).read_text())["limits"]
-        ),
-    ),
-)
-
-drive(
-    "r4-stream-control",
-    [
-        probe_case(
-            "stream2",
-            "yamlprims-core-stream",
-            4,
-            {"documents": [{"t": "str", "v": "a"}, {"t": "str", "v": "b"}]},
-        ),
-        probe_case("merge-apply", "yamlprims-core-stream", 4, struct_err("merge_rejected")),
-    ],
-    True,
-)
-drive(
-    "r4-stream-changed-policy",
-    [
-        probe_case(
-            "stream2",
-            "yamlprims-core-stream",
-            4,
-            {"documents": [{"t": "str", "v": "a"}, {"t": "str", "v": "b"}]},
-        )
-    ],
-    False,
-    (STREAM_R4, lambda d: d["policy"].update(documents="single")),
-)
-
+# 3. Revision 4 and 5 policy bindings (synthetic dispatch/policy controls only; 0 shipped
+# corpus cases). r5 (spec 1.5) keeps the r4 source-loader policy fields.
 merged_doc = {
     "documents": [
         {
@@ -394,40 +351,118 @@ merged_doc = {
         }
     ]
 }
-drive(
-    "r4-merge-apply-control",
-    [
-        probe_case("merge-apply", "yamlprims-core-merge-apply", 4, merged_doc),
-        probe_case("stream2", "yamlprims-core-merge-apply", 4, struct_err("multiple_documents")),
-    ],
-    True,
-)
-drive(
-    "r4-merge-apply-changed-policy",
-    [probe_case("merge-apply", "yamlprims-core-merge-apply", 4, merged_doc)],
-    False,
-    (APPLY_R4, lambda d: d["policy"].update(merge_keys="reject")),
-)
-
 askey_doc = {
     "documents": [
         {"t": "map", "entries": [[{"t": "str", "v": "<<"}, {"t": "int", "v": "1"}]]}
     ]
 }
-drive(
-    "r4-merge-as-key-control",
-    [
-        probe_case("merge-key", "yamlprims-core-merge-as-key", 4, askey_doc),
-        probe_case("stream2", "yamlprims-core-merge-as-key", 4, struct_err("multiple_documents")),
-    ],
-    True,
-)
-drive(
-    "r4-merge-as-key-changed-policy",
-    [probe_case("merge-key", "yamlprims-core-merge-as-key", 4, askey_doc)],
-    False,
-    (ASKEY_R4, lambda d: d["policy"].update(merge_keys="apply")),
-)
+def policy_bindings(rev):
+    core_f = f"manifests/profiles/yamlprims-core.r{rev}.json"
+    stream_f = f"manifests/profiles/yamlprims-core-stream.r{rev}.json"
+    apply_f = f"manifests/profiles/yamlprims-core-merge-apply.r{rev}.json"
+    askey_f = f"manifests/profiles/yamlprims-core-merge-as-key.r{rev}.json"
+
+    drive(
+        f"r{rev}-core-control",
+        [
+            probe_case("entries2", "yamlprims-core", rev, map2),
+            probe_case("merge-apply", "yamlprims-core", rev, struct_err("merge_rejected")),
+            probe_case("stream2", "yamlprims-core", rev, struct_err("multiple_documents")),
+            rebind_first("yaml.syntax.flow-under-indented", "yamlprims-core", rev),
+        ],
+        True,
+    )
+    drive(
+        f"r{rev}-core-wrong-value",
+        [probe_case("entries2", "yamlprims-core", rev, {"documents": [{"t": "null"}]})],
+        False,
+    )
+    drive(
+        f"r{rev}-core-changed-policy",
+        [probe_case("entries2", "yamlprims-core", rev, map2)],
+        False,
+        (core_f, lambda d: d["policy"].update(merge_keys="apply")),
+    )
+    drive(
+        f"r{rev}-core-unexpected-limits",
+        [probe_case("entries2", "yamlprims-core", rev, map2)],
+        False,
+        (
+            core_f,
+            lambda d: d.update(
+                limits=json.loads((src / DEPTH128_FILE).read_text())["limits"]
+            ),
+        ),
+    )
+
+    drive(
+        f"r{rev}-stream-control",
+        [
+            probe_case(
+                "stream2",
+                "yamlprims-core-stream",
+                rev,
+                {"documents": [{"t": "str", "v": "a"}, {"t": "str", "v": "b"}]},
+            ),
+            probe_case("merge-apply", "yamlprims-core-stream", rev, struct_err("merge_rejected")),
+        ],
+        True,
+    )
+    drive(
+        f"r{rev}-stream-changed-policy",
+        [
+            probe_case(
+                "stream2",
+                "yamlprims-core-stream",
+                rev,
+                {"documents": [{"t": "str", "v": "a"}, {"t": "str", "v": "b"}]},
+            )
+        ],
+        False,
+        (stream_f, lambda d: d["policy"].update(documents="single")),
+    )
+
+    drive(
+        f"r{rev}-merge-apply-control",
+        [
+            probe_case("merge-apply", "yamlprims-core-merge-apply", rev, merged_doc),
+            probe_case("stream2", "yamlprims-core-merge-apply", rev, struct_err("multiple_documents")),
+        ],
+        True,
+    )
+    drive(
+        f"r{rev}-merge-apply-changed-policy",
+        [probe_case("merge-apply", "yamlprims-core-merge-apply", rev, merged_doc)],
+        False,
+        (apply_f, lambda d: d["policy"].update(merge_keys="reject")),
+    )
+
+    drive(
+        f"r{rev}-merge-as-key-control",
+        [
+            probe_case("merge-key", "yamlprims-core-merge-as-key", rev, askey_doc),
+            probe_case("stream2", "yamlprims-core-merge-as-key", rev, struct_err("multiple_documents")),
+        ],
+        True,
+    )
+    drive(
+        f"r{rev}-merge-as-key-changed-policy",
+        [probe_case("merge-key", "yamlprims-core-merge-as-key", rev, askey_doc)],
+        False,
+        (askey_f, lambda d: d["policy"].update(merge_keys="apply")),
+    )
+
+    # node_locations remains bound to spec 1.3 profiles only.
+    sib = json.loads(json.dumps(cases["yaml.anchors.after-sibling"]))
+    sib["expectations"]["value"][0]["profile_revision"] = rev
+    sib["expectations"]["node_locations"]["profile_revision"] = rev
+    drive(f"r{rev}-node-locations-rejected", [sib], False)
+
+
+policy_bindings(4)
+if has_r5:
+    policy_bindings(5)
+
 
 def drive_raw_line(label, line_text, want_ok):
     with tempfile.TemporaryDirectory() as t:
@@ -438,12 +473,6 @@ def drive_raw_line(label, line_text, want_ok):
     last = [l for l in r.stdout.splitlines() if l.startswith(("problem\t", "result\t"))]
     results.append((label, r.returncode, ok, " | ".join(last)[:200]))
 
-
-# node_locations remains bound to spec 1.3 profiles only.
-sib_r4 = json.loads(json.dumps(cases["yaml.anchors.after-sibling"]))
-sib_r4["expectations"]["value"][0]["profile_revision"] = 4
-sib_r4["expectations"]["node_locations"]["profile_revision"] = 4
-drive("r4-node-locations-rejected", [sib_r4], False)
 
 # 4. Paired shallow/deep JSON transport controls (strict RFC 8259 whitespace and 1024-depth cap).
 base_case = probe_case("entries2", "yamlprims-core", 4, map2)

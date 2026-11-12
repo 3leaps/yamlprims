@@ -105,6 +105,11 @@ func makeProfiles() []profileSpec {
 		p("yamlprims-core-depth128", 1, "target", yaml.MergeKeysReject, "reject", true),
 		p("yamlprims-core-depth255", 1, "target", yaml.MergeKeysReject, "reject", true),
 		p("yamlprims-core-entries2", 1, "target", yaml.MergeKeysReject, "reject", true),
+		// Spec 1.5 (DDR-0013): source-loader policy fields unchanged from r4.
+		p("yamlprims-core", 5, "target", yaml.MergeKeysReject, "reject", true),
+		p("yamlprims-core-stream", 5, "target", yaml.MergeKeysReject, "reject", false),
+		p("yamlprims-core-merge-apply", 5, "target", yaml.MergeKeysApply, "apply", true),
+		p("yamlprims-core-merge-as-key", 5, "target", yaml.MergeKeysAsKey, "plain-key", true),
 	}
 }
 

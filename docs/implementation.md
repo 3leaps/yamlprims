@@ -87,13 +87,15 @@ The working specification is at revision 1.5 (`SPEC_VERSION` `1.5`,
 [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)). Historical
 specification tags (`spec-v1.0` through `spec-v1.4`) and conformance pins
 retain their exact bindings. The pinned conformance baseline at
-`6b1266e16676dc456328eb64c0eed028060845c3` (`conformance/pins/pin-6b1266e.json`)
-adds the 18 explicit-limit revision 1.4 records (`yamlprims-core-depth128` r1,
+`b52fcd090d6879a0bd58ec5a5496c6a4de90504e` (`conformance/pins/pin-b52fcd0.json`)
+adds the four revision 5 policy profiles citing specification 1.5 (same
+source-loader policy fields as revision 4, zero shipped corpus records). It keeps
+the 18 explicit-limit revision 1.4 records (`yamlprims-core-depth128` r1,
 `yamlprims-core-depth255` r1, and `yamlprims-core-entries2` r1) and synthetic driver controls
 (`conformance/scripts/structcorpus_probes_v14.py`) for the four revision 4
-policy profiles (`yamlprims-core`, `yamlprims-core-stream`,
-`yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key` r4), which carry
-zero shipped corpus records in `6b1266e`:
+and four revision 5 policy profiles (`yamlprims-core`, `yamlprims-core-stream`,
+`yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key` r4 and r5), which
+carry zero shipped corpus records in `b52fcd0`:
 
 | Revision 1.4 rule | Conformance and unit coverage |
 | --- | --- |
@@ -126,14 +128,15 @@ and Go drivers); it does not close the broader M1 release gates below.
   plain dump, and serialization before stdout. Operating-system write failures
   can still leave partial output. No binding placeholder is included.
 
-Before a package release, the actual build still needs the complete native
-five-target MSRV/stable matrix, contained stress with original resource budgets,
-bounded fuzz/mutation/Miri, phase-specific memory/time measurements, dependency
-and license audit, and package/downstream qualification. Logical weight limits
+Published packages do not yet establish production qualification. Still open:
+the complete native five-target MSRV/stable matrix, contained stress with
+original resource budgets, bounded fuzz/mutation/Miri, phase-specific
+memory/time measurements, dependency and license audit, and package/downstream
+qualification. Logical weight limits
 are not RSS limits. The current Rust workflow is baseline coverage on Linux;
 documentation CI is not runtime qualification. The `Profile B` pure-Go twin (`yaml/` in root `go.mod`, `CGO_ENABLED=0`,
 standard library only) and its conformance driver (`cmd/structcorpus-driver`)
-are qualified against all 20 manifest rows of `conformance/pins/pin-6b1266e.json`
+are qualified against all 20 result rows of `conformance/pins/pin-b52fcd0.json`
 (`conformance/requalify.sh`) and verified for byte-for-byte wire, `DecodeWire`
 round-trip, plain-JSON, `emit_all`, and `encode_ijson` parity with the Rust core via `make crosscheck`. The
 isolated M2/M3 language bindings (`bindings/typescript/` zero-import WASM module

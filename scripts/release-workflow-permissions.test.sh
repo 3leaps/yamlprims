@@ -5,8 +5,8 @@
 # workflow passes, and every listed mutation of it is refused.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
-python3 -c 'import yaml' 2>/dev/null || {
-	echo 'error: the workflow permission test needs PyYAML (python3-yaml)' >&2
+[[ -n "${YAMLPRIMS_YAML_BIN:-}" ]] || {
+	echo 'error: the workflow permission test needs YAMLPRIMS_YAML_BIN (absolute path to the yamlprims CLI from a release archive pinned in config/yamlprims-cli.txt)' >&2
 	exit 1
 }
 # Every publishing workflow is pinned by digest (release-workflow-pin.py);
@@ -98,23 +98,88 @@ pin_with
 refused 'must trigger on workflow_dispatch only' check
 git -C "$repo" checkout -q -- .
 pin check
-# A yaml.py beside either checker is never imported (a script's own directory
-# is the one path Python adds by itself).
-mkdir "$scratch/shadow"
-cp "$root/scripts/release-workflow-pin.py" "$root/scripts/release-workflow-permissions.py" "$scratch/shadow/"
-printf 'raise SystemExit("shadow yaml imported")\n' >"$scratch/shadow/yaml.py"
-(cd "$repo" && python3 -B -E "$scratch/shadow/release-workflow-pin.py" check) >"$scratch/out" 2>&1 || true
+# A module beside the checkers or their reader is never imported (a script's
+# own directory is the one path Python adds by itself): neither a yaml.py nor
+# a json.py that would shadow the standard library.
+mkdir -p "$scratch/shadow/scripts" "$scratch/shadow/config"
+cp "$root/scripts/release-workflow-pin.py" "$root/scripts/release-workflow-permissions.py" "$root/scripts/yaml_json.py" "$scratch/shadow/scripts/"
+cp "$root/config/yamlprims-cli.txt" "$scratch/shadow/config/"
+for module in yaml json; do
+	printf 'raise SystemExit("shadow %s imported")\n' "$module" >"$scratch/shadow/scripts/$module.py"
+done
+(cd "$repo" && python3 -B -E "$scratch/shadow/scripts/release-workflow-pin.py" check) >"$scratch/out" 2>&1 || true
 if grep -q 'shadow' "$scratch/out"; then
-	echo 'error: a yaml.py beside the pin checker was imported' >&2
+	echo 'error: a module beside the pin checker was imported' >&2
 	exit 1
 fi
 grep -q 'every workflow matches' "$scratch/out" || { cat "$scratch/out" >&2; exit 1; }
-python3 -B -E "$scratch/shadow/release-workflow-permissions.py" check "$root/.github/workflows/release.yml" >"$scratch/out" 2>&1 || true
+python3 -B -E "$scratch/shadow/scripts/release-workflow-permissions.py" check "$root/.github/workflows/release.yml" >"$scratch/out" 2>&1 || true
 if grep -q 'shadow' "$scratch/out"; then
-	echo 'error: a yaml.py beside the workflow checker was imported' >&2
+	echo 'error: a module beside the workflow checker was imported' >&2
 	exit 1
 fi
 [[ ! -s "$scratch/out" ]] || { cat "$scratch/out" >&2; exit 1; }
+# A duplicate key (here a second `contents` granting write in an OIDC job,
+# which a last-wins parser would honour) is refused by the reader.
+mkdir -p "$scratch/dup"
+awk '{print} /^      id-token: write$/ && !done {print "      contents: write"; done=1}' \
+	"$root/.github/workflows/registry-publish.yml" >"$scratch/dup/registry-publish.yml"
+if python3 -B -E "$root/scripts/release-workflow-permissions.py" check "$scratch/dup/registry-publish.yml" >"$scratch/out" 2>&1; then
+	echo 'error: a duplicate contents key in an OIDC job was accepted' >&2
+	exit 1
+fi
+grep -q 'duplicate_key' "$scratch/out" || { cat "$scratch/out" >&2; exit 1; }
+# A forged bytecode cache for the reader is never executed: a .pyc in the
+# untracked scripts/__pycache__ whose recorded source size and mtime match
+# yaml_json.py, and whose code exits 0, must not let any gate mode pass.
+forge="$scratch/forge"
+mkdir -p "$forge/scripts" "$forge/config"
+cp "$root/scripts/release-workflow-pin.py" "$root/scripts/release-workflow-permissions.py" "$root/scripts/yaml_json.py" "$forge/scripts/"
+cp "$root/config/yamlprims-cli.txt" "$forge/config/"
+python3 -I -B - "$forge/scripts/yaml_json.py" <<'PY'
+import importlib.util, os, py_compile, sys
+real = sys.argv[1]
+st = os.stat(real)
+body = b"import sys\nsys.exit(0)\n"
+if len(body) > st.st_size:
+    raise SystemExit("forge body larger than the reader")
+evil = real + ".forged"
+with open(evil, "wb") as handle:
+    handle.write(body + b"#" * (st.st_size - len(body) - 1) + b"\n")
+os.utime(evil, ns=(st.st_atime_ns, st.st_mtime_ns))
+cache = importlib.util.cache_from_source(real)
+os.makedirs(os.path.dirname(cache), exist_ok=True)
+py_compile.compile(evil, cfile=cache, dfile=real, doraise=True,
+                   invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+os.remove(evil)
+os.utime(real, ns=(st.st_atime_ns, st.st_mtime_ns))
+PY
+[[ -n "$(find "$forge/scripts/__pycache__" -name 'yaml_json.*.pyc')" ]] || { echo 'error: forged cache not written' >&2; exit 1; }
+forged_modes=(
+	"python3 -B -E $forge/scripts/release-workflow-pin.py check"
+	"python3 -B -E $forge/scripts/release-workflow-pin.py verify-commit HEAD"
+	"python3 -B -E $forge/scripts/release-workflow-permissions.py check $root/.github/workflows/release.yml"
+	"python3 -B -E $forge/scripts/release-workflow-permissions.py mutations $root/.github/workflows/release.yml"
+)
+for mode in ${forged_modes[@]+"${forged_modes[@]}"}; do
+	# shellcheck disable=SC2086 # Each mode is a word list built above.
+	if (cd "$repo" && env -u YAMLPRIMS_YAML_BIN ${mode}) >"$scratch/out" 2>&1; then
+		echo "error: a forged reader bytecode cache passed: $mode" >&2
+		exit 1
+	fi
+done
+# Without an authenticated reader binary the checkers fail closed.
+for bad in "" relative/yamlprims "$scratch/absent" "$(command -v python3)"; do
+	if (cd "$root" && YAMLPRIMS_YAML_BIN="$bad" python3 -B -E scripts/release-workflow-pin.py check) >"$scratch/out" 2>&1; then
+		echo "error: pin check passed with YAMLPRIMS_YAML_BIN='$bad'" >&2
+		exit 1
+	fi
+	if grep -q Traceback "$scratch/out" || ! grep -q 'YAMLPRIMS_YAML_BIN' "$scratch/out"; then
+		echo "error: YAMLPRIMS_YAML_BIN='$bad' was not refused by the reader" >&2
+		cat "$scratch/out" >&2
+		exit 1
+	fi
+done
 # The ceremony reads the tagged commit, not the working tree: an uncommitted
 # fix does not rescue a bad commit, and an uncommitted edit does not break a
 # good one.

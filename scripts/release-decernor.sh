@@ -21,7 +21,9 @@ resolve_release_decernor() {
 		echo 'error: YAMLPRIMS_DECERNOR_BIN does not identify as decernor' >&2
 		return 1
 	}
-	version="${BASH_REMATCH[1]}"
+	# Parameter expansion, not BASH_REMATCH, so the helper also works when
+	# sourced from an interactive zsh.
+	version="${short#decernor }"
 	python3 - "$version" "$extended" <<'PY' || return 1
 import re
 import sys

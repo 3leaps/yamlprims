@@ -8,6 +8,24 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-12
+
+### Added
+
+- `yamlprims --version` / `-V` (sole argument) prints `yamlprims <version>` to stdout and exits 0.
+- Bound the `structcorpus` revision 5 policy profiles (`yamlprims-core`, `yamlprims-core-stream`, `yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key` r5, `spec-v1.5`) in the Rust and Go conformance drivers and pinned `conformance/pins/pin-b52fcd0.json` against `structcorpus` `b52fcd090d6879a0bd58ec5a5496c6a4de90504e` (`61,366` cases / `90,988` expectations, `20` result rows), with synthetic r5 binding controls in `conformance/scripts/structcorpus_probes_v14.py` (`--require-r5`).
+- `make release-verify-remote-tag` prints the `YAMLPRIMS_EXPECTED_TAG_OBJECT` and `YAMLPRIMS_EXPECTED_COMMIT` exports for `make release-record-anchor`.
+
+### Changed
+
+- The workflow digest and permission checkers read and write workflow YAML with the published `yamlprims` v0.2.0 CLI (`scripts/yaml_json.py`, digest-pinned in `config/yamlprims-cli.txt`, installed in CI by `scripts/ci-install-yamlprims.sh`) instead of PyYAML; `scripts/ci-install-pyyaml.sh` and `config/ci-python-requirements.txt` are removed. A mutation the reader refuses now fails the mutation run.
+- `scripts/release-verify-registries.py` validates its poll settings and names npm's post-upload validation queue on a final `404`.
+- README, CLI README and Python README describe YAML writing and the I-JSON to JCS path, and cite `spec-v1.5`.
+
+### Fixed
+
+- `scripts/release-decernor.sh` no longer depends on `BASH_REMATCH`, so it resolves when sourced from zsh.
+
 ## [0.2.0] - 2026-11-10
 
 ### Added
@@ -48,7 +66,8 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 - Conformance qualification against `conformance/pins/pin-c8b7421.json` (`structcorpus` `c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99`, 19 profile rows across `spec-v1.0` through `spec-v1.4`, `61,360` corpus cases / `90,982` expectations) and 154 in-repo differential conformance vectors (`conformance/vectors/cases.jsonl`).
 - Dual-track signed release, packaging, and provenance verification workflows and scripts (`.github/workflows/release.yml`, `.github/workflows/crates-verify.yml`, `.github/workflows/registry-publish.yml`, `scripts/release-*.sh`, `scripts/release-*.py`, `scripts/check-packages.sh`, `scripts/deps-check.sh`, `scripts/doctor.py`) supporting OpenPGP + Minisign release signing, zero-compile `crates.io` publication, and OIDC Trusted Publishing with PyPI PEP 740 and npm Sigstore provenance verification.
 
-[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/3leaps/yamlprims/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/3leaps/yamlprims/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/3leaps/yamlprims/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/3leaps/yamlprims/releases/tag/v0.1.0
