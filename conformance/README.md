@@ -6,9 +6,8 @@ synthetic truth/wire regressions and the exact structcorpus inventory at
 
 The lock in `pins/pin-b52fcd0.json` fixes source files, profile revisions,
 hydrated inventory hashes, review-status counts and per-profile result rows.
-Earlier locks (`pins/pin-6b1266e.json`, `pins/pin-c8b7421.json`, `pins/pin-400ae34.json`,
-`pins/pin-d37ce93.json`, `pins/pin-444bc12.json`, `pins/pin-03ba2de.json`) remain
-historical evidence.
+Earlier locks (`pins/pin-6b1266e.json`, `pins/pin-c8b7421.json`, `pins/pin-444bc12.json`,
+`pins/pin-400ae34.json`, `pins/pin-1469b2a.json`) remain historical evidence.
 Do not regenerate expectations from the implementation. The gate rejects pin
 generation; wire golden blessing is disabled. Expectation changes require
 independent semantic review.
