@@ -1,7 +1,10 @@
 # yamlprims CLI
 
-An initial command-line consumer of the shared Rust core. The package is under
-development, is not published, and does not freeze the remaining CLI contract.
+A command-line consumer of the shared Rust core. The `yamlprims-cli` crate is
+not published to crates.io; the `yamlprims` binary ships as signed release
+archives for darwin-arm64, linux-amd64, linux-arm64, windows-amd64 and
+windows-arm64 on [GitHub Releases](https://github.com/3leaps/yamlprims/releases).
+The remaining CLI contract is not frozen.
 It forbids unsafe code. All YAML policies, values, limits and encoders come from
 `yamlprims`; there is no second YAML parser or resolver.
 
@@ -56,9 +59,16 @@ on the destination and exits 2; this is not an operating-system atomic-write
 guarantee. Diagnostic text itself does not have a separate CLI byte cap.
 
 These behaviors need independent review before the CLI contract is frozen.
-Production platform/resource qualification and package publication remain open.
+Production platform/resource qualification remains open.
 The versioned wire grammar and YAML semantics are defined by the
-[specification](https://github.com/3leaps/yamlprims/blob/spec-v1.4/docs/spec/yamlprims-spec.md).
+[specification](https://github.com/3leaps/yamlprims/blob/spec-v1.5/docs/spec/yamlprims-spec.md).
+
+`yamlprims dump --ijson` output can be canonicalized with RFC 8785 JCS by
+[canonprims](https://github.com/3leaps/canonprims):
+
+```sh
+yamlprims dump --ijson config.yaml | canonprims jcs
+```
 
 Run `cargo test --locked -p yamlprims-cli`. Tests cover command parsing, bounded
 reads, failed reads/writes and serialization, file/stdin streams, diagnostics,

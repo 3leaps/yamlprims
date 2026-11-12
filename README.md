@@ -10,6 +10,8 @@ and remaining work.
 
 ## What we are building
 
+- **Memory-safe YAML reading and writing:** a safe alternative to `libyaml`-backed loaders and dumpers for YAML 1.2.2 Core data, in Rust, pure Go, TypeScript (WASM) and Python. Loading is bounded by validated resource limits; writing is deterministic 2-space block-first Core emission (`emit` / `emit_all` / `to_string` in Rust, `Emit` / `EmitAll` / `Marshal` in Go, `dump` / `dumpAll` in TypeScript, `dump` / `dump_all` in Python, `yamlprims emit` on the CLI) with `CompatQuoting::Yaml11Safe` by default, so strings such as `yes`, `on`, `010` or `1:30` are quoted and stay strings for YAML 1.1 readers. It is not a drop-in replacement for YAML 1.1 semantics (see below).
+- **YAML to canonical JSON:** strict RFC 7493 I-JSON projection (`load_ijson` / `encode_ijson` in Rust, `LoadIJSON` / `EncodeIJSON` in Go, `loadIjson` in TypeScript, `load_ijson` in Python, `yamlprims dump --ijson` on the CLI) admits only single documents with string keys, finite numbers within the interoperable ranges and no Unicode noncharacters, so its output can be canonicalized with RFC 8785 JCS by [canonprims](https://github.com/3leaps/canonprims) (see [Reading, writing and canonical JSON](#reading-writing-and-canonical-json)).
 - **Strict YAML 1.2.2 Core Schema data layer:** Owned values with exact 128-bit integers (`i128::MIN..=u128::MAX`), IEEE 754 `f64` floats, arbitrary mapping keys (`Value::key_eq`), retained non-core tags (`UnknownTags::Preserve` by default or `UnknownTags::Reject`), and strict flow/block indentation ([ADR-0003](docs/decisions/ADR-0003-strict-indentation.md)). YAML 1.1 boolean words (`yes`, `no`, `on`, `off`, `y`, `n`) resolve as plain strings.
 - **Explicit duplicate-key, `NaN`-key and merge policies:** Duplicate mapping keys are always rejected (`ErrorKind::DuplicateKey` with `RelatedRole::FirstDefinition`), `NaN` keys are rejected (`ErrorKind::InvalidKey`), and `<<` merge directives default to `MergeKeys::Reject` with explicit opt-in `MergeKeys::Apply` or `MergeKeys::AsKey` ([ADR-0001](docs/decisions/ADR-0001-explicit-merge-policy.md)).
 - **Source locations, provenance and closed syntax taxonomy:** Byte/line/column spans, `Via::Alias` and `Via::Merge` provenance, boxed `Error` ownership ([DDR-0002](docs/decisions/DDR-0002-boxed-error-ownership.md)), and a closed 81-code `SyntaxKind` vocabulary shared across generic loading, typed `serde::Deserialize` (`from_str`, `from_str_with`, `from_node`), and canonical `yamlprims-value/1` wire output.
@@ -24,9 +26,9 @@ The Rust implementation uses `granit-parser` as its internal event source; the p
 
 ## Status and participation
 
-Current tagged specification: [**spec-v1.4**](https://github.com/3leaps/yamlprims/tree/spec-v1.4);
-working draft in tree: [Revision 1.5](docs/spec/yamlprims-spec.md) (`SPEC_VERSION` `1.5`,
-unreleased draft specification proposing [ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
+Current tagged specification: [**spec-v1.5**](https://github.com/3leaps/yamlprims/tree/spec-v1.5)
+([Revision 1.5](docs/spec/yamlprims-spec.md), `SPEC_VERSION` `1.5`,
+[ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
 Earlier specification tags (`spec-v1.0` through `spec-v1.4`) and their file digests remain immutable, including
 historical draft-status wording. A specification tag may include in-development
 Rust source; it does not imply a crate release, API freeze or conformance of
@@ -50,6 +52,36 @@ make test-go       # runs the pure-Go twin unit, admission, truth and wire tests
 make crosscheck    # verifies Rust and Go byte-for-byte wire, round-trip and plain parity
 make ts-check      # builds and tests the @3leaps/yamlprims WASM package and verifies corpus parity
 make python-check  # builds and tests the yamlprims abi3 wheel and verifies corpus parity
+```
+
+## Reading, writing and canonical JSON
+
+The CLI reads YAML, writes canonical Core YAML, and projects to I-JSON for a
+JCS canonicalizer such as [canonprims](https://github.com/3leaps/canonprims):
+
+```sh
+$ printf 'b: 2\na: [1.0, 1e21]\non: yes\n' > config.yaml
+$ yamlprims dump --ijson config.yaml
+{"b":2,"a":[1,1e+21],"on":"yes"}
+$ yamlprims dump --ijson config.yaml | canonprims jcs
+{"a":[1,1e+21],"b":2,"on":"yes"}
+```
+
+The same from Python (`pip install yamlprims`):
+
+```python
+import json
+import yamlprims
+
+value = json.loads(yamlprims.load_plain("name: demo\nenabled: on\nports: [80, 443]\n"))
+# {'name': 'demo', 'enabled': 'on', 'ports': [80, 443]}
+print(yamlprims.dump(value), end="")
+# name: demo
+# enabled: 'on'
+# ports:
+#   - 80
+#   - 443
+yamlprims.load_ijson("b: 2\na: [1.0, 1e21]\n")  # '{"b":2,"a":[1,1e+21]}'
 ```
 
 ## License

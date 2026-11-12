@@ -128,10 +128,11 @@ and Go drivers); it does not close the broader M1 release gates below.
   plain dump, and serialization before stdout. Operating-system write failures
   can still leave partial output. No binding placeholder is included.
 
-Before a package release, the actual build still needs the complete native
-five-target MSRV/stable matrix, contained stress with original resource budgets,
-bounded fuzz/mutation/Miri, phase-specific memory/time measurements, dependency
-and license audit, and package/downstream qualification. Logical weight limits
+Published packages do not yet establish production qualification. Still open:
+the complete native five-target MSRV/stable matrix, contained stress with
+original resource budgets, bounded fuzz/mutation/Miri, phase-specific
+memory/time measurements, dependency and license audit, and package/downstream
+qualification. Logical weight limits
 are not RSS limits. The current Rust workflow is baseline coverage on Linux;
 documentation CI is not runtime qualification. The `Profile B` pure-Go twin (`yaml/` in root `go.mod`, `CGO_ENABLED=0`,
 standard library only) and its conformance driver (`cmd/structcorpus-driver`)

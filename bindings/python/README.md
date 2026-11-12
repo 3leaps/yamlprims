@@ -10,6 +10,22 @@ YAML 1.2.2 Core Schema value loader, strict `yamlprims-value/1` wire decoder, an
 - **Strict `yamlprims-value/1` wire decoder & canonical encoder** (`decode_wire`, `encode`, `encode_error`) with byte-for-byte round-trip parity (`spec-v1.5 §11.4`).
 - **Deterministic YAML 1.2.2 Core emitter & strict RFC 7493 I-JSON projection** (`dump`, `dump_all`, `from_plain`, `load_ijson`, `EmitLimits`, `EmitOptions`) with `yaml11_safe` default compatibility quoting (`spec-v1.5 §10.2`, `§11.3`).
 
+## Example
+
+```python
+import json
+import yamlprims
+
+value = json.loads(yamlprims.load_plain("name: demo\nenabled: on\nports: [80, 443]\n"))
+# {'name': 'demo', 'enabled': 'on', 'ports': [80, 443]}
+print(yamlprims.dump(value), end="")  # yaml11_safe quoting: enabled: 'on'
+yamlprims.load_ijson("b: 2\na: [1.0, 1e21]\n")  # '{"b":2,"a":[1,1e+21]}'
+```
+
+`load_plain` and `load_ijson` return JSON text. `load_ijson` output is RFC 7493
+I-JSON, ready for RFC 8785 JCS canonicalization (for example with
+[canonprims](https://github.com/3leaps/canonprims)).
+
 ## License
 
 Dual-licensed under `MIT OR Apache-2.0`. See `LICENSE-MIT`, `LICENSE-APACHE`, and `NOTICE`.
