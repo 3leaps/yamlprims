@@ -31,6 +31,11 @@ The maintainer configures these environment variables in their signing terminal:
 | `YAMLPRIMS_TAGGER_EMAIL`            | `infosec@3leaps.net`                                             |
 | `YAMLPRIMS_MINISIGN_KEY`            | External Minisign secret key path (for `v<VERSION>` asset signs) |
 | `YAMLPRIMS_MINISIGN_PUB`            | Repository Minisign public key (`docs/security/yamlprims-minisign.pub`) |
+| `YAMLPRIMS_YAML_BIN`                | Absolute path to the yamlprims CLI from a release archive pinned in `config/yamlprims-cli.txt` (the workflow checkers run it; any path works, the digest is checked) |
+| `YAMLPRIMS_DECERNOR_BIN`            | Absolute path to decernor >= 0.1.8 (fingerprint anchors)          |
+| `YAMLPRIMS_CARGO_TOKEN_FILE`        | File holding the crates.io token (crate publish only; `CARGO_REGISTRY_TOKEN` must be unset) |
+
+Per-release values set during the ceremony (`YAMLPRIMS_EXPECTED_TAG_OBJECT`, `YAMLPRIMS_EXPECTED_COMMIT`, `YAMLPRIMS_RELEASE_ANCHOR_FILE`, `YAMLPRIMS_RELEASE_RUN_ID`, `YAMLPRIMS_RELEASE_RUN_ATTEMPT`) belong to one tag only; start each release from a shell without them.
 
 Prerequisites: Bash, Git, GnuPG, Minisign, Python 3.11+, the pinned yamlprims release CLI for the workflow checkers (`YAMLPRIMS_YAML_BIN`, the absolute path to the binary from a release archive listed in `config/yamlprims-cli.txt`) and Make. GitHub verification and release asset staging also
 require authenticated `gh` and `jq`. Use the intended repository's `origin`.

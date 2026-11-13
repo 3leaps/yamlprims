@@ -49,13 +49,15 @@ After the `Release` workflow succeeds on the pushed `v<VERSION>` tag:
 make release-fetch-ci-artifacts
 make release-stage-public
 make release-checksums
+make release-create-draft     # before signing: the draft holds the checksummed set
 make release-sign
 make release-verify
-make release-upload
+make release-upload           # adds the four signature files to the draft
 make release-publish
 make release-verify-published
-make release-crate-publish-dry-run
 ```
+
+`release-create-draft` validates the exact checksummed inventory, so it must run before `release-sign`. If the set is already signed, move the four `SHA*SUMS.{minisig,asc}` files aside, run `release-create-draft`, move them back, then `release-upload` (it re-verifies both signature sets).
 
 ## 5. Package registry publication (`v<VERSION>`)
 
@@ -65,7 +67,8 @@ The registries receive **exact signed files from the published GitHub release**;
 
 For each crate in `make release-crates-list` order (`yamlprims`; `yamlprims-cli` remains `publish = false` and ships as signed release binaries):
 
-- Fetch, verify, and publish through the isolated credential provider (`scripts/release-cargo-provider.py`):
+- Inputs: `YAMLPRIMS_CARGO_TOKEN_FILE` (a file holding the crates.io token, read only by the isolated credential provider `scripts/release-cargo-provider.py`); `CARGO_REGISTRY_TOKEN` must be unset. `release-crates-fetch` creates `dist/crates`, which the dry run and publish read.
+- Fetch, verify, and publish:
 
 ```sh
 make release-crates-fetch CRATE=<crate>
@@ -89,10 +92,26 @@ Once the project exists on PyPI (`yamlprims` in the `3leaps` organization) and n
 YAMLPRIMS_RELEASE_TAG=v<VERSION> make release-stage-published release-verify-registries
 ```
 
+- **npm post-upload validation:** after `npm publish` succeeds, npmjs.com can keep the version in its validation queue for many minutes (about 18 minutes for v0.2.0), so the workflow's `release-verify-registries.py` step may fail with HTTP 404 even though the publish succeeded (the error says so). Wait it out, then re-run `YAMLPRIMS_RELEASE_TAG=v<VERSION> make release-verify-registries` locally, raising `YAMLPRIMS_REGISTRY_POLL_ATTEMPTS` if needed.
 - **Post-publish verification failure recovery & Sigstore pin currency:**
   - `registry-publish.yml` runs `scripts/release-verify-registries.py --expect-provenance` immediately after upload. If verification fails due to transient registry indexing lag, re-run `YAMLPRIMS_RELEASE_TAG=v<VERSION> make release-verify-registries` locally once the registry metadata settles.
   - If verification fails because Sigstore rotated the Fulcio intermediate CA or Rekor transparency log key, refresh the pinned trust material in `scripts/release-verify-registries.py` from the live Sigstore public-good trust root and re-run `make release-verify-registries`.
   - If a published artifact digest or provenance attestation genuinely fails verification, immediately yank the affected PyPI release or deprecate/unpublish the affected npm version before cutting a patch release.
+
+### 5c. Homebrew tap and Scoop bucket (CLI)
+
+After the registries verify, update the shared `3leaps/homebrew-tap` and `3leaps/scoop-bucket` from the published release (hashes come only from the minisign-verified `SHA256SUMS`; nothing is rebuilt), each in its own branch and PR:
+
+```sh
+make -C ../homebrew-tap update-yamlprims TAG=v<VERSION>
+make -C ../homebrew-tap style audit test APP=yamlprims   # brew test runs `yamlprims --version`
+make -C ../homebrew-tap clean APP=yamlprims              # uninstall after the smoke: no two versions on PATH
+
+make -C ../scoop-bucket update-yamlprims VERSION=<VERSION>
+make -C ../scoop-bucket check
+```
+
+Open one PR in each repository; merge after CI is green.
 
 ### First publication only (before the package exists on PyPI or npm)
 
