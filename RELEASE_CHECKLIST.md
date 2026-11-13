@@ -38,8 +38,12 @@ make release-verify-remote-tag
 ```sh
 export YAMLPRIMS_EXPECTED_TAG_OBJECT=<40-hex tag object>
 export YAMLPRIMS_EXPECTED_COMMIT=<40-hex commit>
-YAMLPRIMS_RELEASE_ANCHOR_FILE=/absolute/path/outside/checkout/anchor.txt make release-record-anchor
+export YAMLPRIMS_RELEASE_ANCHOR_FILE=/absolute/path/outside/checkout/<tag>.anchor
+make release-record-anchor
+unset YAMLPRIMS_EXPECTED_TAG_OBJECT YAMLPRIMS_EXPECTED_COMMIT
 ```
+
+From here on the recorded anchor file is the only binding: every later step reads the tag object and commit from `YAMLPRIMS_RELEASE_ANCHOR_FILE`, and `release-verify-remote-tag` refuses an exported `YAMLPRIMS_EXPECTED_*` that disagrees with it.
 
 ## 4. Code release artifact assembly, signing, and verification (`v<VERSION>`)
 

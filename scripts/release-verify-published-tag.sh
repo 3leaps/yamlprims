@@ -35,6 +35,22 @@ remote_object="$(git ls-remote --exit-code origin "refs/tags/$tag" | awk '{print
 # When a verified anchor exists (from staging the packages), the remote object
 # must still equal it before any local ref changes: a replacement tag, even one
 # signed by the approved key, must not move the release to other packages.
+# Once this tag's ceremony anchor is recorded (YAMLPRIMS_RELEASE_ANCHOR_FILE
+# names an existing file), it is the binding: values exported in the shell
+# must agree with it, so a stale export from another release is refused by
+# name instead of silently binding the run. Callers that record or stage an
+# anchor (YAMLPRIMS_ANCHOR_OUT) bind explicitly and skip this.
+env_object="${YAMLPRIMS_EXPECTED_TAG_OBJECT:-}"
+env_commit="${YAMLPRIMS_EXPECTED_COMMIT:-}"
+if [[ -z "${YAMLPRIMS_ANCHOR_OUT:-}" && -n "${YAMLPRIMS_RELEASE_ANCHOR_FILE:-}" && -f "$YAMLPRIMS_RELEASE_ANCHOR_FILE" ]]; then
+    # shellcheck source=scripts/release-common.sh
+    source "$root/scripts/release-common.sh"
+    load_ceremony_anchor || die "ceremony anchor $YAMLPRIMS_RELEASE_ANCHOR_FILE is not a valid anchor for $tag"
+    [[ -z "$env_object" || "$env_object" == "$YAMLPRIMS_EXPECTED_TAG_OBJECT" ]] ||
+        die "exported YAMLPRIMS_EXPECTED_TAG_OBJECT $env_object differs from the recorded anchor $YAMLPRIMS_EXPECTED_TAG_OBJECT ($YAMLPRIMS_RELEASE_ANCHOR_FILE); unset it"
+    [[ -z "$env_commit" || "$env_commit" == "$YAMLPRIMS_EXPECTED_COMMIT" ]] ||
+        die "exported YAMLPRIMS_EXPECTED_COMMIT $env_commit differs from the recorded anchor $YAMLPRIMS_EXPECTED_COMMIT ($YAMLPRIMS_RELEASE_ANCHOR_FILE); unset it"
+fi
 expected_object="${YAMLPRIMS_EXPECTED_TAG_OBJECT:-}"
 expected_commit="${YAMLPRIMS_EXPECTED_COMMIT:-}"
 if [[ -n "$expected_object" || -n "$expected_commit" ]]; then
