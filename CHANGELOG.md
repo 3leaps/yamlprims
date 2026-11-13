@@ -8,6 +8,21 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-13
+
+### Added
+
+- `make release-env-check` names every per-release environment value that belongs to another release; `eval "$(make -s release-env-reset)"` clears them. The release checklist starts with both.
+
+### Changed
+
+- `make release-tag` refuses unless `HEAD`, fetched `origin/main` and `YAMLPRIMS_RELEASE_COMMIT` are the same commit, and `make release-push-tag` refuses a local tag naming another commit (`YAMLPRIMS_RELEASE_COMMIT` was documented but not checked).
+- `release-verify-published-tag.sh` binds to the recorded ceremony anchor once `YAMLPRIMS_RELEASE_ANCHOR_FILE` names it, refusing a disagreeing exported `YAMLPRIMS_EXPECTED_*` or an anchor for another tag.
+- Release guard errors print the compared values and the likely cause.
+- The OIDC npm publish verifies with a 120 x 15 s poll budget by default.
+- `check-tooling.py --prepush` preflights venv creation; the `make doctor` yamllint floor is 1.29.0 (the pinned CI toolbox).
+- RELEASE_CHECKLIST: `release-create-draft` before signing, crate dry run moved out of section 4, crate inputs, npm validation delay, Homebrew tap and Scoop bucket step, release environment variables.
+
 ## [0.2.1] - 2026-11-12
 
 ### Added
@@ -66,7 +81,8 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 - Conformance qualification against `conformance/pins/pin-c8b7421.json` (`structcorpus` `c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99`, 19 profile rows across `spec-v1.0` through `spec-v1.4`, `61,360` corpus cases / `90,982` expectations) and 154 in-repo differential conformance vectors (`conformance/vectors/cases.jsonl`).
 - Dual-track signed release, packaging, and provenance verification workflows and scripts (`.github/workflows/release.yml`, `.github/workflows/crates-verify.yml`, `.github/workflows/registry-publish.yml`, `scripts/release-*.sh`, `scripts/release-*.py`, `scripts/check-packages.sh`, `scripts/deps-check.sh`, `scripts/doctor.py`) supporting OpenPGP + Minisign release signing, zero-compile `crates.io` publication, and OIDC Trusted Publishing with PyPI PEP 740 and npm Sigstore provenance verification.
 
-[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/3leaps/yamlprims/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/3leaps/yamlprims/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/3leaps/yamlprims/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/3leaps/yamlprims/compare/v0.1.0...v0.1.1
