@@ -14,6 +14,7 @@ tag_load_set
 tags=(${tag_names[@]+"${tag_names[@]}"})
 refs=()
 for tag in ${tags[@]+"${tags[@]}"}; do
+	tag_release_commit_matches "$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}")" "local tag $tag commit"
 	[[ -z "$(git ls-remote --tags origin "refs/tags/$tag")" ]] || tag_die "remote tag $tag already exists"
 	refs+=("refs/tags/$tag")
 done

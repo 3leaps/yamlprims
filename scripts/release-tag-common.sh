@@ -153,11 +153,30 @@ tag_origin() {
 	esac
 }
 
+# YAMLPRIMS_RELEASE_COMMIT is the reviewed commit the release tags. Every tag
+# creation and push compares against it; HEAD or origin/main alone never
+# decides what is tagged.
+# Usage: tag_release_commit_matches SHA DESCRIPTION
+tag_release_commit_matches() {
+	local actual="$1" what="$2"
+	[[ "${YAMLPRIMS_RELEASE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || {
+		tag_die "YAMLPRIMS_RELEASE_COMMIT must be the reviewed full lowercase 40-hex commit (got '${YAMLPRIMS_RELEASE_COMMIT:-}')"
+		return 1
+	}
+	[[ "$actual" == "$YAMLPRIMS_RELEASE_COMMIT" ]] || {
+		tag_die "$what $actual differs from YAMLPRIMS_RELEASE_COMMIT $YAMLPRIMS_RELEASE_COMMIT"
+		return 1
+	}
+}
+
 tag_checkout() {
+	local head
 	tag_origin
 	git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main'
 	[[ -z "$(git status --porcelain --untracked-files=normal)" ]] || tag_die 'clean checkout required'
-	[[ "$(git rev-parse HEAD)" == "$(git rev-parse refs/remotes/origin/main)" ]] || tag_die 'HEAD must match fetched origin/main'
+	head="$(git rev-parse HEAD)"
+	[[ "$head" == "$(git rev-parse refs/remotes/origin/main)" ]] || tag_die "HEAD $head must match fetched origin/main $(git rev-parse refs/remotes/origin/main)"
+	tag_release_commit_matches "$head" HEAD
 }
 
 # The operator's subkey selector must name the committed signing subkey.

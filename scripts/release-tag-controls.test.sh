@@ -287,6 +287,17 @@ grep -q "note: git config gpg.program is '/nonexistent/wrapper'; release signing
 git -C "$repo" config --unset gpg.format
 git -C "$repo" config --unset gpg.program
 
+# The reviewed release commit is explicit: required, lowercase 40-hex, and the
+# only commit a tag may name (HEAD before signing, the tag's commit before push).
+head_sha="$(git -C "$repo" rev-parse HEAD)"
+expect_fail_with 'YAMLPRIMS_RELEASE_COMMIT must be the reviewed full lowercase 40-hex commit' call "tag_release_commit_matches $head_sha HEAD" -u YAMLPRIMS_RELEASE_COMMIT
+expect_fail_with 'YAMLPRIMS_RELEASE_COMMIT must be the reviewed' call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT="$(tr a-f A-F <<<"$head_sha")"
+expect_fail_with 'YAMLPRIMS_RELEASE_COMMIT must be the reviewed' call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT="${head_sha:0:12}"
+expect_fail_with "HEAD $head_sha differs from YAMLPRIMS_RELEASE_COMMIT 0000000000000000000000000000000000000000" call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT=0000000000000000000000000000000000000000
+call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT="$head_sha"
+grep -q 'tag_release_commit_matches "$head" HEAD' "$repo/scripts/release-tag-common.sh"
+grep -q 'tag_release_commit_matches "$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}")"' "$fixture_root/scripts/release-push-tag.sh"
+
 # Post-push anchor exports name the annotated object and its commit, and refuse
 # absent or lightweight tags.
 zero=0000000000000000000000000000000000000000

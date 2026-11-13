@@ -23,7 +23,7 @@ When qualifying a code release or adapter change, also run the pinned `structcor
 
 ## 3. GitHub preflight and signed tag creation
 
-Source the maintainer's external release environment outside the repository and set `YAMLPRIMS_RELEASE_TAG` (`v<VERSION>` or `spec-v<SPEC_VERSION>`) and `YAMLPRIMS_RELEASE_COMMIT` (full 40-hex commit SHA on `main`); see [docs/releases.md](docs/releases.md#signed-tags) for the required environment variables:
+Source the maintainer's external release environment outside the repository and set `YAMLPRIMS_RELEASE_TAG` (`v<VERSION>` or `spec-v<SPEC_VERSION>`) and `YAMLPRIMS_RELEASE_COMMIT` (the reviewed full lowercase 40-hex commit on `main`; `release-tag` refuses unless `HEAD`, fetched `origin/main` and this value are the same commit, and `release-push-tag` refuses a local tag that names any other commit); see [docs/releases.md](docs/releases.md#signed-tags) for the required environment variables:
 
 ```sh
 make release-github-preflight
