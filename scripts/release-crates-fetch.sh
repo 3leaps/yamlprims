@@ -51,9 +51,11 @@ runs="$(release_gh run list --repo "$YAMLPRIMS_REPOSITORY" --workflow "$workflow
 run="${YAMLPRIMS_CRATE_RUN_ID:-}"
 if [[ -n "$run" ]]; then
 	[[ "$run" =~ ^[1-9][0-9]*$ ]] || die 'invalid selected run'
-	jq -e --argjson run "$run" 'index($run) != null' <<<"$runs" >/dev/null || die "selected run is not a successful $workflow run for this tag and commit"
+	jq -e --argjson run "$run" 'index($run) != null' <<<"$runs" >/dev/null ||
+		die "selected run is not a successful $workflow run for this tag and commit: YAMLPRIMS_CRATE_RUN_ID=$run is not among $(jq -c . <<<"$runs") for $tag at $commit; stale from another release?"
 else
-	[[ "$(jq length <<<"$runs")" == 1 ]] || die 'select an exact successful run with YAMLPRIMS_CRATE_RUN_ID'
+	[[ "$(jq length <<<"$runs")" == 1 ]] ||
+		die "select an exact successful run with YAMLPRIMS_CRATE_RUN_ID: successful $workflow runs for $tag at $commit: $(jq -c . <<<"$runs")"
 	run="$(jq -r '.[0]' <<<"$runs")"
 fi
 release_gh api "repos/$YAMLPRIMS_REPOSITORY/actions/runs/$run" >"$scratch/run.json"
