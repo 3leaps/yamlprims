@@ -1051,6 +1051,13 @@ fi
 grep -q 'YAMLPRIMS_REGISTRY_POLL_ATTEMPTS="${YAMLPRIMS_REGISTRY_POLL_ATTEMPTS:-120}"' "$root/scripts/ci-publish-npm-oidc.sh"
 # shellcheck disable=SC2016 # Matching literal shell text in the script.
 grep -q 'YAMLPRIMS_REGISTRY_POLL_SLEEP="${YAMLPRIMS_REGISTRY_POLL_SLEEP:-15}"' "$root/scripts/ci-publish-npm-oidc.sh"
+# The publish-npm job outlives that budget (120 x 15 s = 30 min) with room for
+# the publish itself, so the runner never cancels a wait that would succeed.
+npm_timeout="$(awk '/^  publish-npm:/ {job=1; next} job && /^  [a-z]/ {job=0} job && /timeout-minutes:/ {print $2; exit}' "$root/.github/workflows/registry-publish.yml")"
+[[ "$npm_timeout" =~ ^[0-9]+$ && "$npm_timeout" -ge 40 ]] || {
+	echo "error: publish-npm timeout-minutes ($npm_timeout) does not exceed the 30-minute npm poll budget with margin" >&2
+	exit 1
+}
 
 # Standalone scripts/release-verify-registries.sh must bind staged public keys
 # and fingerprint pins to the verified tagged commit, rejecting a replacement

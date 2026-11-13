@@ -1,6 +1,6 @@
 eebaa9738ae4c313fb82a7246546d2385f9bc0e86a7ad4d9e3a6fe0489d52266  .github/actions/check-docs/action.yml
 d01af060f89d6e66855eef64bb0edf3ecce8057ade878891d07e97a2168e6876  .github/workflows/check.yml
 17ab294e3a3fa44e57cf1a81def36115e6839cd06ed5729a177bb01e5e352453  .github/workflows/crates-verify.yml
-0fe3f7b95f685de86b6b05f525db089beac07072adbe5fa1b42756f7cac778b4  .github/workflows/registry-publish.yml
+c85df711a0ac905dcc98ea1505f7327c73d79add4221a58b836bbc235812b5b0  .github/workflows/registry-publish.yml
 cd2915b0e5810889b416cd2b9a54f1d7589cc9f324ce302ceb3de5369c8dd2b5  .github/workflows/release.yml
 976bda46e95672324143eab5bf098ae3d0f79e58d232054dfef90772d30bf6b8  .github/workflows/rust.yml

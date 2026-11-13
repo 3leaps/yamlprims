@@ -38,8 +38,8 @@ remote_object="$(git ls-remote --exit-code origin "refs/tags/$tag" | awk '{print
 # Once this tag's ceremony anchor is recorded (YAMLPRIMS_RELEASE_ANCHOR_FILE
 # names an existing file), it is the binding: values exported in the shell
 # must agree with it, so a stale export from another release is refused by
-# name instead of silently binding the run. Callers that record or stage an
-# anchor (YAMLPRIMS_ANCHOR_OUT) bind explicitly and skip this.
+# name instead of silently binding the run. This applies in output mode
+# (YAMLPRIMS_ANCHOR_OUT) too; only an absent anchor verifies unbound.
 env_object="${YAMLPRIMS_EXPECTED_TAG_OBJECT:-}"
 env_commit="${YAMLPRIMS_EXPECTED_COMMIT:-}"
 configured_anchor="${YAMLPRIMS_RELEASE_ANCHOR_FILE:-}"
