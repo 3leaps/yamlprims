@@ -72,7 +72,7 @@ export YAMLPRIMS_RELEASE_TAG YAMLPRIMS_TAG_MESSAGE_DIR
 if [[ "$mode" == prepare-message ]]; then
 	exec "$root/scripts/release-prepare-tag-message.py"
 fi
-export YAMLPRIMS_TAGGER_NAME YAMLPRIMS_TAGGER_EMAIL YAMLPRIMS_PGP_KEY_ID YAMLPRIMS_GPG_HOMEDIR YAMLPRIMS_DECERNOR_BIN
+export YAMLPRIMS_TAGGER_NAME YAMLPRIMS_TAGGER_EMAIL YAMLPRIMS_PGP_KEY_ID YAMLPRIMS_GPG_HOMEDIR YAMLPRIMS_DECERNOR_BIN YAMLPRIMS_RELEASE_COMMIT
 
 # shellcheck source=scripts/release-tag-common.sh
 source "$root/scripts/release-tag-common.sh"

@@ -35,12 +35,38 @@ remote_object="$(git ls-remote --exit-code origin "refs/tags/$tag" | awk '{print
 # When a verified anchor exists (from staging the packages), the remote object
 # must still equal it before any local ref changes: a replacement tag, even one
 # signed by the approved key, must not move the release to other packages.
+# Once this tag's ceremony anchor is recorded (YAMLPRIMS_RELEASE_ANCHOR_FILE
+# names an existing file), it is the binding: values exported in the shell
+# must agree with it, so a stale export from another release is refused by
+# name instead of silently binding the run. This applies in output mode
+# (YAMLPRIMS_ANCHOR_OUT) too; only an absent anchor verifies unbound.
+env_object="${YAMLPRIMS_EXPECTED_TAG_OBJECT:-}"
+env_commit="${YAMLPRIMS_EXPECTED_COMMIT:-}"
+configured_anchor="${YAMLPRIMS_RELEASE_ANCHOR_FILE:-}"
+if [[ -n "$configured_anchor" && (-L "$configured_anchor" || (-e "$configured_anchor" && ! -f "$configured_anchor")) ]]; then
+    # A configured anchor that exists but is not a regular file (directory,
+    # symlink, broken symlink) is refused rather than treated as unrecorded.
+    die "ceremony anchor $configured_anchor exists but is not a regular file"
+fi
+if [[ -n "$configured_anchor" && -f "$configured_anchor" ]]; then
+    # Output mode (YAMLPRIMS_ANCHOR_OUT) binds to an existing anchor too.
+    # shellcheck source=scripts/release-common.sh
+    source "$root/scripts/release-common.sh"
+    load_ceremony_anchor || die "ceremony anchor $configured_anchor is not a valid anchor for $tag"
+    [[ -z "$env_object" || "$env_object" == "$YAMLPRIMS_EXPECTED_TAG_OBJECT" ]] ||
+        die "exported YAMLPRIMS_EXPECTED_TAG_OBJECT $env_object differs from the recorded anchor $YAMLPRIMS_EXPECTED_TAG_OBJECT ($YAMLPRIMS_RELEASE_ANCHOR_FILE); unset it"
+    [[ -z "$env_commit" || "$env_commit" == "$YAMLPRIMS_EXPECTED_COMMIT" ]] ||
+        die "exported YAMLPRIMS_EXPECTED_COMMIT $env_commit differs from the recorded anchor $YAMLPRIMS_EXPECTED_COMMIT ($YAMLPRIMS_RELEASE_ANCHOR_FILE); unset it"
+elif [[ -z "$env_object" && -z "$env_commit" && -z "${YAMLPRIMS_ANCHOR_OUT:-}" ]]; then
+    echo "note: no recorded ceremony anchor${configured_anchor:+ at $configured_anchor}; verifying unbound (initial verification before release-record-anchor)" >&2
+fi
 expected_object="${YAMLPRIMS_EXPECTED_TAG_OBJECT:-}"
 expected_commit="${YAMLPRIMS_EXPECTED_COMMIT:-}"
 if [[ -n "$expected_object" || -n "$expected_commit" ]]; then
     [[ "$expected_object" =~ ^[0-9a-f]{40}$ && "$expected_commit" =~ ^[0-9a-f]{40}$ ]] ||
         die 'expected tag object and commit must both be 40-hex'
-    [[ "$remote_object" == "$expected_object" ]] || die 'remote tag object differs from the verified anchor'
+    [[ "$remote_object" == "$expected_object" ]] ||
+        die "remote tag object differs from the verified anchor: remote $remote_object, expected $expected_object (YAMLPRIMS_EXPECTED_TAG_OBJECT; stale from another release?)"
 fi
 # Fetch into a private namespace and verify there; local refs/tags change only
 # after every check passes.
@@ -50,15 +76,18 @@ trap cleanup_staging EXIT
 git fetch --quiet --no-tags origin "+refs/tags/$tag:$staging$tag"
 [[ "$(git rev-parse "$staging$tag")" == "$remote_object" ]] || die 'fetched tag differs from remote tag object'
 [[ "$(git cat-file -t "$remote_object")" == tag ]] || die 'annotated tag required'
-commit="$(git rev-parse "$staging$tag^{}")"
-[[ -z "$expected_commit" || "$commit" == "$expected_commit" ]] || die 'tagged commit differs from the verified anchor'
+# From here on every check names the fetched object id, never the staging
+# ref, so a ref swap during verification cannot change what is recorded.
+commit="$(git rev-parse "${remote_object}^{commit}")"
+[[ -z "$expected_commit" || "$commit" == "$expected_commit" ]] ||
+    die "tagged commit differs from the verified anchor: tagged $commit, expected $expected_commit (YAMLPRIMS_EXPECTED_COMMIT; stale from another release?)"
 # The verifier and its helpers run from this trusted operator checkout. The
 # tagged commit is read only as inert git objects (tag object, pin, anchors,
 # tagger identity); no file from the unverified target is ever executed.
 pinned="$(git cat-file blob "$commit:keys/expected-fingerprints.txt" 2>/dev/null | awk '$1=="gpg" {print $2}')" ||
     die 'tagged commit has no fingerprint anchors'
 [[ "$pinned" == "$approved" ]] || die 'pin in the tagged commit is not the approved primary'
-YAMLPRIMS_RELEASE_TAG="$tag" "$root/scripts/verify-pinned-tag.sh" --published --staged-prefix "$staging" >/dev/null ||
+YAMLPRIMS_RELEASE_TAG="$tag" "$root/scripts/verify-pinned-tag.sh" --published --object "$remote_object" >/dev/null ||
     die 'published tag signature does not verify against the pin committed in its commit'
 tag_json="$(release_gh api "repos/3leaps/yamlprims/git/tags/$remote_object")" || die "GitHub tag object for $tag unavailable"
 jq -e --arg tag "$tag" --arg commit "$commit" \

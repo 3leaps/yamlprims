@@ -25,6 +25,17 @@ release_version() {
     printf '%s\n' "$version"
 }
 
+# Either release tag namespace (vX.Y.Z or spec-vX.Y), for steps that apply to
+# both, such as binding to a recorded ceremony anchor.
+release_any_tag() {
+    local tag="${YAMLPRIMS_RELEASE_TAG:-}"
+    if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && ! "$tag" =~ ^spec-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+        echo "error: release tag must be canonical vX.Y.Z or spec-vX.Y" >&2
+        return 1
+    fi
+    printf '%s\n' "$tag"
+}
+
 release_tag() {
     local tag="${1:-${YAMLPRIMS_RELEASE_TAG:-}}"
     if [[ -z "$tag" ]]; then
@@ -258,7 +269,7 @@ load_ceremony_anchor() {
         ;;
     esac
     identity="$(
-        python3 - "$anchor" "$(release_tag)" <<'PYTHON'
+        python3 - "$anchor" "$(release_any_tag)" <<'PYTHON'
 from pathlib import Path
 import re
 import sys

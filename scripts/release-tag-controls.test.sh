@@ -287,6 +287,37 @@ grep -q "note: git config gpg.program is '/nonexistent/wrapper'; release signing
 git -C "$repo" config --unset gpg.format
 git -C "$repo" config --unset gpg.program
 
+# The reviewed release commit is explicit: required, lowercase 40-hex, and the
+# only commit a tag may name (HEAD before signing, the tag's commit before push).
+head_sha="$(git -C "$repo" rev-parse HEAD)"
+expect_fail_with 'YAMLPRIMS_RELEASE_COMMIT must be the reviewed full lowercase 40-hex commit' call "tag_release_commit_matches $head_sha HEAD" -u YAMLPRIMS_RELEASE_COMMIT
+expect_fail_with 'YAMLPRIMS_RELEASE_COMMIT must be the reviewed' call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT="$(tr a-f A-F <<<"$head_sha")"
+expect_fail_with 'YAMLPRIMS_RELEASE_COMMIT must be the reviewed' call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT="${head_sha:0:12}"
+expect_fail_with "HEAD $head_sha differs from YAMLPRIMS_RELEASE_COMMIT 0000000000000000000000000000000000000000" call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT=0000000000000000000000000000000000000000
+call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT="$head_sha"
+grep -q 'tag_release_commit_matches "$head" HEAD' "$repo/scripts/release-tag-common.sh"
+# Creation signs the reviewed commit itself and verification targets it, never HEAD.
+grep -q -- '-F "$(tag_message_file "$tag")" "$tag" "$release_commit"$' "$fixture_root/scripts/release-tag.sh"
+if grep -q '"$tag" HEAD$' "$fixture_root/scripts/release-tag.sh"; then
+	echo 'error: release-tag.sh signs HEAD instead of the reviewed commit' >&2
+	exit 1
+fi
+grep -q '^target="$YAMLPRIMS_RELEASE_COMMIT"$' "$fixture_root/scripts/release-verify-tag.sh"
+# Push captures the verified annotated object, checks it names the reviewed
+# commit, refuses a ref that moved during verification, pushes the object id
+# and requires the remote to hold exactly that object.
+push_script="$fixture_root/scripts/release-push-tag.sh"
+grep -q 'tag_release_commit_matches "$(git rev-parse --verify --quiet "$object^{commit}")" "local tag $tag commit"' "$push_script"
+grep -q 'moved during verification' "$push_script"
+grep -q '"$tag_root/scripts/release-verify-tag.sh" --object "$object"' "$push_script"
+grep -q 'verify-pinned-tag.sh" ${pinned_object:+--object "$pinned_object"}' "$fixture_root/scripts/release-verify-tag.sh"
+grep -q 'refs+=("$object:refs/tags/$tag")' "$push_script"
+grep -q 'not the verified object' "$push_script"
+if grep -q 'refs+=("refs/tags/$tag")' "$push_script"; then
+	echo 'error: release-push-tag.sh pushes a ref name instead of the verified object' >&2
+	exit 1
+fi
+
 # Post-push anchor exports name the annotated object and its commit, and refuse
 # absent or lightweight tags.
 zero=0000000000000000000000000000000000000000

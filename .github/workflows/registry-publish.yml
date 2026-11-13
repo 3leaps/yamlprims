@@ -160,7 +160,7 @@ jobs:
     needs: verify
     if: inputs.dry_run != true && (inputs.registry == 'all' || inputs.registry == 'npm')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 45
     environment: publish-npm
     permissions:
       contents: read

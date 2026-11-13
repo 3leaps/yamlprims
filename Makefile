@@ -25,7 +25,7 @@ SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
 .PHONY: workflow-pin jq-portability content-check host-path-check surface-scan doctor
 .PHONY: test-release-tag-controls release-tooling-test release-check release-github-preflight
 .PHONY: release-preflight release-prepare-tag-message release-tag release-push-tag
-.PHONY: release-verify-tag release-verify-remote-tag release-record-anchor release-export-pin
+.PHONY: release-env-reset release-env-check release-verify-tag release-verify-remote-tag release-record-anchor release-export-pin
 .PHONY: release-validate-pin release-insert-anchors release-crates-list release-source-check
 .PHONY: release-crates-fetch release-crate-dry-run release-crate-publish-dry-run release-crate-publish
 .PHONY: release-crates-clean release-clean release-download release-fetch-ci-artifacts
@@ -256,6 +256,14 @@ release-push-tag:
 release-verify-tag:
 	$(REQUIRE_RELEASE_TAG)
 	scripts/release-verify-tag.sh
+
+# The calling shell must run the reset itself: eval "$$(make -s release-env-reset)"
+release-env-reset:
+	@scripts/release-env.sh reset
+
+release-env-check:
+	$(REQUIRE_RELEASE_TAG)
+	scripts/release-env.sh check
 
 release-verify-remote-tag:
 	$(REQUIRE_RELEASE_TAG)

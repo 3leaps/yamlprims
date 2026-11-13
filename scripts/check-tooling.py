@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 def main():
@@ -35,6 +36,49 @@ def main():
             + ", ".join(missing)
             + ". See CONTRIBUTING.md.\n",
         )
+    if args.prepush:
+        # python-check and the wheel builds create venvs with this interpreter
+        # (pip included). Stock Debian/Ubuntu ship Python without ensurepip
+        # until python3-venv is installed; fail here, not after the Rust, Go
+        # and TypeScript gates.
+        with tempfile.TemporaryDirectory(prefix="yamlprims-venv-probe.") as probe:
+            try:
+                venv = subprocess.run(
+                    [sys.executable, "-I", "-m", "venv", str(Path(probe) / "v")],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                parser.exit(1, "Could not create a Python venv: " + str(exc) + "\n")
+        if venv.returncode:
+            detail = [
+                line.strip()
+                for line in (venv.stderr + "\n" + venv.stdout).splitlines()
+                if line.strip()
+            ]
+            # Prefer venv's own reason (it names ensurepip) over its trailing
+            # "Failing command" line.
+            hits = [i for i, line in enumerate(detail) if "ensurepip" in line]
+            if hits:
+                # venv wraps its sentence; join lines until it ends.
+                end = hits[0]
+                while end + 1 < len(detail) and not detail[end].endswith(".") and end - hits[0] < 2:
+                    end += 1
+                reason = " ".join(detail[hits[0] : end + 1]).split(". ")[0].rstrip(".")
+            else:
+                reason = detail[-1] if detail else "no detail"
+            package = "python{}.{}-venv".format(*sys.version_info[:2])
+            parser.exit(
+                1,
+                "Python "
+                + sys.executable
+                + " cannot create a venv with pip (prepush needs it): "
+                + reason
+                + ". On Debian/Ubuntu install "
+                + package
+                + " (the venv package for this Python). See CONTRIBUTING.md.\n",
+            )
     pin = (
         (Path(__file__).resolve().parents[1] / ".goneat-version")
         .read_text(encoding="ascii")

@@ -1,7 +1,7 @@
 # Specification and code releases
 
 Specification tags use `spec-v<SPEC_VERSION>` (governed by `SPEC_VERSION` and [RELEASE_NOTES.md](../RELEASE_NOTES.md)). Code and CLI releases use `v<VERSION>` (governed by `VERSION` and `docs/releases/v<VERSION>.md`).
-Tags `spec-v1.0` through `spec-v1.5` exist (`SPEC_VERSION` is `1.5`). The current code release line is `0.2.1` (`VERSION` is `0.2.1`), shipping the Rust core crate (`yamlprims` on crates.io), the pure-Go twin (`github.com/3leaps/yamlprims/yaml`), the TypeScript WebAssembly package (`@3leaps/yamlprims` on npm), the Python `abi3` wheels (`yamlprims` on PyPI), and the multi-platform CLI (`yamlprims`); see [docs/releases/v0.2.1.md](releases/v0.2.1.md) and [the build specification](build-spec.md).
+Tags `spec-v1.0` through `spec-v1.5` exist (`SPEC_VERSION` is `1.5`). The current code release line is `0.2.2` (`VERSION` is `0.2.2`), shipping the Rust core crate (`yamlprims` on crates.io), the pure-Go twin (`github.com/3leaps/yamlprims/yaml`), the TypeScript WebAssembly package (`@3leaps/yamlprims` on npm), the Python `abi3` wheels (`yamlprims` on PyPI), and the multi-platform CLI (`yamlprims`); see [docs/releases/v0.2.2.md](releases/v0.2.2.md) and [the build specification](build-spec.md).
 
 The immutable `spec-v1.1`, `spec-v1.2`, `spec-v1.3` and `spec-v1.4` specifications retain their original
 "Unreleased draft" wording inside the tagged specification file. Status updates on `main` do not replace those
@@ -31,6 +31,11 @@ The maintainer configures these environment variables in their signing terminal:
 | `YAMLPRIMS_TAGGER_EMAIL`            | `infosec@3leaps.net`                                             |
 | `YAMLPRIMS_MINISIGN_KEY`            | External Minisign secret key path (for `v<VERSION>` asset signs) |
 | `YAMLPRIMS_MINISIGN_PUB`            | Repository Minisign public key (`docs/security/yamlprims-minisign.pub`) |
+| `YAMLPRIMS_YAML_BIN`                | Absolute path to the yamlprims CLI from a release archive pinned in `config/yamlprims-cli.txt` (the workflow checkers run it; any path works, the digest is checked) |
+| `YAMLPRIMS_DECERNOR_BIN`            | Absolute path to decernor >= 0.1.8 (fingerprint anchors)          |
+| `YAMLPRIMS_CARGO_TOKEN_FILE`        | File holding the crates.io token (crate publish only; `CARGO_REGISTRY_TOKEN` must be unset) |
+
+Per-release values set during the ceremony (`YAMLPRIMS_EXPECTED_TAG_OBJECT`, `YAMLPRIMS_EXPECTED_COMMIT`, `YAMLPRIMS_RELEASE_ANCHOR_FILE`, `YAMLPRIMS_RELEASE_RUN_ID`, `YAMLPRIMS_RELEASE_RUN_ATTEMPT`) belong to one tag only; start each release from a shell without them.
 
 Prerequisites: Bash, Git, GnuPG, Minisign, Python 3.11+, the pinned yamlprims release CLI for the workflow checkers (`YAMLPRIMS_YAML_BIN`, the absolute path to the binary from a release archive listed in `config/yamlprims-cli.txt`) and Make. GitHub verification and release asset staging also
 require authenticated `gh` and `jq`. Use the intended repository's `origin`.

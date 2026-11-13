@@ -43,16 +43,19 @@ YAMLPRIMS_ANCHOR_OUT="$scratch/anchor" "$root/scripts/release-verify-published-t
 commit="$(awk -F= '$1=="commit" {print $2}' "$scratch/anchor")"
 object="$(awk -F= '$1=="object" {print $2}' "$scratch/anchor")"
 [[ "$object" == "$YAMLPRIMS_EXPECTED_TAG_OBJECT" &&
-	"$commit" == "$YAMLPRIMS_EXPECTED_COMMIT" ]] || die 'verified tags differ from the recorded ceremony anchor'
+	"$commit" == "$YAMLPRIMS_EXPECTED_COMMIT" ]] ||
+	die "verified tags differ from the recorded ceremony anchor: verified $object -> $commit, anchor $YAMLPRIMS_EXPECTED_TAG_OBJECT -> $YAMLPRIMS_EXPECTED_COMMIT"
 runs="$(release_gh run list --repo "$YAMLPRIMS_REPOSITORY" --workflow "$workflow" --branch "$tag" --limit 100 \
 	--json databaseId,headSha,conclusion,event \
 	--jq "[.[] | select(.headSha == \"$commit\" and .conclusion == \"success\" and .event == \"$event\") | .databaseId]")"
 run="${YAMLPRIMS_CRATE_RUN_ID:-}"
 if [[ -n "$run" ]]; then
 	[[ "$run" =~ ^[1-9][0-9]*$ ]] || die 'invalid selected run'
-	jq -e --argjson run "$run" 'index($run) != null' <<<"$runs" >/dev/null || die "selected run is not a successful $workflow run for this tag and commit"
+	jq -e --argjson run "$run" 'index($run) != null' <<<"$runs" >/dev/null ||
+		die "selected run is not a successful $workflow run for this tag and commit: YAMLPRIMS_CRATE_RUN_ID=$run is not among $(jq -c . <<<"$runs") for $tag at $commit; stale from another release?"
 else
-	[[ "$(jq length <<<"$runs")" == 1 ]] || die 'select an exact successful run with YAMLPRIMS_CRATE_RUN_ID'
+	[[ "$(jq length <<<"$runs")" == 1 ]] ||
+		die "select an exact successful run with YAMLPRIMS_CRATE_RUN_ID: successful $workflow runs for $tag at $commit: $(jq -c . <<<"$runs")"
 	run="$(jq -r '.[0]' <<<"$runs")"
 fi
 release_gh api "repos/$YAMLPRIMS_REPOSITORY/actions/runs/$run" >"$scratch/run.json"

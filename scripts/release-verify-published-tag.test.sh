@@ -29,7 +29,7 @@ git -C "$src" config user.name '3 Leaps Infosec Team'
 git -C "$src" config user.email infosec@3leaps.net
 mkdir -p "$src/scripts" "$src/docs/security" "$src/keys" "$src/config/release"
 verifier=(verify-pinned-tag.sh validate-release-anchors.sh release-verify-published-tag.sh release-tag-common.sh release-gh.sh release-workflow-pin.py
-    yaml_json.py release-decernor.sh release-insert-anchors.sh install-release-anchors.sh)
+    yaml_json.py release-common.sh release-decernor.sh release-insert-anchors.sh install-release-anchors.sh)
 for script in ${verifier[@]+"${verifier[@]}"}; do cp "$root/scripts/$script" "$src/scripts/"; done
 cp "$root/config/yamlprims-cli.txt" "$src/config/"
 cp "$root/config/release/tagger-identity.txt" "$src/config/release/"
@@ -242,6 +242,70 @@ for bound in "$(anchored)" "$(cd "$op" && YAMLPRIMS_ANCHOR_OUT="$scratch/anchor2
         exit 1
     fi
 done
+# Once the anchor is recorded, it binds the run: no exports are needed, none
+# are printed, and a stale export from another release is refused by name.
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$anchor_object" "$anchor_commit" >"$scratch/ceremony.anchor"
+recorded="$(cd "$op" && env -u YAMLPRIMS_EXPECTED_TAG_OBJECT -u YAMLPRIMS_EXPECTED_COMMIT YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/ceremony.anchor" ./scripts/release-verify-published-tag.sh)"
+if grep -q '^export ' <<<"$recorded"; then
+    echo 'error: an anchor-bound verification printed exports' >&2
+    exit 1
+fi
+if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/ceremony.anchor" YAMLPRIMS_EXPECTED_TAG_OBJECT=26077e1769ea950639655302263aba5717987897 \
+    ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1; then
+    echo 'error: a stale exported tag object passed against the recorded anchor' >&2
+    exit 1
+fi
+grep -q "exported YAMLPRIMS_EXPECTED_TAG_OBJECT 26077e1769ea950639655302263aba5717987897 differs from the recorded anchor $anchor_object" "$scratch/out" || {
+    cat "$scratch/out" >&2
+    exit 1
+}
+if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/ceremony.anchor" YAMLPRIMS_EXPECTED_COMMIT=1b365fcc563d3ab9057010c0a28178a7b88b6eb5 \
+    ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1; then
+    echo 'error: a stale exported commit passed against the recorded anchor' >&2
+    exit 1
+fi
+grep -q 'exported YAMLPRIMS_EXPECTED_COMMIT 1b365fcc563d3ab9057010c0a28178a7b88b6eb5 differs from the recorded anchor' "$scratch/out"
+# An anchor for another tag is not silently ignored.
+printf 'tag=v9.9.9\nobject=%s\ncommit=%s\n' "$anchor_object" "$anchor_commit" >"$scratch/other.anchor"
+if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/other.anchor" ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1; then
+    echo 'error: an anchor for another tag was accepted' >&2
+    exit 1
+fi
+grep -q 'is not a valid anchor for v1.2.3' "$scratch/out"
+# After the fetch, every check names the fetched object id, never the staging
+# ref: the commit is peeled from it and the pin check verifies it by --object.
+# shellcheck disable=SC2016 # Matching literal shell text in the script.
+grep -q 'commit="$(git rev-parse "${remote_object}^{commit}")"' "$root/scripts/release-verify-published-tag.sh"
+# shellcheck disable=SC2016 # Matching literal shell text in the script.
+grep -q 'verify-pinned-tag.sh" --published --object "$remote_object"' "$root/scripts/release-verify-published-tag.sh"
+# shellcheck disable=SC2016 # Matching literal shell text in the script.
+if grep -q '"$staging$tag^{}"\|--staged-prefix "$staging"' "$root/scripts/release-verify-published-tag.sh"; then
+    echo 'error: published-tag verification still reads the mutable staging ref' >&2
+    exit 1
+fi
+# A configured anchor that exists but is not a regular file never falls back
+# to unbound verification.
+mkdir "$scratch/dir.anchor"
+ln -s "$scratch/ceremony.anchor" "$scratch/link.anchor"
+ln -s "$scratch/nowhere" "$scratch/broken.anchor"
+for bad_anchor in "$scratch/dir.anchor" "$scratch/link.anchor" "$scratch/broken.anchor"; do
+    if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$bad_anchor" ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1; then
+        echo "error: unusable anchor $bad_anchor fell back to unbound verification" >&2
+        exit 1
+    fi
+    grep -q 'exists but is not a regular file' "$scratch/out" || { cat "$scratch/out" >&2; exit 1; }
+done
+# Output mode (YAMLPRIMS_ANCHOR_OUT) binds to an existing anchor too.
+if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/ceremony.anchor" YAMLPRIMS_EXPECTED_TAG_OBJECT=26077e1769ea950639655302263aba5717987897 \
+    YAMLPRIMS_ANCHOR_OUT="$scratch/anchor3" ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1; then
+    echo 'error: output mode ignored the recorded anchor' >&2
+    exit 1
+fi
+grep -q 'differs from the recorded anchor' "$scratch/out"
+# Unbound initial verification says so.
+(cd "$op" && env -u YAMLPRIMS_EXPECTED_TAG_OBJECT -u YAMLPRIMS_EXPECTED_COMMIT YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/not-yet.anchor" \
+    ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1
+grep -q "note: no recorded ceremony anchor at $scratch/not-yet.anchor; verifying unbound" "$scratch/out"
 # Same version, approved key, DIFFERENT target commit: fails before any ref change.
 printf 'other build\n' >>"$src/file"
 git -C "$src" add file
@@ -271,6 +335,13 @@ if anchored >"$scratch/out" 2>&1; then
     exit 1
 fi
 grep -q 'differs from the verified anchor' "$scratch/out"
+# The refusal names both objects, so a stale anchor is obvious.
+replacement="$(git -C "$scratch/remote.git" rev-parse refs/tags/v1.2.3)"
+grep -q "remote $replacement, expected $anchor_object" "$scratch/out" || {
+    echo 'error: anchor refusal does not name the remote and expected objects' >&2
+    cat "$scratch/out" >&2
+    exit 1
+}
 # A partial anchor is refused.
 (cd "$op" && YAMLPRIMS_EXPECTED_TAG_OBJECT="$anchor_object" ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1 &&
     {
