@@ -2,6 +2,19 @@
 
 Use this checklist for `yamlprims` releases. Specification tags (`spec-v<SPEC_VERSION>`) and code releases (`v<VERSION>`) use separate version files and tag namespaces; see [docs/releases.md](docs/releases.md).
 
+## 0. Start from a clean release shell
+
+Per-release values (`YAMLPRIMS_RELEASE_TAG`, `YAMLPRIMS_RELEASE_COMMIT`, `YAMLPRIMS_EXPECTED_*`, `YAMLPRIMS_RELEASE_ANCHOR_FILE`, `YAMLPRIMS_RELEASE_RUN_ID`/`_ATTEMPT`, `YAMLPRIMS_CRATE_RUN_ID`) belong to one tag. Clear them before a new release, then set this release's tag and reviewed commit:
+
+```sh
+eval "$(make -s release-env-reset)"
+export YAMLPRIMS_RELEASE_TAG=v<VERSION>          # or spec-v<SPEC_VERSION>
+export YAMLPRIMS_RELEASE_COMMIT=<reviewed 40-hex commit on main>
+make release-env-check
+```
+
+Run `make release-env-check` again whenever a step fails unexpectedly or the shell has been reused: it names every per-release value that belongs to another release.
+
 ## 1. Version and release-note alignment
 
 - For a code release (`v<VERSION>`):
