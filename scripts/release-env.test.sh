@@ -91,7 +91,7 @@ refused "differs from the recorded anchor ($object); unset it" ${clean[@]+"${cle
 printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$first" "$first" >"$scratch/moved.anchor"
 refused "records commit $first, but local tag v1.2.3 is $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/moved.anchor"
 printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$first" "$head" >"$scratch/otherobj.anchor"
-refused "local tag v1.2.3 is $object -> $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/otherobj.anchor"
+refused "which is not an annotated tag v1.2.3 directly on $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/otherobj.anchor"
 # Strict anchor validation: a tag-only or malformed anchor, a symlink and a
 # directory are all refused, not accepted on a matching tag line.
 printf 'tag=v1.2.3\n' >"$scratch/tagonly.anchor"
@@ -108,9 +108,32 @@ printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$object" "$first" >"$scratch/pretag
 refused "records commit $first, but HEAD (no local tag v1.2.3 yet) is $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/pretag.anchor"
 # ... and its object must be a real annotated tag for that commit.
 printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' 1111111111111111111111111111111111111111 "$head" >"$scratch/bogus.anchor"
-refused "records object 1111111111111111111111111111111111111111, which is not an annotated tag for $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/bogus.anchor"
+refused "records object 1111111111111111111111111111111111111111, which is not an annotated tag v1.2.3 directly on $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/bogus.anchor"
 printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$head" "$head" >"$scratch/commitobj.anchor"
-refused "which is not an annotated tag for $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/commitobj.anchor"
+refused "which is not an annotated tag v1.2.3 directly on $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/commitobj.anchor"
+# An annotated tag with another embedded name, or a tag of a tag, is refused.
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid tag -a -m other other-name "$head"
+other_object="$(git -C "$repo" rev-parse refs/tags/other-name)"
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$other_object" "$head" >"$scratch/othername.anchor"
+refused "which is not an annotated tag v1.2.3 directly on $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/othername.anchor"
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid tag -a -m nested v1.2.3-nested "$other_object"
+nested_object="$(git -C "$repo" rev-parse refs/tags/v1.2.3-nested)"
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$nested_object" "$head" >"$scratch/nested.anchor"
+refused "which is not an annotated tag v1.2.3 directly on $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/nested.anchor"
+git -C "$repo" tag -d other-name v1.2.3-nested >/dev/null
+# A genuine v1.2.3 tag object that is not the current local tag is refused.
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid tag -a -m v1.2.3 v1.2.3 "$head"
+first_tag_object="$(git -C "$repo" rev-parse refs/tags/v1.2.3)"
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid tag -f -a -m v1.2.3-again v1.2.3 "$head" >/dev/null
+current_tag_object="$(git -C "$repo" rev-parse refs/tags/v1.2.3)"
+[[ "$first_tag_object" != "$current_tag_object" ]]
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$first_tag_object" "$head" >"$scratch/replaced.anchor"
+refused "local tag v1.2.3 is $current_tag_object -> $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/replaced.anchor"
+git -C "$repo" tag -d v1.2.3 >/dev/null
+# A lightweight local tag is not a release tag.
+git -C "$repo" tag v1.2.3 "$head"
+refused "local tag v1.2.3 is a lightweight tag" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/good.anchor"
+git -C "$repo" tag -d v1.2.3 >/dev/null
 # The deleted tag's object is still in the repository: a recorded anchor for
 # it is accepted before the local tag is restored.
 passes ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/good.anchor"
