@@ -46,7 +46,8 @@ done
 [[ "${YAMLPRIMS_RELEASE_TAG:-}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ || "${YAMLPRIMS_RELEASE_TAG:-}" =~ ^spec-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
 	die 'YAMLPRIMS_RELEASE_TAG must be a canonical vX.Y.Z or spec-vX.Y tag'
 # Tags are read under refs/tags/, or under the private namespace named by
-# --staged-prefix (used only by release-verify-published-tag.sh to verify
+# --staged-prefix (retained for verifying a private namespace; the
+# published-tag gate now verifies the fetched object with --object) to verify
 # fetched objects before they replace any local tag). No environment input.
 [[ "$staged_prefix" == "" || "$staged_prefix" =~ ^refs/yamlprims-verify/[0-9]+\.[0-9]+/tags/$ ]] ||
 	die 'invalid --staged-prefix'

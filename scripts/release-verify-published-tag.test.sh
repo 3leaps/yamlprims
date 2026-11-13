@@ -272,6 +272,17 @@ if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/other.anchor" ./scripts/
     exit 1
 fi
 grep -q 'is not a valid anchor for v1.2.3' "$scratch/out"
+# After the fetch, every check names the fetched object id, never the staging
+# ref: the commit is peeled from it and the pin check verifies it by --object.
+# shellcheck disable=SC2016 # Matching literal shell text in the script.
+grep -q 'commit="$(git rev-parse "${remote_object}^{commit}")"' "$root/scripts/release-verify-published-tag.sh"
+# shellcheck disable=SC2016 # Matching literal shell text in the script.
+grep -q 'verify-pinned-tag.sh" --published --object "$remote_object"' "$root/scripts/release-verify-published-tag.sh"
+# shellcheck disable=SC2016 # Matching literal shell text in the script.
+if grep -q '"$staging$tag^{}"\|--staged-prefix "$staging"' "$root/scripts/release-verify-published-tag.sh"; then
+    echo 'error: published-tag verification still reads the mutable staging ref' >&2
+    exit 1
+fi
 # A configured anchor that exists but is not a regular file never falls back
 # to unbound verification.
 mkdir "$scratch/dir.anchor"

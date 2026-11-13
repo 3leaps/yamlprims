@@ -76,7 +76,9 @@ trap cleanup_staging EXIT
 git fetch --quiet --no-tags origin "+refs/tags/$tag:$staging$tag"
 [[ "$(git rev-parse "$staging$tag")" == "$remote_object" ]] || die 'fetched tag differs from remote tag object'
 [[ "$(git cat-file -t "$remote_object")" == tag ]] || die 'annotated tag required'
-commit="$(git rev-parse "$staging$tag^{}")"
+# From here on every check names the fetched object id, never the staging
+# ref, so a ref swap during verification cannot change what is recorded.
+commit="$(git rev-parse "${remote_object}^{commit}")"
 [[ -z "$expected_commit" || "$commit" == "$expected_commit" ]] ||
     die "tagged commit differs from the verified anchor: tagged $commit, expected $expected_commit (YAMLPRIMS_EXPECTED_COMMIT; stale from another release?)"
 # The verifier and its helpers run from this trusted operator checkout. The
@@ -85,7 +87,7 @@ commit="$(git rev-parse "$staging$tag^{}")"
 pinned="$(git cat-file blob "$commit:keys/expected-fingerprints.txt" 2>/dev/null | awk '$1=="gpg" {print $2}')" ||
     die 'tagged commit has no fingerprint anchors'
 [[ "$pinned" == "$approved" ]] || die 'pin in the tagged commit is not the approved primary'
-YAMLPRIMS_RELEASE_TAG="$tag" "$root/scripts/verify-pinned-tag.sh" --published --staged-prefix "$staging" >/dev/null ||
+YAMLPRIMS_RELEASE_TAG="$tag" "$root/scripts/verify-pinned-tag.sh" --published --object "$remote_object" >/dev/null ||
     die 'published tag signature does not verify against the pin committed in its commit'
 tag_json="$(release_gh api "repos/3leaps/yamlprims/git/tags/$remote_object")" || die "GitHub tag object for $tag unavailable"
 jq -e --arg tag "$tag" --arg commit "$commit" \

@@ -106,6 +106,14 @@ refused "exists but is not a regular file" ${clean[@]+"${clean[@]}"} YAMLPRIMS_R
 git -C "$repo" tag -d v1.2.3 >/dev/null
 printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$object" "$first" >"$scratch/pretag.anchor"
 refused "records commit $first, but HEAD (no local tag v1.2.3 yet) is $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/pretag.anchor"
+# ... and its object must be a real annotated tag for that commit.
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' 1111111111111111111111111111111111111111 "$head" >"$scratch/bogus.anchor"
+refused "records object 1111111111111111111111111111111111111111, which is not an annotated tag for $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/bogus.anchor"
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$head" "$head" >"$scratch/commitobj.anchor"
+refused "which is not an annotated tag for $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/commitobj.anchor"
+# The deleted tag's object is still in the repository: a recorded anchor for
+# it is accepted before the local tag is restored.
+passes ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/good.anchor"
 git -C "$repo" -c user.name=t -c user.email=t@example.invalid tag -a -m v1.2.3 v1.2.3 "$head"
 object="$(git -C "$repo" rev-parse refs/tags/v1.2.3)"
 printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$object" "$head" >"$scratch/good.anchor"

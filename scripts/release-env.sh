@@ -117,6 +117,8 @@ if [[ -n "${YAMLPRIMS_RELEASE_ANCHOR_FILE+x}" ]]; then
 		read -r anchor_object anchor_commit <<<"$loaded"
 		if [[ "$anchor_commit" != "$release_commit" ]]; then
 			problem "YAMLPRIMS_RELEASE_ANCHOR_FILE=$anchor records commit $anchor_commit, but $where is $release_commit"
+		elif [[ -z "$tag_object" && ("$(git cat-file -t "$anchor_object" 2>/dev/null)" != tag || "$(git rev-parse --verify --quiet "$anchor_object^{commit}")" != "$anchor_commit") ]]; then
+			problem "YAMLPRIMS_RELEASE_ANCHOR_FILE=$anchor records object $anchor_object, which is not an annotated tag for $anchor_commit in this repository (no local tag $tag; fetch it or re-record)"
 		elif [[ -n "$tag_object" && "$anchor_object" != "$tag_object" ]]; then
 			problem "YAMLPRIMS_RELEASE_ANCHOR_FILE=$anchor records $anchor_object -> $anchor_commit, local tag $tag is $tag_object -> $tag_commit"
 		else
