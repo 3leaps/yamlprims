@@ -162,4 +162,9 @@ if [[ -n "$npm_cli_js" ]]; then
 else
 	npm publish "$tgz" --provenance --access public
 fi
-python3 -I -B "$root/scripts/release-verify-registries.py" --expect-provenance "$stage_dir" "$version" npm
+# npmjs.com keeps a fresh upload in its post-upload validation queue for many
+# minutes (about 18 for v0.2.0), returning 404 meanwhile; poll for up to 30
+# minutes by default so a successful publish does not fail the job.
+YAMLPRIMS_REGISTRY_POLL_ATTEMPTS="${YAMLPRIMS_REGISTRY_POLL_ATTEMPTS:-120}" \
+	YAMLPRIMS_REGISTRY_POLL_SLEEP="${YAMLPRIMS_REGISTRY_POLL_SLEEP:-15}" \
+	python3 -I -B "$root/scripts/release-verify-registries.py" --expect-provenance "$stage_dir" "$version" npm

@@ -1045,6 +1045,12 @@ SH
 		"$root/scripts/ci-publish-npm-oidc.sh" "$version" "$head_commit" "$stage" >/dev/null
 	grep -q "publish $stage/3leaps-yamlprims-$version.tgz --provenance --access public" "$scratch/npm-publish.log"
 fi
+# The post-publish npm verification waits out npm's validation queue by
+# default (120 x 15 s), overridable by the operator.
+# shellcheck disable=SC2016 # Matching literal shell text in the script.
+grep -q 'YAMLPRIMS_REGISTRY_POLL_ATTEMPTS="${YAMLPRIMS_REGISTRY_POLL_ATTEMPTS:-120}"' "$root/scripts/ci-publish-npm-oidc.sh"
+# shellcheck disable=SC2016 # Matching literal shell text in the script.
+grep -q 'YAMLPRIMS_REGISTRY_POLL_SLEEP="${YAMLPRIMS_REGISTRY_POLL_SLEEP:-15}"' "$root/scripts/ci-publish-npm-oidc.sh"
 
 # Standalone scripts/release-verify-registries.sh must bind staged public keys
 # and fingerprint pins to the verified tagged commit, rejecting a replacement
