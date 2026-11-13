@@ -12,7 +12,9 @@ tag_version
 tag_selector
 resolve_release_decernor
 export RELEASE_DECERNOR_BIN
-target="$(git rev-parse HEAD)"
+# Every tag must name the reviewed release commit, not whatever HEAD is now.
+tag_release_commit_matches "$YAMLPRIMS_RELEASE_COMMIT" "release commit"
+target="$YAMLPRIMS_RELEASE_COMMIT"
 tag_load_set
 for tag in ${tag_names[@]+"${tag_names[@]}"}; do
 	tag_verify_object "$tag" "$target"

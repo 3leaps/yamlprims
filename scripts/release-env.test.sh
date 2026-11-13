@@ -24,7 +24,7 @@ grep -Eq 'GPG|MINISIGN|TAGGER|DECERNOR|YAML_BIN|TOKEN' <<<"$reset_line" && fail 
 
 repo="$scratch/repo"
 mkdir -p "$repo/scripts"
-cp "$root/scripts/release-env.sh" "$root/scripts/release-gh.sh" "$repo/scripts/"
+cp "$root/scripts/release-env.sh" "$root/scripts/release-gh.sh" "$root/scripts/release-common.sh" "$repo/scripts/"
 printf '1.2.3\n' >"$repo/VERSION"
 printf '1.4\n' >"$repo/SPEC_VERSION"
 git -C "$repo" init -q -b main
@@ -35,12 +35,14 @@ git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -qm two --a
 head="$(git -C "$repo" rev-parse HEAD)"
 
 mkdir -p "$scratch/bin"
-cat >"$scratch/bin/gh" <<'SH'
+# Fake gh: "<head_branch> <head_sha> <run_attempt>" per run id.
+cat >"$scratch/bin/gh" <<SH
 #!/usr/bin/env bash
-for arg in "$@"; do
-	case "$arg" in
-	repos/3leaps/yamlprims/actions/runs/100) echo v1.2.3; exit 0 ;;
-	repos/3leaps/yamlprims/actions/runs/200) echo v1.2.2; exit 0 ;;
+for arg in "\$@"; do
+	case "\$arg" in
+	repos/3leaps/yamlprims/actions/runs/100) echo "v1.2.3 $head 2"; exit 0 ;;
+	repos/3leaps/yamlprims/actions/runs/200) echo "v1.2.2 $head 1"; exit 0 ;;
+	repos/3leaps/yamlprims/actions/runs/400) echo "v1.2.3 $first 1"; exit 0 ;;
 	esac
 done
 echo 'HTTP 404' >&2
@@ -82,15 +84,39 @@ refused "YAMLPRIMS_EXPECTED_COMMIT=$first differs from local tag v1.2.3 ($head)"
 passes ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/absent.anchor"
 refused "is not an absolute path" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE=rel.anchor
 printf 'tag=v1.2.2\nobject=%s\ncommit=%s\n' "$object" "$head" >"$scratch/old.anchor"
-refused "records tag 'v1.2.2', not v1.2.3" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/old.anchor"
+refused "is not a valid ceremony anchor for v1.2.3" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/old.anchor"
 printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$object" "$head" >"$scratch/good.anchor"
 passes ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/good.anchor"
 refused "differs from the recorded anchor ($object); unset it" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/good.anchor" YAMLPRIMS_EXPECTED_TAG_OBJECT="$first"
 printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$first" "$first" >"$scratch/moved.anchor"
-refused "local tag v1.2.3 is $object -> $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/moved.anchor"
+refused "records commit $first, but local tag v1.2.3 is $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/moved.anchor"
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$first" "$head" >"$scratch/otherobj.anchor"
+refused "local tag v1.2.3 is $object -> $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/otherobj.anchor"
+# Strict anchor validation: a tag-only or malformed anchor, a symlink and a
+# directory are all refused, not accepted on a matching tag line.
+printf 'tag=v1.2.3\n' >"$scratch/tagonly.anchor"
+refused "is not a valid ceremony anchor for v1.2.3" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/tagonly.anchor"
+ln -s "$scratch/good.anchor" "$scratch/link.anchor"
+refused "exists but is not a regular file" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/link.anchor"
+ln -s "$scratch/nowhere" "$scratch/broken.anchor"
+refused "exists but is not a regular file" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/broken.anchor"
+mkdir "$scratch/dir.anchor"
+refused "exists but is not a regular file" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/dir.anchor"
+# Before the tag, a recorded anchor must still name the release commit (HEAD).
+git -C "$repo" tag -d v1.2.3 >/dev/null
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$object" "$first" >"$scratch/pretag.anchor"
+refused "records commit $first, but HEAD (no local tag v1.2.3 yet) is $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/pretag.anchor"
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid tag -a -m v1.2.3 v1.2.3 "$head"
+object="$(git -C "$repo" rev-parse refs/tags/v1.2.3)"
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$object" "$head" >"$scratch/good.anchor"
+passes ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/good.anchor"
 
 # Selected runs must be runs for this tag.
 passes ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_RUN_ID=100
+passes ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_RUN_ID=100 YAMLPRIMS_RELEASE_RUN_ATTEMPT=2
+refused "YAMLPRIMS_RELEASE_RUN_ATTEMPT='3' is not an attempt of run 100 (latest 2)" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_RUN_ID=100 YAMLPRIMS_RELEASE_RUN_ATTEMPT=3
+refused "YAMLPRIMS_RELEASE_RUN_ATTEMPT='x' is not an attempt of run 100" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_RUN_ID=100 YAMLPRIMS_RELEASE_RUN_ATTEMPT=x
+refused "YAMLPRIMS_RELEASE_RUN_ID=400 ran at $first, but local tag v1.2.3 is $head" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_RUN_ID=400
 refused "YAMLPRIMS_RELEASE_RUN_ID=200 is a run for 'v1.2.2', not v1.2.3" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_RUN_ID=200
 refused "YAMLPRIMS_CRATE_RUN_ID=200 is a run for 'v1.2.2', not v1.2.3" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_CRATE_RUN_ID=200
 refused "could not be looked up on GitHub" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_RUN_ID=300
@@ -100,4 +126,9 @@ refused "YAMLPRIMS_RELEASE_RUN_ATTEMPT is set without YAMLPRIMS_RELEASE_RUN_ID" 
 # Every problem is reported, not only the first.
 refused "3 problem(s) for v1.2.3" ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=v1.2.3 YAMLPRIMS_RELEASE_COMMIT="$first" \
 	YAMLPRIMS_EXPECTED_TAG_OBJECT="$first" YAMLPRIMS_RELEASE_RUN_ID=200
+# A recorded anchor for a specification tag is accepted (both namespaces).
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid tag -a -m spec-v1.4 spec-v1.4 "$head"
+spec_object="$(git -C "$repo" rev-parse refs/tags/spec-v1.4)"
+printf 'tag=spec-v1.4\nobject=%s\ncommit=%s\n' "$spec_object" "$head" >"$scratch/spec.anchor"
+passes ${clean[@]+"${clean[@]}"} YAMLPRIMS_RELEASE_TAG=spec-v1.4 YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/spec.anchor"
 echo '[ok] per-release environment reset and check controls'

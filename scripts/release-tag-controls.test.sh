@@ -296,7 +296,25 @@ expect_fail_with 'YAMLPRIMS_RELEASE_COMMIT must be the reviewed' call "tag_relea
 expect_fail_with "HEAD $head_sha differs from YAMLPRIMS_RELEASE_COMMIT 0000000000000000000000000000000000000000" call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT=0000000000000000000000000000000000000000
 call "tag_release_commit_matches $head_sha HEAD" YAMLPRIMS_RELEASE_COMMIT="$head_sha"
 grep -q 'tag_release_commit_matches "$head" HEAD' "$repo/scripts/release-tag-common.sh"
-grep -q 'tag_release_commit_matches "$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}")"' "$fixture_root/scripts/release-push-tag.sh"
+# Creation signs the reviewed commit itself and verification targets it, never HEAD.
+grep -q -- '-F "$(tag_message_file "$tag")" "$tag" "$release_commit"$' "$fixture_root/scripts/release-tag.sh"
+if grep -q '"$tag" HEAD$' "$fixture_root/scripts/release-tag.sh"; then
+	echo 'error: release-tag.sh signs HEAD instead of the reviewed commit' >&2
+	exit 1
+fi
+grep -q '^target="$YAMLPRIMS_RELEASE_COMMIT"$' "$fixture_root/scripts/release-verify-tag.sh"
+# Push captures the verified annotated object, checks it names the reviewed
+# commit, refuses a ref that moved during verification, pushes the object id
+# and requires the remote to hold exactly that object.
+push_script="$fixture_root/scripts/release-push-tag.sh"
+grep -q 'tag_release_commit_matches "$(git rev-parse --verify --quiet "$object^{commit}")" "local tag $tag commit"' "$push_script"
+grep -q 'moved during verification' "$push_script"
+grep -q 'refs+=("$object:refs/tags/$tag")' "$push_script"
+grep -q 'not the verified object' "$push_script"
+if grep -q 'refs+=("refs/tags/$tag")' "$push_script"; then
+	echo 'error: release-push-tag.sh pushes a ref name instead of the verified object' >&2
+	exit 1
+fi
 
 # Post-push anchor exports name the annotated object and its commit, and refuse
 # absent or lightweight tags.

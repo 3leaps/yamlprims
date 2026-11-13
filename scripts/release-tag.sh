@@ -19,7 +19,10 @@ source "$tag_root/scripts/release-decernor.sh"
 resolve_release_decernor || tag_die 'the checker is required before any release side effect'
 tag_checkout
 "$tag_root/scripts/release-validate-pin.sh" >/dev/null || tag_die 'the committed pins do not validate'
-[[ "$(git ls-tree HEAD -- keys/expected-fingerprints.txt | awk '{print $1}')" == 100644 ]] ||
+# Everything below names the reviewed commit explicitly, never HEAD, so a
+# concurrent checkout change after tag_checkout cannot change what is signed.
+release_commit="$YAMLPRIMS_RELEASE_COMMIT"
+[[ "$(git ls-tree "$release_commit" -- keys/expected-fingerprints.txt | awk '{print $1}')" == 100644 ]] ||
 	tag_die 'committed fingerprint anchors are required before tagging'
 tag_load_set
 tags=(${tag_names[@]+"${tag_names[@]}"})
@@ -30,7 +33,7 @@ for tag in ${tags[@]+"${tags[@]}"}; do
 done
 export GIT_COMMITTER_NAME="$YAMLPRIMS_TAGGER_NAME" GIT_COMMITTER_EMAIL="$YAMLPRIMS_TAGGER_EMAIL"
 for tag in ${tags[@]+"${tags[@]}"}; do
-	tag_signing_git tag -s -a --cleanup=verbatim -u "$YAMLPRIMS_PGP_KEY_ID" -F "$(tag_message_file "$tag")" "$tag" HEAD
+	tag_signing_git tag -s -a --cleanup=verbatim -u "$YAMLPRIMS_PGP_KEY_ID" -F "$(tag_message_file "$tag")" "$tag" "$release_commit"
 done
 "$tag_root/scripts/release-verify-tag.sh"
 echo "[ok] ${#tags[@]} signed tag(s) created locally; nothing was pushed"

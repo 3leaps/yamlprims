@@ -42,14 +42,23 @@ remote_object="$(git ls-remote --exit-code origin "refs/tags/$tag" | awk '{print
 # anchor (YAMLPRIMS_ANCHOR_OUT) bind explicitly and skip this.
 env_object="${YAMLPRIMS_EXPECTED_TAG_OBJECT:-}"
 env_commit="${YAMLPRIMS_EXPECTED_COMMIT:-}"
-if [[ -z "${YAMLPRIMS_ANCHOR_OUT:-}" && -n "${YAMLPRIMS_RELEASE_ANCHOR_FILE:-}" && -f "$YAMLPRIMS_RELEASE_ANCHOR_FILE" ]]; then
+configured_anchor="${YAMLPRIMS_RELEASE_ANCHOR_FILE:-}"
+if [[ -n "$configured_anchor" && (-L "$configured_anchor" || (-e "$configured_anchor" && ! -f "$configured_anchor")) ]]; then
+    # A configured anchor that exists but is not a regular file (directory,
+    # symlink, broken symlink) is refused rather than treated as unrecorded.
+    die "ceremony anchor $configured_anchor exists but is not a regular file"
+fi
+if [[ -n "$configured_anchor" && -f "$configured_anchor" ]]; then
+    # Output mode (YAMLPRIMS_ANCHOR_OUT) binds to an existing anchor too.
     # shellcheck source=scripts/release-common.sh
     source "$root/scripts/release-common.sh"
-    load_ceremony_anchor || die "ceremony anchor $YAMLPRIMS_RELEASE_ANCHOR_FILE is not a valid anchor for $tag"
+    load_ceremony_anchor || die "ceremony anchor $configured_anchor is not a valid anchor for $tag"
     [[ -z "$env_object" || "$env_object" == "$YAMLPRIMS_EXPECTED_TAG_OBJECT" ]] ||
         die "exported YAMLPRIMS_EXPECTED_TAG_OBJECT $env_object differs from the recorded anchor $YAMLPRIMS_EXPECTED_TAG_OBJECT ($YAMLPRIMS_RELEASE_ANCHOR_FILE); unset it"
     [[ -z "$env_commit" || "$env_commit" == "$YAMLPRIMS_EXPECTED_COMMIT" ]] ||
         die "exported YAMLPRIMS_EXPECTED_COMMIT $env_commit differs from the recorded anchor $YAMLPRIMS_EXPECTED_COMMIT ($YAMLPRIMS_RELEASE_ANCHOR_FILE); unset it"
+elif [[ -z "$env_object" && -z "$env_commit" && -z "${YAMLPRIMS_ANCHOR_OUT:-}" ]]; then
+    echo "note: no recorded ceremony anchor${configured_anchor:+ at $configured_anchor}; verifying unbound (initial verification before release-record-anchor)" >&2
 fi
 expected_object="${YAMLPRIMS_EXPECTED_TAG_OBJECT:-}"
 expected_commit="${YAMLPRIMS_EXPECTED_COMMIT:-}"

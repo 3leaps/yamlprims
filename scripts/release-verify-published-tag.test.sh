@@ -272,6 +272,29 @@ if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/other.anchor" ./scripts/
     exit 1
 fi
 grep -q 'is not a valid anchor for v1.2.3' "$scratch/out"
+# A configured anchor that exists but is not a regular file never falls back
+# to unbound verification.
+mkdir "$scratch/dir.anchor"
+ln -s "$scratch/ceremony.anchor" "$scratch/link.anchor"
+ln -s "$scratch/nowhere" "$scratch/broken.anchor"
+for bad_anchor in "$scratch/dir.anchor" "$scratch/link.anchor" "$scratch/broken.anchor"; do
+    if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$bad_anchor" ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1; then
+        echo "error: unusable anchor $bad_anchor fell back to unbound verification" >&2
+        exit 1
+    fi
+    grep -q 'exists but is not a regular file' "$scratch/out" || { cat "$scratch/out" >&2; exit 1; }
+done
+# Output mode (YAMLPRIMS_ANCHOR_OUT) binds to an existing anchor too.
+if (cd "$op" && YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/ceremony.anchor" YAMLPRIMS_EXPECTED_TAG_OBJECT=26077e1769ea950639655302263aba5717987897 \
+    YAMLPRIMS_ANCHOR_OUT="$scratch/anchor3" ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1; then
+    echo 'error: output mode ignored the recorded anchor' >&2
+    exit 1
+fi
+grep -q 'differs from the recorded anchor' "$scratch/out"
+# Unbound initial verification says so.
+(cd "$op" && env -u YAMLPRIMS_EXPECTED_TAG_OBJECT -u YAMLPRIMS_EXPECTED_COMMIT YAMLPRIMS_RELEASE_ANCHOR_FILE="$scratch/not-yet.anchor" \
+    ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1
+grep -q "note: no recorded ceremony anchor at $scratch/not-yet.anchor; verifying unbound" "$scratch/out"
 # Same version, approved key, DIFFERENT target commit: fails before any ref change.
 printf 'other build\n' >>"$src/file"
 git -C "$src" add file
