@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 def main():
@@ -35,6 +36,32 @@ def main():
             + ", ".join(missing)
             + ". See CONTRIBUTING.md.\n",
         )
+    if args.prepush:
+        # python-check and the wheel builds create venvs with this interpreter
+        # (pip included). Stock Debian/Ubuntu ship Python without ensurepip
+        # until python3-venv is installed; fail here, not after the Rust, Go
+        # and TypeScript gates.
+        with tempfile.TemporaryDirectory(prefix="yamlprims-venv-probe.") as probe:
+            try:
+                venv = subprocess.run(
+                    [sys.executable, "-I", "-m", "venv", str(Path(probe) / "v")],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                parser.exit(1, "Could not create a Python venv: " + str(exc) + "\n")
+        if venv.returncode:
+            detail = (venv.stderr or venv.stdout).strip().splitlines()
+            parser.exit(
+                1,
+                "Python "
+                + sys.executable
+                + " cannot create a venv with pip (prepush needs it): "
+                + (detail[-1] if detail else "no detail")
+                + ". On Debian/Ubuntu install the python3-venv package for this Python"
+                + " (e.g. python3.14-venv). See CONTRIBUTING.md.\n",
+            )
     pin = (
         (Path(__file__).resolve().parents[1] / ".goneat-version")
         .read_text(encoding="ascii")
