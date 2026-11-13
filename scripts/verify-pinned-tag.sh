@@ -4,7 +4,7 @@
 # tagged commit, in an isolated keyring. All tags must be annotated, name
 # themselves, and peel to one commit; each must be signed by the committed
 # signing subkey of the pinned primary.
-# Usage: verify-pinned-tag.sh [--published] [--staged-prefix PREFIX]
+# Usage: verify-pinned-tag.sh [--published] [--staged-prefix PREFIX | --object OID]
 #   --published  the tagged commit need not be HEAD (post-release checks)
 # Requires YAMLPRIMS_RELEASE_TAG; callers resolve the checker
 # (scripts/release-decernor.sh) and export RELEASE_DECERNOR_BIN.
@@ -18,18 +18,30 @@ die() {
 }
 published=0
 staged_prefix=
+pinned_object=
+usage='usage: verify-pinned-tag.sh [--published] [--staged-prefix PREFIX | --object OID]'
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--published) published=1 ;;
 	--staged-prefix)
-		[[ $# -ge 2 ]] || die 'usage: verify-pinned-tag.sh [--published] [--staged-prefix PREFIX]'
+		[[ $# -ge 2 ]] || die "$usage"
 		staged_prefix="$2"
 		shift
 		;;
-	*) die 'usage: verify-pinned-tag.sh [--published] [--staged-prefix PREFIX]' ;;
+	--object)
+		[[ $# -ge 2 ]] || die "$usage"
+		pinned_object="$2"
+		shift
+		;;
+	*) die "$usage" ;;
 	esac
 	shift
 done
+[[ -z "$staged_prefix" || -z "$pinned_object" ]] || die "$usage"
+# --object names the exact annotated tag object to verify (the push step's
+# captured object), so no ref is re-resolved between capture and push.
+[[ -z "$pinned_object" || ("$pinned_object" =~ ^[0-9a-f]{40}$ && "$(git cat-file -t "$pinned_object" 2>/dev/null)" == tag) ]] ||
+	die 'invalid --object: an annotated tag object id is required'
 : "${RELEASE_DECERNOR_BIN:?resolve the checker before verifying tags}"
 [[ "${YAMLPRIMS_RELEASE_TAG:-}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ || "${YAMLPRIMS_RELEASE_TAG:-}" =~ ^spec-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
 	die 'YAMLPRIMS_RELEASE_TAG must be a canonical vX.Y.Z or spec-vX.Y tag'
@@ -39,7 +51,11 @@ done
 [[ "$staged_prefix" == "" || "$staged_prefix" =~ ^refs/yamlprims-verify/[0-9]+\.[0-9]+/tags/$ ]] ||
 	die 'invalid --staged-prefix'
 ref_prefix="${staged_prefix:-refs/tags/}"
-canonical="$(git rev-parse --verify --quiet "$ref_prefix$YAMLPRIMS_RELEASE_TAG")" || die "$YAMLPRIMS_RELEASE_TAG is absent"
+if [[ -n "$pinned_object" ]]; then
+	canonical="$pinned_object"
+else
+	canonical="$(git rev-parse --verify --quiet "$ref_prefix$YAMLPRIMS_RELEASE_TAG")" || die "$YAMLPRIMS_RELEASE_TAG is absent"
+fi
 target="$(git rev-parse "${canonical}^{commit}")"
 [[ "$published" == 1 || "$target" == "$(git rev-parse HEAD)" ]] || die 'the release tag must point at HEAD'
 # The version is read from the tagged commit, so a later main cannot move it.
@@ -88,7 +104,12 @@ count=0
 tag_load_set --tagged
 [[ "${#tag_names[@]}" -eq 1 ]] || die 'a release is exactly one signed tag'
 for tag in ${tag_names[@]+"${tag_names[@]}"}; do
-	object="$(git rev-parse --verify --quiet "$ref_prefix$tag")" || die "$tag is absent"
+	if [[ -n "$pinned_object" ]]; then
+		object="$pinned_object"
+	else
+		object="$(git rev-parse --verify --quiet "$ref_prefix$tag")" || die "$tag is absent"
+	fi
+	[[ "$object" == "$canonical" ]] || die "$tag changed during verification ($canonical -> $object)"
 	[[ "$(git cat-file -t "$object")" == tag ]] || die "$tag must be an annotated tag"
 	[[ "$(git cat-file tag "$object" | sed -n 's/^tag //p' | head -1)" == "$tag" ]] || die "$tag object names a different tag"
 	[[ "$(git rev-parse "${object}^{commit}")" == "$target" ]] || die "$tag does not point at the release commit $target"

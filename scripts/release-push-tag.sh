@@ -21,7 +21,12 @@ for tag in ${tags[@]+"${tags[@]}"}; do
 	tag_release_commit_matches "$(git rev-parse --verify --quiet "$object^{commit}")" "local tag $tag commit"
 	captured+="$tag=$object "
 done
-"$tag_root/scripts/release-verify-tag.sh"
+# Verify exactly the captured objects; no ref is re-resolved before the push.
+for tag in ${tags[@]+"${tags[@]}"}; do
+	object="${captured#* "$tag"=}"
+	object="${object%% *}"
+	"$tag_root/scripts/release-verify-tag.sh" --object "$object"
+done
 refs=()
 for tag in ${tags[@]+"${tags[@]}"}; do
 	object="${captured#* "$tag"=}"

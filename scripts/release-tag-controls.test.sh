@@ -309,6 +309,8 @@ grep -q '^target="$YAMLPRIMS_RELEASE_COMMIT"$' "$fixture_root/scripts/release-ve
 push_script="$fixture_root/scripts/release-push-tag.sh"
 grep -q 'tag_release_commit_matches "$(git rev-parse --verify --quiet "$object^{commit}")" "local tag $tag commit"' "$push_script"
 grep -q 'moved during verification' "$push_script"
+grep -q '"$tag_root/scripts/release-verify-tag.sh" --object "$object"' "$push_script"
+grep -q 'verify-pinned-tag.sh" ${pinned_object:+--object "$pinned_object"}' "$fixture_root/scripts/release-verify-tag.sh"
 grep -q 'refs+=("$object:refs/tags/$tag")' "$push_script"
 grep -q 'not the verified object' "$push_script"
 if grep -q 'refs+=("refs/tags/$tag")' "$push_script"; then

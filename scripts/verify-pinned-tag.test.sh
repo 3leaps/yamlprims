@@ -99,11 +99,23 @@ expect_fail_with 'must be an annotated tag' verify
 retag "v$version"
 sign "$fixture_dir/gpg" "$subkey" "v$version"
 verify >/dev/null
+good_object="$(git -C "$repo" rev-parse "refs/tags/v$version")"
+verify --object "$good_object" >/dev/null
 
 # A tag signed by a key that is not the committed subkey fails.
 retag "v$version"
 sign "$fixture_dir/gpg-other" "$other_subkey" "v$version"
 expect_fail_with 'signature is invalid under the pin|not signed by the committed signing subkey' verify
+# --object verifies exactly the named object, whatever the ref now holds: the
+# captured good object still verifies while the ref names the bad one, and
+# the bad object fails when named.
+bad_object="$(git -C "$repo" rev-parse "refs/tags/v$version")"
+[[ "$bad_object" != "$good_object" ]]
+verify --object "$good_object" >/dev/null
+expect_fail_with 'signature is invalid under the pin|not signed by the committed signing subkey' verify --object "$bad_object"
+expect_fail_with 'invalid --object' verify --object "$(git -C "$repo" rev-parse HEAD)"
+expect_fail_with 'invalid --object' verify --object nothex
+expect_fail_with 'usage: verify-pinned-tag.sh' verify --object "$good_object" --staged-prefix refs/yamlprims-verify/1.1/tags/
 retag "v$version"
 sign "$fixture_dir/gpg" "$subkey" "v$version"
 verify >/dev/null

@@ -420,12 +420,15 @@ tag_signing_program() {
 }
 
 # Check one annotated tag object: name, target, tagger and exact message bytes.
+# Usage: tag_verify_object TAG TARGET [OBJECT]; OBJECT pins the exact object.
 tag_verify_object() {
-	local tag="$1" target="$2" object expected actual tagger
-	object="$(git rev-parse --verify --quiet "refs/tags/$tag")" || {
-		tag_die "tag $tag is absent"
-		return 1
-	}
+	local tag="$1" target="$2" object="${3:-}" expected actual tagger
+	if [[ -z "$object" ]]; then
+		object="$(git rev-parse --verify --quiet "refs/tags/$tag")" || {
+			tag_die "tag $tag is absent"
+			return 1
+		}
+	fi
 	[[ "$(git cat-file -t "$object")" == tag ]] || {
 		tag_die "$tag must be an annotated tag"
 		return 1

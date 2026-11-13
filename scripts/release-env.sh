@@ -161,7 +161,8 @@ check_run() {
 		problem "$name=$run is a run for '$branch', not $tag"
 	elif [[ "$sha" != "$release_commit" ]]; then
 		problem "$name=$run ran at $sha, but $where is $release_commit"
-	elif [[ -n "$attempt" && ! ("$attempt" =~ ^[1-9][0-9]*$ && "$attempt" -le "$run_attempt") ]]; then
+	# Attempts are small; bounding the digits keeps the arithmetic exact.
+	elif [[ -n "$attempt" && ! ("$attempt" =~ ^[1-9][0-9]{0,8}$ && "$run_attempt" =~ ^[1-9][0-9]{0,8}$ && "$attempt" -le "$run_attempt") ]]; then
 		problem "YAMLPRIMS_RELEASE_RUN_ATTEMPT='$attempt' is not an attempt of run $run (latest $run_attempt)"
 	else
 		ok "$name=$run is a run for $tag at $release_commit"
