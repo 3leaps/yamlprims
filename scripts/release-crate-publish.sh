@@ -82,7 +82,8 @@ commit="$YAMLPRIMS_EXPECTED_COMMIT"
 "$root/scripts/check-registry-config.py"
 "$root/scripts/release-verify-published-tag.sh"
 records="${YAMLPRIMS_CRATE_RECORDS:-}"
-[[ "$records" == /* && -d "$records" && ! -L "$records" ]] || die 'YAMLPRIMS_CRATE_RECORDS must name the fetched verification records'
+[[ "$records" == /* && -d "$records" && ! -L "$records" ]] ||
+	die "YAMLPRIMS_CRATE_RECORDS must name the fetched verification records: '${records}' is not an existing absolute directory (run make release-crates-fetch CRATE=<crate> first)"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/yamlprims-publish.XXXXXX")"
 source_tree="$scratch/source"
 cleanup() {

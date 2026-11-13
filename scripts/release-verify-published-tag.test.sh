@@ -271,6 +271,13 @@ if anchored >"$scratch/out" 2>&1; then
     exit 1
 fi
 grep -q 'differs from the verified anchor' "$scratch/out"
+# The refusal names both objects, so a stale anchor is obvious.
+replacement="$(git -C "$scratch/remote.git" rev-parse refs/tags/v1.2.3)"
+grep -q "remote $replacement, expected $anchor_object" "$scratch/out" || {
+    echo 'error: anchor refusal does not name the remote and expected objects' >&2
+    cat "$scratch/out" >&2
+    exit 1
+}
 # A partial anchor is refused.
 (cd "$op" && YAMLPRIMS_EXPECTED_TAG_OBJECT="$anchor_object" ./scripts/release-verify-published-tag.sh) >"$scratch/out" 2>&1 &&
     {

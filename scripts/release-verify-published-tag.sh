@@ -40,7 +40,8 @@ expected_commit="${YAMLPRIMS_EXPECTED_COMMIT:-}"
 if [[ -n "$expected_object" || -n "$expected_commit" ]]; then
     [[ "$expected_object" =~ ^[0-9a-f]{40}$ && "$expected_commit" =~ ^[0-9a-f]{40}$ ]] ||
         die 'expected tag object and commit must both be 40-hex'
-    [[ "$remote_object" == "$expected_object" ]] || die 'remote tag object differs from the verified anchor'
+    [[ "$remote_object" == "$expected_object" ]] ||
+        die "remote tag object differs from the verified anchor: remote $remote_object, expected $expected_object (YAMLPRIMS_EXPECTED_TAG_OBJECT; stale from another release?)"
 fi
 # Fetch into a private namespace and verify there; local refs/tags change only
 # after every check passes.
@@ -51,7 +52,8 @@ git fetch --quiet --no-tags origin "+refs/tags/$tag:$staging$tag"
 [[ "$(git rev-parse "$staging$tag")" == "$remote_object" ]] || die 'fetched tag differs from remote tag object'
 [[ "$(git cat-file -t "$remote_object")" == tag ]] || die 'annotated tag required'
 commit="$(git rev-parse "$staging$tag^{}")"
-[[ -z "$expected_commit" || "$commit" == "$expected_commit" ]] || die 'tagged commit differs from the verified anchor'
+[[ -z "$expected_commit" || "$commit" == "$expected_commit" ]] ||
+    die "tagged commit differs from the verified anchor: tagged $commit, expected $expected_commit (YAMLPRIMS_EXPECTED_COMMIT; stale from another release?)"
 # The verifier and its helpers run from this trusted operator checkout. The
 # tagged commit is read only as inert git objects (tag object, pin, anchors,
 # tagger identity); no file from the unverified target is ever executed.

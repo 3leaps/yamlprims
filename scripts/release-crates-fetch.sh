@@ -43,7 +43,8 @@ YAMLPRIMS_ANCHOR_OUT="$scratch/anchor" "$root/scripts/release-verify-published-t
 commit="$(awk -F= '$1=="commit" {print $2}' "$scratch/anchor")"
 object="$(awk -F= '$1=="object" {print $2}' "$scratch/anchor")"
 [[ "$object" == "$YAMLPRIMS_EXPECTED_TAG_OBJECT" &&
-	"$commit" == "$YAMLPRIMS_EXPECTED_COMMIT" ]] || die 'verified tags differ from the recorded ceremony anchor'
+	"$commit" == "$YAMLPRIMS_EXPECTED_COMMIT" ]] ||
+	die "verified tags differ from the recorded ceremony anchor: verified $object -> $commit, anchor $YAMLPRIMS_EXPECTED_TAG_OBJECT -> $YAMLPRIMS_EXPECTED_COMMIT"
 runs="$(release_gh run list --repo "$YAMLPRIMS_REPOSITORY" --workflow "$workflow" --branch "$tag" --limit 100 \
 	--json databaseId,headSha,conclusion,event \
 	--jq "[.[] | select(.headSha == \"$commit\" and .conclusion == \"success\" and .event == \"$event\") | .databaseId]")"
