@@ -16,11 +16,11 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ### Changed
 
-- `make release-tag` refuses unless `HEAD`, fetched `origin/main` and `YAMLPRIMS_RELEASE_COMMIT` are the same commit, and `make release-push-tag` refuses a local tag naming another commit (`YAMLPRIMS_RELEASE_COMMIT` was documented but not checked).
-- `release-verify-published-tag.sh` binds to the recorded ceremony anchor once `YAMLPRIMS_RELEASE_ANCHOR_FILE` names it, refusing a disagreeing exported `YAMLPRIMS_EXPECTED_*` or an anchor for another tag.
+- `make release-tag` refuses unless `HEAD`, fetched `origin/main` and `YAMLPRIMS_RELEASE_COMMIT` are the same commit and signs that commit; `make release-push-tag` pushes the verified annotated object by id after checking it names that commit and did not move, then requires the remote to hold it (`YAMLPRIMS_RELEASE_COMMIT` was documented but not checked).
+- `release-verify-published-tag.sh` binds to the recorded ceremony anchor once `YAMLPRIMS_RELEASE_ANCHOR_FILE` names it, refusing a disagreeing exported `YAMLPRIMS_EXPECTED_*`, an anchor for another tag, or a configured anchor that is not a regular file; `spec-vX.Y` anchors are accepted.
 - Release guard errors print the compared values and the likely cause.
 - The OIDC npm publish verifies with a 120 x 15 s poll budget by default.
-- `check-tooling.py --prepush` preflights venv creation; the `make doctor` yamllint floor is 1.29.0 (the pinned CI toolbox).
+- `check-tooling.py --prepush` preflights venv creation; the `make doctor` yamllint floor is 1.29.0, the Debian bookworm yamllint that the digest-pinned CI toolbox image installs (without a version pin).
 - RELEASE_CHECKLIST: `release-create-draft` before signing, crate dry run moved out of section 4, crate inputs, npm validation delay, Homebrew tap and Scoop bucket step, release environment variables.
 
 ## [0.2.1] - 2026-11-12
