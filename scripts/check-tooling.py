@@ -52,15 +52,32 @@ def main():
             except (OSError, subprocess.TimeoutExpired) as exc:
                 parser.exit(1, "Could not create a Python venv: " + str(exc) + "\n")
         if venv.returncode:
-            detail = (venv.stderr or venv.stdout).strip().splitlines()
+            detail = [
+                line.strip()
+                for line in (venv.stderr + "\n" + venv.stdout).splitlines()
+                if line.strip()
+            ]
+            # Prefer venv's own reason (it names ensurepip) over its trailing
+            # "Failing command" line.
+            hits = [i for i, line in enumerate(detail) if "ensurepip" in line]
+            if hits:
+                # venv wraps its sentence; join lines until it ends.
+                end = hits[0]
+                while end + 1 < len(detail) and not detail[end].endswith(".") and end - hits[0] < 2:
+                    end += 1
+                reason = " ".join(detail[hits[0] : end + 1]).split(". ")[0].rstrip(".")
+            else:
+                reason = detail[-1] if detail else "no detail"
+            package = "python{}.{}-venv".format(*sys.version_info[:2])
             parser.exit(
                 1,
                 "Python "
                 + sys.executable
                 + " cannot create a venv with pip (prepush needs it): "
-                + (detail[-1] if detail else "no detail")
-                + ". On Debian/Ubuntu install the python3-venv package for this Python"
-                + " (e.g. python3.14-venv). See CONTRIBUTING.md.\n",
+                + reason
+                + ". On Debian/Ubuntu install "
+                + package
+                + " (the venv package for this Python). See CONTRIBUTING.md.\n",
             )
     pin = (
         (Path(__file__).resolve().parents[1] / ".goneat-version")
