@@ -37,7 +37,7 @@ def check(root):
         path
         for path in root.rglob("*.md")
         if ".git" not in path.relative_to(root).parts
-        and path.relative_to(root).parts[0] != "target"
+        and path.relative_to(root).parts[0] not in ("target", "dist")
     )
     texts = {}
     for path in documents:
