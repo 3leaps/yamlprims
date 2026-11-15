@@ -26,10 +26,13 @@ The Rust implementation uses `granit-parser` as its internal event source; the p
 
 ## Status and participation
 
-Current tagged specification: [**spec-v1.5**](https://github.com/3leaps/yamlprims/tree/spec-v1.5)
-([Revision 1.5](docs/spec/yamlprims-spec.md), `SPEC_VERSION` `1.5`,
-[ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
-Earlier specification tags (`spec-v1.0` through `spec-v1.4`) and their file digests remain immutable, including
+Current draft specification: [Revision 1.6](docs/spec/yamlprims-spec.md)
+(`SPEC_VERSION` `1.6`, specifying proposed `v0.3.0` reader/writer and host
+ergonomics, YAML 1.1 migration lint, and CLI contract freeze — not yet
+implemented). Latest tagged specification:
+[**spec-v1.5**](https://github.com/3leaps/yamlprims/tree/spec-v1.5)
+([ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
+Earlier specification tags (`spec-v1.0` through `spec-v1.5`) and their file digests remain immutable, including
 historical draft-status wording. A specification tag may include in-development
 Rust source; it does not imply a crate release, API freeze or conformance of
 that source to every requirement.
