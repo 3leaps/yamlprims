@@ -1,22 +1,26 @@
 # yamlprims specification
 
-**Revision 1.5** · Status: Unreleased draft · License: CC0-1.0 (specification text)
+**Revision 1.6** · Status: Unreleased draft · License: CC0-1.0 (specification text)
 
-The tagged draft baseline is [revision 1.4](https://github.com/3leaps/yamlprims/blob/spec-v1.4/docs/spec/yamlprims-spec.md).
+The tagged draft baseline is [revision 1.5](https://github.com/3leaps/yamlprims/blob/spec-v1.5/docs/spec/yamlprims-spec.md).
 This draft contains the changes and decision status listed in §16. Existing
-profiles pinned to revisions 1.0 through 1.4 keep their original expectations;
+profiles pinned to revisions 1.0 through 1.5 keep their original expectations;
 they do not adopt this draft implicitly.
 
 **Specification release.** This is a proposed target contract, not a claim that
 every source snapshot conforms to every requirement before qualification. See
 [implementation status](../implementation.md), the
 [build specification](../build-spec.md), and [open design items](../design-review.md).
-Revision 1.5 incorporates the `Profile B` multi-language architecture
+Revision 1.5 incorporated the `Profile B` multi-language architecture
 ([ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md))
-and defines checked caller-tree constructors and stack-safe cleanup (§3), the
+and defined checked caller-tree constructors and stack-safe cleanup (§3), the
 deterministic YAML 1.2.2 Core emitter and typed serialization (§8.2, §10.2),
 symmetric wire decoding (§11.1), and strict RFC 7493 I-JSON projection (§11.6)
 ([ADR-0005](../decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
+Revision 1.6 adds bounded reader/writer, byte-slice, and plain-host ergonomics
+across all four bindings (§8.1–8.2, §10.1–10.2, §11.2–11.3, §11.5), the YAML 1.1
+to YAML 1.2.2 Core migration lint and `yamlprims-lint/1` wire format (§10.3,
+§11.7), and the frozen `yamlprims-cli` command-line contract (§10.4).
 
 This document is the normative contract for yamlprims: an owned YAML 1.2 data
 layer over a maintained, safe-Rust event parser. Its key words MUST, MUST NOT,
@@ -59,29 +63,35 @@ apply. This is a UTF-8 input surface, not support for every YAML character encod
 | **M1**                                   | Rust core: `load`, `load_all`, `from_str`, owned `Value`/`Node`/`Error`, limits, wire format (§11), CLI `check`/`dump`                                                              |
 | **M2**                                   | `Profile B` multi-language parity ([ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)): pure-Go twin, zero-import WASM TypeScript, `PyO3` Python (§11–13) |
 | **M3**                                   | Checked caller-tree constructors & stack-safe `Drop` (§3), Core emitter & `serde::Serialize` (§8.2, §10.2), symmetric `decode_wire` (§11.1), strict RFC 7493 `encode_ijson` (§11.6) |
-| M4 (optional, each requiring a consumer) | in-memory document iterator, migration lint, Failsafe schema                                                                                                                        |
+| **M4** (demand-driven)                   | Bounded reader/writer & plain-host ergonomics (§8, §10.1–10.2, §11.2–11.5), YAML 1.1 migration lint & `yamlprims-lint/1` (§10.3, §11.7), frozen CLI (§10.4); optional in-memory document iterator & Failsafe schema (deferred until consumer need) |
 
 **Out of scope:** a new YAML parser; source-preserving CST editing (comment,
  trivia, or anchor/alias graph retention); `!include` or environment expansion;
-a YAML 1.1 resolution schema; borrowed deserialization; incremental byte-stream
-input (all input is a complete in-memory buffer).
+a YAML 1.1 resolution schema; borrowed deserialization; incremental unbounded
+byte-stream input (all input is bounded by `max_input_bytes` and validated as a
+complete in-memory buffer; `Read` / `io.Reader` entrypoints read at most
+`max_input_bytes + 1` bytes into memory).
 
 ## 2. Layering
 
 ```
-&[u8] / &str ──► input gate: max_input_bytes on raw length, BOM strip, UTF-8 validation
+&[u8] / &str / Read (bounded by max_input_bytes + 1)
+                 │
+                 ▼
+input gate: max_input_bytes on raw length, BOM strip, UTF-8 validation
                  ▼
 granit-parser =2.0.0 (default-features = false, features = ["std","error_messages"])
   engine options pinned (§9)                                          ← grammar / terminal engine checks
                  ▼
 event pump      engine marker → Location; anchors; alias events       ← only module importing the engine
                  ▼
-resolver        scalar and tag resolution (§4)                        ← owned policy
+resolver        scalar and tag resolution (§4) + YAML 1.1 lint (§10.3)← owned policy
                  ▼
 builder         nodes, keys, duplicates, merge, budgets (§5–6)        ← owned policy
                  ▼
 Document / Node tree ─► typed conversion (§8.1) / wire encoder (§11.1) / I-JSON projection (§11.6)
-        ▲            └► Core emitter (§10.2) ──► UTF-8 YAML 1.2 Core text
+        ▲            ├► YAML 1.1 migration lint (§10.3) ──► LintResult / yamlprims-lint/1 (§11.7)
+        │            └► Core emitter (§10.2) ──► UTF-8 YAML 1.2 Core text / buffered Write
         │
 checked constructors (§3) / serde::Serialize (§8.2) / decode_wire (§11.1)
 ```
@@ -228,13 +238,15 @@ impl Document {
   triggering E0509 destructuring restrictions. Crate-owned internal traversals
   (`key_eq`, `contains_nan`, `hash_into`, `budget::metrics`) also use iterative
   heap stacks, and crate/binding operations parameterized by `Options` or
-  `EmitOptions` (`from_node`, `to_node`, `encode`, `encode_plain`,
-  `encode_ijson`, `decode_wire`, `emit`, `emit_all`, Go
-  `Emit*`/`FromPlain`/`Marshal`, TypeScript `fromPlain`/`dump*`, and Python
-  `from_plain`/`dump*`) enforce configured `max_depth` (`<= 255`), `max_nodes`,
-  and `max_output_bytes` before descending into child collections or via explicit
-  heap worklists, turning over-deep or cyclic host graphs into
-  `LimitExceeded(MaxDepth)` before call-stack exhaustion.
+  `EmitOptions` (`from_node`, `to_node`, `to_string*`, `to_writer*`, `encode`,
+  `encode_plain`, `encode_ijson`, `encode_lint`, `decode_wire`, `emit*`,
+  `emit_writer*`, `emit_all_writer*`, Go `Emit*`/`FromPlain`/`Marshal*`/`Unmarshal*`/`EncodeLint*`,
+  TypeScript `fromPlain`/`toPlain`/`parse*`/`dump*`/`stringify*`/`encodeLint`,
+  and Python `from_plain`/`to_plain`/`safe_load*`/`dump*`/`safe_dump*`/`encode_lint`)
+  enforce configured `max_depth` (`<= 255`), `max_nodes`, and `max_output_bytes`
+  before descending into child collections or via explicit heap worklists,
+  turning over-deep or cyclic host graphs into `LimitExceeded(MaxDepth)` before
+  call-stack exhaustion.
 
 ## 4. Scalar resolution
 
@@ -499,13 +511,19 @@ respectively; finally raising owned bytes to 576 permits the copy.
 
 ### 5.5 Documents
 
-- `load`, `load_with`, and `load_bytes` return one document. A second document
-  is a `MultipleDocuments` error at its start. Typed string entrypoints use
-  these single-document semantics before applying §8 conversion rules.
-- `load_all`, `load_all_with`, and `load_all_bytes` return the documents actually
-  present in the stream. They are all-or-nothing: the first error ends the call
-  and nothing partial is returned. Exceeding `max_documents` is `LimitExceeded`,
-  not `MultipleDocuments`, even when that configured limit is one.
+- `load`, `load_with`, `load_bytes`, `load_reader`, and `load_reader_with` (plus
+  Go `Load*`/`LoadReader*`, TypeScript `load`/`parse`, and Python `load*`/`safe_load`)
+  return one document. A second document is a `MultipleDocuments` error at its
+  start. Typed entrypoints (`from_str*`, `from_slice*`, `from_reader*`, Go
+  `Unmarshal*`) use these single-document semantics before applying §8 / §11.3
+  conversion rules.
+- `load_all`, `load_all_with`, `load_all_bytes`, `load_all_reader`, and
+  `load_all_reader_with` (plus Go `LoadAll*`/`LoadAllReader*`, TypeScript
+  `loadAll`/`parseAll`, and Python `load_all*`/`safe_load_all`) return the
+  documents actually present in the stream. They are all-or-nothing: the first
+  error ends the call and nothing partial is returned. Exceeding `max_documents`
+  is `LimitExceeded`, not `MultipleDocuments`, even when that configured limit
+  is one.
 
 | Input                               | Single-document entrypoints                        | Multi-document entrypoints                 |
 | ----------------------------------- | -------------------------------------------------- | ------------------------------------------ |
@@ -552,8 +570,8 @@ pub struct Limits {            // defaults are proposed, not yet measured
     pub max_key_bytes: usize,         //   64 KiB  weight of one key subtree
     pub max_mapping_entries: usize,   //   100_000 per mapping
     pub max_documents: usize,         //   1_024
-    pub max_output_bytes: usize,      //   64 MiB  wire encoding (§11)
-    pub max_warnings: usize,          //   1_000   (M4 lint), then one truncation marker
+    pub max_output_bytes: usize,      //   64 MiB  wire/lint/plain encoding (§11)
+    pub max_warnings: usize,          //   1_000   YAML 1.1 migration lint (§10.3), then truncated = true
 }
 ```
 
@@ -846,15 +864,29 @@ offending position.
 
 **Error precedence.**
 
-YAML-loading entrypoints, including the loading phase of typed string calls,
-use the following logical phase order to select their result. This does not
-prescribe a number of physical parser passes. Encoder and `from_node` preflights
-remain their own operations; this is not a global ordering of every `ErrorKind`.
+YAML-loading and migration-lint entrypoints (`load*`, `load_all*`, `load_reader*`,
+`load_all_reader*`, `lint_yaml11*`, and the loading phase of `from_str*`,
+`from_slice*`, `from_reader*`, `load_ijson*`, and Go `Unmarshal*`) use the
+following logical phase order to select their result. This does not prescribe a
+number of physical parser passes. Encoder and `from_node` / `UnmarshalNode`
+preflights remain their own operations; this is not a global ordering of every
+`ErrorKind`.
 
-1. Validate options. `InvalidOptions` precedes any examination of input and has
-   `Site::NotSource { last_known: None }`.
+1. Validate options. `InvalidOptions` precedes any examination of input (and
+   precedes reading any bytes from `std::io::Read`, `io.Reader`, or a Python
+   stream) and has `Site::NotSource { last_known: None }`.
 2. Check raw input byte length, including any BOM, against `max_input_bytes`.
-   A size failure wins over invalid UTF-8 and all later phases.
+   Reader entrypoints (`from_reader*`, `load_reader*`, `load_all_reader*`,
+   `lint_yaml11_reader*`, Go `LoadReader*`/`LoadAllReader*`/`UnmarshalReader*`/`LintYAML11Reader*`,
+   and Python `safe_load*`/`lint_yaml11` on file-like objects) accumulate chunks
+   until EOF or `max_input_bytes.saturating_add(1)` UTF-8 bytes (`Read::take` /
+   `io.LimitReader` / looped Python `.read(min(chunk_cap, remaining))` per §11.5):
+   any underlying stream I/O failure returns `Internal` with
+   `Site::NotSource { last_known: None }`; reaching `max_input_bytes + 1` UTF-8
+   bytes stops reading immediately and raises `LimitExceeded(max_input_bytes)` at
+   byte 0 (`Site::Source(Location { byte_offset: 0, line: 1, column: 1 })`),
+   identical to slice and string entrypoints. A size failure wins over invalid
+   UTF-8 and all later phases.
 3. Strip only the optional initial UTF-8 BOM and validate UTF-8, preserving
    original-byte coordinates. The first invalid byte is `InvalidUtf8` (§7.2).
 4. Perform **bounded source validation**: validate YAML grammar and source
@@ -1094,13 +1126,25 @@ are.
 ```rust
 pub fn from_str<T: DeserializeOwned>(input: &str) -> Result<T, Error>;
 pub fn from_str_with<T: DeserializeOwned>(input: &str, opts: &Options) -> Result<T, Error>;
+pub fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Error>;
+pub fn from_slice_with<T: DeserializeOwned>(input: &[u8], opts: &Options) -> Result<T, Error>;
+pub fn from_reader<R: std::io::Read, T: DeserializeOwned>(reader: R) -> Result<T, Error>;
+pub fn from_reader_with<R: std::io::Read, T: DeserializeOwned>(reader: R, opts: &Options) -> Result<T, Error>;
 pub fn from_node<T: DeserializeOwned>(node: &Node, opts: &Options) -> Result<T, Error>;
 pub struct Spanned<T> { pub value: T, pub span: Option<Span> }   // None for synthetic nodes
 pub struct TaggedValue<T> { pub tag: Tag, pub value: T }
 ```
 
-**Guarantee.** Resolver and builder policy is identical for `load` and
-`from_str`. Built-in conversions follow the table below. Conversions written
+**Guarantee.** Resolver and builder policy is identical for `load*` and
+`from_str*` / `from_slice*` / `from_reader*`. Entrypoints without `_with` use
+`Options::default()`. `from_slice_with` runs `load_bytes(input, opts)` followed
+by typed conversion of the single document's root (`from_node` with source
+plain-scalar enum metadata preserved). `from_reader_with` validates `opts`
+first (`InvalidOptions`), reads at most
+`opts.limits.max_input_bytes.saturating_add(1)` bytes via `std::io::Read::take`
+(mapping any `std::io::Error` to `ErrorKind::Internal` with
+`Site::NotSource { last_known: None }`), and delegates to
+`from_slice_with(&buf, opts)`. Built-in conversions follow the table below. Conversions written
 by callers — custom `Deserialize` impls, `deserialize_with`, normalizing map
 key types — are outside this guarantee: they may coerce, panic, or allocate,
 and two distinct YAML keys that a caller's key type normalizes to one Rust key
@@ -1173,13 +1217,20 @@ rejected. `3.4028235677973362e38` is accepted. Negative values are symmetric.
 pub fn to_node<T: Serialize>(value: &T, opts: &EmitOptions) -> Result<Node, Error>;
 pub fn to_string<T: Serialize>(value: &T) -> Result<String, Error>;
 pub fn to_string_with<T: Serialize>(value: &T, opts: &EmitOptions) -> Result<String, Error>;
+pub fn to_writer<W: std::io::Write, T: Serialize>(writer: W, value: &T) -> Result<(), Error>;
+pub fn to_writer_with<W: std::io::Write, T: Serialize>(writer: W, value: &T, opts: &EmitOptions) -> Result<(), Error>;
 ```
 
 `to_node` converts a `serde::Serialize` value into a synthetic `Node`
 (`NodeSpan::Synthetic`) under `EmitOptions::validate()`, enforcing `max_depth`,
 `max_nodes`, `max_scalar_bytes`, `max_key_bytes`, and `max_tag_bytes` while
-constructing the tree. `to_string` uses `EmitOptions::default()`, and
-`to_string_with` runs `to_node(value, opts)` followed by `emit_with(&node, opts)`.
+constructing the tree. `to_string` and `to_writer` use `EmitOptions::default()`,
+and `to_string_with` runs `to_node(value, opts)` followed by
+`emit_with(&node, opts)`. `to_writer_with` buffers and validates the complete
+emitted YAML string via `to_string_with(value, opts)` before calling
+`writer.write_all(yaml.as_bytes())`, so option, structural, or `max_output_bytes`
+failures never write partial YAML bytes to `writer`; any `std::io::Error` from
+`write_all` returns `ErrorKind::Internal` with `Site::NotSource { last_known: None }`.
 
 | Rust `Serialize` input                 | Resulting `Value`                                                                                  | Rejects (`Site::NotSource { last_known: None }`)                                      |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -1264,7 +1315,7 @@ revision 1.0 results as revision 1.0 results. A migration input
 accepted only by the earlier leniency is a reported compatibility difference,
 not grounds to rewrite a malformed-input expectation.
 
-## 10. Public Rust API and Core emitter
+## 10. Public Rust API, Core emitter, migration lint, and CLI
 
 ### 10.1 Loading, typed conversion, wire, and projection APIs
 
@@ -1285,11 +1336,15 @@ pub enum WireEnvelope {
 pub fn load(input: &str) -> Result<Document, Error>;
 pub fn load_with(input: &str, opts: &Options) -> Result<Document, Error>;
 pub fn load_bytes(input: &[u8], opts: &Options) -> Result<Document, Error>;
+pub fn load_reader<R: std::io::Read>(reader: R) -> Result<Document, Error>;
+pub fn load_reader_with<R: std::io::Read>(reader: R, opts: &Options) -> Result<Document, Error>;
 pub fn load_all(input: &str) -> Result<Vec<Document>, Error>;
 pub fn load_all_with(input: &str, opts: &Options) -> Result<Vec<Document>, Error>;
 pub fn load_all_bytes(input: &[u8], opts: &Options) -> Result<Vec<Document>, Error>;
-pub fn from_str / from_str_with / from_node                          // §8.1
-pub fn to_node / to_string / to_string_with                          // §8.2
+pub fn load_all_reader<R: std::io::Read>(reader: R) -> Result<Vec<Document>, Error>;
+pub fn load_all_reader_with<R: std::io::Read>(reader: R, opts: &Options) -> Result<Vec<Document>, Error>;
+pub fn from_str / from_str_with / from_slice / from_slice_with / from_reader / from_reader_with / from_node // §8.1
+pub fn to_node / to_string / to_string_with / to_writer / to_writer_with                                    // §8.2
 pub fn encode(docs: &[Document], opts: &Options) -> Result<String, Error>;   // §11.1
 pub fn encode_error(error: &Error, opts: &Options) -> Result<String, Error>; // §11.1 error envelope
 pub fn decode_wire(wire_json: &str, opts: &Options) -> Result<WireEnvelope, Error>; // §11.1
@@ -1298,16 +1353,29 @@ pub fn encode_ijson(node: &Node, opts: &Options) -> Result<String, Error>;   // 
 pub fn load_ijson(input: &str) -> Result<String, Error>;                     // §11.6 (uses Options::ijson_default())
 pub fn load_ijson_with(input: &str, opts: &Options) -> Result<String, Error>;// §11.6
 pub fn load_ijson_bytes(input: &[u8], opts: &Options) -> Result<String, Error>; // §11.6
+pub fn lint_yaml11(input: &str) -> Result<LintResult, Error>;                // §10.3
+pub fn lint_yaml11_with(input: &str, opts: &Options) -> Result<LintResult, Error>; // §10.3
+pub fn lint_yaml11_bytes(input: &[u8], opts: &Options) -> Result<LintResult, Error>; // §10.3
+pub fn lint_yaml11_reader<R: std::io::Read>(reader: R) -> Result<LintResult, Error>; // §10.3
+pub fn lint_yaml11_reader_with<R: std::io::Read>(reader: R, opts: &Options) -> Result<LintResult, Error>; // §10.3
+pub fn encode_lint(result: &LintResult, opts: &Options) -> Result<String, Error>; // §11.7
 ```
 
-Library calls perform no filesystem access, environment interpolation,
+Library calls perform no filesystem path resolution, environment interpolation,
 network requests, or process-global configuration, and are safe to call
-concurrently.
+concurrently. Stream helpers (`*_reader*` and `*_writer*`) operate solely on the
+caller-supplied `std::io::Read` or `std::io::Write` handle.
 
-The byte entrypoints take explicit options; string entrypoints without `_with`
-use `Options::default()`. All byte paths use the same raw-input limit, BOM and
-UTF-8 gates. `load_all_bytes` has exactly the document semantics of `load_all_with`
-and preserves original-byte coordinates.
+The byte entrypoints take explicit options; string and reader entrypoints without
+`_with` use `Options::default()`. All byte and reader paths use the same
+raw-input limit, BOM, and UTF-8 gates. Reader entrypoints validate `opts` before
+reading any bytes, read at most `opts.limits.max_input_bytes.saturating_add(1)`
+bytes via `std::io::Read::take`, map any `std::io::Error` to
+`ErrorKind::Internal` with `Site::NotSource { last_known: None }`, and delegate
+to the corresponding byte entrypoint (`load_bytes`, `load_all_bytes`,
+`from_slice_with`, `lint_yaml11_bytes`). `load_all_bytes` and
+`load_all_reader_with` have the exact document semantics of `load_all_with` and
+preserve original-byte coordinates.
 
 `encode_error` borrows the error and writes one canonical error envelope. Like
 `encode`, it validates options and returns no partial JSON on failure. It MUST
@@ -1348,8 +1416,12 @@ pub struct EmitOptions {
 
 pub fn emit(node: &Node) -> Result<String, Error>;
 pub fn emit_with(node: &Node, opts: &EmitOptions) -> Result<String, Error>;
+pub fn emit_writer<W: std::io::Write>(writer: W, node: &Node) -> Result<(), Error>;
+pub fn emit_writer_with<W: std::io::Write>(writer: W, node: &Node, opts: &EmitOptions) -> Result<(), Error>;
 pub fn emit_all(docs: &[Document]) -> Result<String, Error>;
 pub fn emit_all_with(docs: &[Document], opts: &EmitOptions) -> Result<String, Error>;
+pub fn emit_all_writer<W: std::io::Write>(writer: W, docs: &[Document]) -> Result<(), Error>;
+pub fn emit_all_writer_with<W: std::io::Write>(writer: W, docs: &[Document], opts: &EmitOptions) -> Result<(), Error>;
 ```
 
 `EmitOptions::validate()` runs before writing any output: every field of
@@ -1360,7 +1432,12 @@ return `InvalidOptions` with `Site::NotSource { last_known: None }`. Exceeding
 `max_mapping_entries`, or `max_documents` returns `LimitExceeded`
 (`max_tag_bytes` violations return `InvalidOptions` because `yamlprims-value/1`
 `LimitKind` is frozen at wire version `1`); exceeding `max_output_bytes` returns
-`OutputLimitExceeded` with no partial output.
+`OutputLimitExceeded` with no partial output. `emit_writer*` and
+`emit_all_writer*` validate and buffer the entire emitted UTF-8 YAML payload via
+`emit_with` / `emit_all_with` before calling `writer.write_all(yaml.as_bytes())`
+(so option, structural, or `max_output_bytes` errors never write partial bytes
+to `writer`); any `std::io::Error` from `write_all` returns `ErrorKind::Internal`
+with `Site::NotSource { last_known: None }`.
 
 **Deterministic diagnostic order (all emitter errors use `Site::NotSource { last_known: None }`):**
 1. `EmitOptions::validate()` (`InvalidOptions`), then `docs.len() > max_documents`
@@ -1563,19 +1640,357 @@ return `InvalidOptions` with `Site::NotSource { last_known: None }`. Exceeding
   holds for all `Serialize + DeserializeOwned` types within the invertible scope
   defined in §8.2.
 
-**CLI.** `yamlprims check FILE…` prints `file:line:col: kind: message` and
-exits 1 on any error. `yamlprims dump FILE` writes the wire format.
-`yamlprims dump --plain FILE` writes plain JSON for a single document or fails,
-naming the loss (§11.3). `yamlprims dump --ijson FILE` writes strict RFC 7493
-I-JSON for a single non-empty-stream document or fails (§11.6). `yamlprims emit FILE`
-loads a YAML stream (or `yamlprims-value/1` wire input with `--from-wire`) and
-writes canonical Core YAML (§10.2; `--compat-quoting core-only` opts out of
-YAML 1.1 hazard quoting).
+### 10.3 YAML 1.1 migration lint
 
-`check`, wire-format `dump`, and `emit` use multi-document semantics. An empty
-file is a successful `check`, emits
-`{"format":"yamlprims-value","version":1,"documents":[]}` under wire `dump`,
-emits zero bytes under `emit`, and fails closed under `dump --ijson` (§11.6).
+```rust
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LintCode {
+    Yaml11Boolean,     // wire code: "yaml11_boolean"
+    Yaml11Number,      // wire code: "yaml11_number"
+    Yaml11Sexagesimal, // wire code: "yaml11_sexagesimal"
+    Yaml11MergeKey,    // wire code: "yaml11_merge_key"
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LintDiagnostic {
+    pub code: LintCode,
+    pub span: Span,
+    pub document_index: usize,
+    pub path: Vec<PathSegment>,
+    pub raw: String,
+    pub yaml12_resolution: String,
+    pub yaml11_note: String,
+    pub message: String,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LintResult {
+    pub diagnostics: Vec<LintDiagnostic>,
+    pub warning_count: usize,
+    pub truncated: bool,
+}
+```
+
+`lint_yaml11*` (Rust), `LintYAML11*` (Go), `lintYaml11` (TypeScript),
+`lint_yaml11` (Python), and `yamlprims check --lint-yaml11` (CLI) inspect a
+YAML stream for unquoted constructs that match the normative
+[YAML 1.1 Type Repository](https://yaml.org/type/index.html) (`!!bool`,
+`!!int`, `!!float`, `!!merge`) definitions (with the explicit decimal-float
+underscore policy in item 3 below) and whose YAML 1.2.2 Core resolution
+differs, without changing `yamlprims`'s strict YAML 1.2.2 Core resolution
+semantics. (Individual legacy loaders such as `PyYAML`, `ruamel.yaml`,
+`gopkg.in/yaml.v2`, `gopkg.in/yaml.v3`, and `js-yaml` implement subsets or
+variants of these YAML 1.1 type definitions; the normative baseline for
+`lint_yaml11*` is the explicit YAML 1.1 rule set below. Tokens that were plain
+strings in YAML 1.1 (`!!str`) but resolve to numbers in YAML 1.2.2 Core — such
+as `0o10` or `08`/`09` under §4.1 rows 3–4 — are outside `lint_yaml11*`'s
+YAML-1.1-literal scope, so zero lint warnings does not guarantee that a file
+containing `0o10` or `08`/`09` produced identical types under a YAML 1.1
+loader.)
+
+- **Validation, precedence, and stream semantics.** `lint_yaml11*` uses
+  multi-document stream semantics (`load_all` cardinality: zero-document streams
+  succeed with `warning_count == 0`, `truncated == false`, and `diagnostics == []`)
+  and follows §7.1 error precedence:
+  1. `Options::validate()` (`InvalidOptions`, `Site::NotSource { last_known: None }`).
+  2. Raw input byte length against `max_input_bytes` (`LimitExceeded(MaxInputBytes)`
+     at `Site::Source(Location { byte_offset: 0, line: 1, column: 1 })` before
+     UTF-8 validation; reader entrypoints accumulate up to
+     `max_input_bytes.saturating_add(1)` UTF-8 bytes until EOF and map
+     `std::io::Error` / `io.Reader` / Python stream errors to
+     `ErrorKind::Internal` with `Site::NotSource { last_known: None }`).
+  3. UTF-8 BOM stripping and validation (`InvalidUtf8`).
+  4. Bounded source syntax and `max_depth` validation across the stream (§7.1).
+  5. Stream construction and migration-hazard collection. Any hard YAML,
+     structure, tag, or materialization-budget failure (`DuplicateKey`,
+     `InvalidKey`, `UnknownAnchor`, `RecursiveAlias`, `MergeSource`,
+     `UnknownTag`, `TagKindMismatch`, `TagValueMismatch`, `IntegerOutOfRange`,
+     `FloatOutOfRange`, `LimitExceeded`) aborts the call and returns `Err(Error)`.
+- **Source-definition-only recording (no alias or merge amplification).**
+  Diagnostics are recorded strictly at source events in document and source-byte
+  order. Expanding an `*alias` (§5.4) or applying a `<<` merge (§5.3) MUST NOT
+  re-emit diagnostics for nodes inside the anchored or merged source subtree.
+- **Merge-key hazard (`LintCode::Yaml11MergeKey`, `"yaml11_merge_key"`, [YAML 1.1 `!!merge`](https://yaml.org/type/merge.html)).**
+  Whenever the builder recognizes a merge directive in mapping-key position per
+  the §5.3 recognition table (an untagged plain `<<` scalar or an explicitly
+  tagged `!!merge <<` scalar of any style; quoted `"<<"` / `'<<'`, `!!str <<`,
+  and `! <<` are ordinary string keys and do not trigger `Yaml11MergeKey`, while
+  `!!merge x` with `x != "<<"` remains a hard `TagValueMismatch` error):
+  - Record a `LintDiagnostic` with `code = LintCode::Yaml11MergeKey`, `span` equal
+    to the directive key node's source `Span`, `document_index` equal to the
+    0-based index of the current document, `path` equal to the path of the
+    enclosing `Mapping`, `raw` equal to `"<<"`, `yaml11_note` equal to
+    `"YAML 1.1 merge key specification (https://yaml.org/type/merge.html)"`,
+    and `yaml12_resolution` determined by `opts.merge_keys`:
+    - `MergeKeys::Reject`: `"rejected (MergeKeys::Reject default; literal string \"<<\" under MergeKeys::AsKey)"`
+    - `MergeKeys::Apply`: `"merge applied (MergeKeys::Apply opt-in; not part of YAML 1.2.2 Core)"`
+    - `MergeKeys::AsKey`: `"string (\"<<\" under MergeKeys::AsKey)"`
+  - When `opts.merge_keys == MergeKeys::Reject` (the default), `lint_yaml11*`
+    admits the `<<` key using `MergeKeys::AsKey` ordinary-entry rules for the
+    remainder of the lint pass instead of aborting at the first `<<` with
+    `ErrorKind::MergeRejected`, so callers linting a YAML 1.1 stream under
+    default options receive all `yaml11_merge_key` and scalar diagnostics in a
+    single pass (while a second unquoted `<<` in the same mapping still fails
+    with `ErrorKind::DuplicateKey`). When `opts.merge_keys == MergeKeys::Apply`,
+    §5.3 merge validation and expansion run normally (so invalid merge sources
+    still fail with `ErrorKind::MergeSource` and duplicate directives with
+    `ErrorKind::DuplicateKey`).
+- **Untagged plain scalar hazards (`Yaml11Boolean`, `Yaml11Sexagesimal`, `Yaml11Number`).**
+  Inspected **only** on untagged plain scalars (`ScalarStyle::Plain` with no
+  explicit tag and no non-specific `!` tag) that were not already recognized as
+  a §5.3 merge directive key. Single-quoted (`'...'`), double-quoted (`"..."`),
+  literal (`|`), folded (`>`), and tagged (`!!str`, `!`, `!custom`, …) scalars
+  never produce scalar lint diagnostics. At most one diagnostic is recorded per
+  scalar, tested in the following priority order against the full scalar text
+  `raw`:
+  1. **`LintCode::Yaml11Boolean` (`"yaml11_boolean"`, [YAML 1.1 `!!bool`](https://yaml.org/type/bool.html)):**
+     `raw` is one of the 16 exact YAML 1.1 boolean spellings that resolve to
+     `Value::String` in YAML 1.2.2 Core:
+     - Truthy (8 spellings): `"y"`, `"Y"`, `"yes"`, `"Yes"`, `"YES"`, `"on"`,
+       `"On"`, `"ON"`.
+     - Falsity (8 spellings): `"n"`, `"N"`, `"no"`, `"No"`, `"NO"`, `"off"`,
+       `"Off"`, `"OFF"`.
+     (The six YAML 1.2.2 Core boolean spellings `true`/`True`/`TRUE`/
+     `false`/`False`/`FALSE` in §4.1 row 2 resolve to `Bool` in both YAML 1.1
+     and YAML 1.2.2 Core and are not warned; mixed-case spellings outside the
+     YAML 1.1 `!!bool` regular expression such as `"yEs"` or `"oN"` resolve to
+     `String` in both YAML 1.1 and YAML 1.2.2 Core and are not warned.)
+     - `yaml12_resolution`: `string (<JSON-escaped raw>)` (e.g. `"string (\"yes\")"`).
+     - `yaml11_note`: `"YAML 1.1 boolean literal (true)"` for the 8 truthy
+       spellings; `"YAML 1.1 boolean literal (false)"` for the 8 falsity
+       spellings.
+  2. **`LintCode::Yaml11Sexagesimal` (`"yaml11_sexagesimal"`, [YAML 1.1 `!!int`](https://yaml.org/type/int.html) / [`!!float`](https://yaml.org/type/float.html)):**
+     `raw` matches the YAML 1.1 sexagesimal integer or sexagesimal float regular
+     expression:
+     - Sexagesimal integer (`!!int`, non-zero leading digit group):
+       `\A[+-]?[1-9][0-9_]*(:[0-5]?[0-9])+\z` (such as `1:30`, `10:20:30`, or
+       `1_0:20`; zero-leading integer tokens such as `0:10` or `00:30` are
+       excluded by the YAML 1.1 `!!int` `[1-9][0-9_]*` leading-group rule and
+       resolve to `String` in both YAML 1.1 and YAML 1.2.2 Core, so they do not
+       warn).
+     - Sexagesimal float (`!!float`, any decimal leading digit group and no
+       exponent suffix): `\A[+-]?[0-9][0-9_]*(:[0-5]?[0-9])+\.[0-9_]*\z` (such
+       as `10:20.5`, `0:10.5`, `00:30.0`, or `1:05:30.5_0`; exponent-suffixed
+       tokens such as `1:30.5e+2` are excluded by the YAML 1.1 `!!float`
+       sexagesimal production and resolve to `String` in both YAML 1.1 and
+       YAML 1.2.2 Core, so they do not warn).
+     - `yaml12_resolution`: `string (<JSON-escaped raw>)` (e.g. `"string (\"10:20\")"`).
+     - `yaml11_note`: `"YAML 1.1 sexagesimal float literal"` when `raw` contains
+       `'.'`, else `"YAML 1.1 sexagesimal integer literal"`.
+  3. **`LintCode::Yaml11Number` (`"yaml11_number"`, [YAML 1.1 `!!int`](https://yaml.org/type/int.html) / [`!!float`](https://yaml.org/type/float.html)):**
+     `raw` was not matched by (1) or (2) and matches one of the following
+     YAML 1.1 `!!int` or `!!float` forms whose YAML 1.2.2 Core resolution
+     differs:
+     - **Legacy leading-zero octal integer without underscores
+       (`\A[+-]?0[0-7]*[1-7][0-7]+\z`, requiring at least one non-zero octal
+       digit `[1-7]` somewhere before the final digit, such as `010`, `0755`,
+       `0100`, `0101`, `0200`, `-010`, `-0100`, `0010`):** In YAML 1.2.2 Core
+       (§4.1 row 3), this resolves to a **base-10 `Value::Int`** (`10`, `755`,
+       `100`, `101`, `200`, `-10`, `-100`, `10`), whereas in YAML 1.1 `!!int` it
+       resolved to a **base-8 integer** (`8`, `493`, `64`, `65`, `128`, `-8`,
+       `-64`, `8`). All-zero spellings (`0`, `+0`, `-0`, `00`, `000`) and
+       single-nonzero-final-digit spellings (`01`..`07`, `007`, `0001`, `0007`,
+       `-007`, `+07`) denote identical integer values (`0` or `±1..=±7`) in base
+       8 and base 10 and are not warned.
+       - `yaml12_resolution`: `int (<canonical base-10 decimal>)` (e.g.
+         `"int (10)"` for `010`, `"int (-10)"` for `-010`).
+       - `yaml11_note`: `"YAML 1.1 base-8 (octal) integer literal; use 0o prefix for octal in YAML 1.2 or quote as string"`.
+     - **Base-2 binary integer (`\A[+-]?0b[0-1_]+\z` containing at least one
+       binary digit `[01]`, such as `0b1010`, `-0b11_00`):** Matches YAML 1.1
+       `!!int` base-2 and resolves to `Value::String` in YAML 1.2.2 Core.
+       - `yaml12_resolution`: `string (<JSON-escaped raw>)`.
+       - `yaml11_note`: `"YAML 1.1 base-2 (binary) integer literal"`.
+     - **Signed hexadecimal integer (`\A[+-]0x[0-9a-fA-F_]+\z` containing at
+       least one hex digit `[0-9a-fA-F]`, such as `-0x10`, `+0x10`, `-0x1_0`):**
+       Matches signed YAML 1.1 `!!int` base-16 and resolves to `Value::String`
+       in YAML 1.2.2 Core (where §4.1 row 5 `0x[0-9a-fA-F]+` is unsigned).
+       - `yaml12_resolution`: `string (<JSON-escaped raw>)`.
+       - `yaml11_note`: `"YAML 1.1 signed hexadecimal integer literal"`.
+     - **Underscore-grouped YAML 1.1 integer or float literal (`raw` contains
+       `'_'` and matches one of the following patterns that §4.1 Core resolves
+       as `Value::String`):**
+       - Legacy octal with `'_'`: `\A[+-]?0[0-7_]+\z` containing `'_'` and at
+         least one octal digit `[0-7]` (e.g. `07_55`, `0_0`, `0_7`);
+       - Decimal integer with `'_'`: `\A[+-]?[1-9][0-9_]*\z` containing `'_'`
+         (e.g. `1_000`, `-1_000_000`);
+       - Unsigned hexadecimal integer with `'_'`: `\A0x[0-9a-fA-F_]+\z`
+         containing `'_'` and at least one hex digit `[0-9a-fA-F]` (e.g.
+         `0x1_0`, `0xdead_beef`);
+       - Decimal float with `'_'` (this profile's explicit decimal-float
+         policy — requiring a decimal point `.`, at most one `.`, a digit
+         `[0-9]` immediately after a leading `.` when there is no integer part,
+         and a signed digit-only exponent `[eE][+-][0-9]+` when an exponent is
+         present, correcting the YAML 1.1 `!!float` Type Repository page's
+         permissive `[0-9.]` character-class typo while matching its
+         `685.230_15e+03` example):
+         `\A[+-]?([0-9][0-9_]*\.[0-9_]*|\.[0-9][0-9_]*)([eE][+-][0-9]+)?\z`,
+         containing `'_'` (e.g. `1_000.5`, `1.5_0`, `1._5`, `.5_0`,
+         `1_000.5e+2`, `685.230_15e+03`). (Underscore-free `1.e+2` already
+         resolves as `Value::Float(100.0)` under YAML 1.2.2 Core §4.1 row 6 and
+         is not warned; dotless `1_0e+2`, signless-exponent `1_000.5e2`,
+         underscore-exponent `1.5e+1_0`, and leading-underscore-fraction `._5`
+         are outside the YAML 1.1 `!!float` production and resolve to `String`
+         in both YAML 1.1 and YAML 1.2.2 Core, so they are not warned.)
+       (Spellings outside this rule set — such as `0o7_7`, comma-grouped
+       `1,000`, or multi-dot `1.2.3` — are not warned by `lint_yaml11*`; note
+       that `CompatQuoting::Yaml11Safe` in §10.2 quotes a broader defensive
+       superset on emission.)
+       - `yaml12_resolution`: `string (<JSON-escaped raw>)`.
+       - `yaml11_note`: `"YAML 1.1 underscore-grouped numeric literal"`.
+- **Coordinates, paths, and messages.**
+  - `span` is the scalar or merge-directive key node's exact source `Span` (§7.2).
+  - `document_index` is the 0-based index of the document in the stream.
+  - `path` is the structured `Vec<PathSegment>` to the diagnostic site: `[]` at
+    the document root; `PathSegment::Index(i)` inside sequence item `i`; for a
+    scalar that is itself a mapping key (or for `Yaml11MergeKey`), `path` is the
+    path to the enclosing `Mapping` (plus any nested sequence/mapping segments
+    when a composite mapping key contains nested collections); for a scalar
+    inside a mapping entry's value, `path` includes `PathSegment::Key(Box::new(key_value))`
+    for that entry's resolved key (with spans, `via`, and `tag_start` stripped
+    at every depth, matching `ErrorDetail::path` in §11.1).
+  - `raw`, `yaml12_resolution`, and `yaml11_note` are formatted directly into
+    UTF-8-safe buffers bounded by 1,024 bytes each (truncating with `"…"` if
+    needed), and `message` is formatted deterministically into a UTF-8-safe
+    buffer bounded by 4,096 bytes (§6):
+    `YAML 1.1 compatibility hazard (<code_str>): unquoted <JSON-escaped raw> resolves as <yaml12_resolution> in YAML 1.2 Core (<yaml11_note>)`.
+- **Diagnostic memory accounting and warning budget (`Limits::max_warnings`).**
+  - Every matched hazard increments `warning_count` by 1 using saturating
+    arithmetic (`warning_count.saturating_add(1)`).
+  - When `diagnostics.len() < opts.limits.max_warnings` (default `1,000`),
+    **before** cloning any `PathSegment::Key(Node)` or allocating the retained
+    `LintDiagnostic`, `lint_yaml11*` charges the retained diagnostic against the
+    call's cumulative §6 `nodes` (`opts.limits.max_nodes`) and `owned_bytes`
+    (`opts.limits.max_owned_bytes`) budgets:
+    1. Each `PathSegment::Key(key_node)` in `path` is checked against
+       `weight(key_node) <= opts.limits.max_key_bytes` (`LimitExceeded(MaxKeyBytes)`)
+       and error-key nesting metric **P** `<= opts.limits.max_depth`
+       (`LimitExceeded(MaxDepth)`), and charges `nodes(key_node)` against
+       `opts.limits.max_nodes` (`LimitExceeded(MaxNodes)`) and
+       `weight(key_node)` against `opts.limits.max_owned_bytes`
+       (`LimitExceeded(MaxOwnedBytes)`, evaluated in the §6 tie order
+       `max_nodes`, then `max_owned_bytes`).
+    2. The retained `LintDiagnostic` itself charges `1` node against
+       `opts.limits.max_nodes` and
+       `64 + 8 * path.len() + raw.len() + yaml12_resolution.len() + yaml11_note.len() + message.len()`
+       bytes against `opts.limits.max_owned_bytes`.
+    If any of these checks fails, `lint_yaml11*` aborts before cloning the path
+    or diagnostic strings and returns `Err(Error)` with `LimitExceeded` at the
+    hazard's `Site::Source(span.start)`. Otherwise the `LintDiagnostic` is
+    appended to `diagnostics`.
+  - When `diagnostics.len() == opts.limits.max_warnings`, the `(max_warnings + 1)`-th
+    and any subsequent hazards set `truncated = true`, increment `warning_count`,
+    and are omitted from `diagnostics` without cloning `path` or strings (and
+    without charging additional diagnostic `nodes` or `owned_bytes`), while
+    parsing, validation, and `warning_count` accumulation continue to the end of
+    the stream. Thus `truncated == false` implies
+    `warning_count == diagnostics.len() <= opts.limits.max_warnings`, and
+    `truncated == true` implies
+    `diagnostics.len() == opts.limits.max_warnings && warning_count > diagnostics.len()`.
+
+### 10.4 Command-line interface (`yamlprims-cli`)
+
+The `yamlprims` binary is a thin `#![forbid(unsafe_code)]` command-line consumer
+of the `yamlprims` library crate. Its synopsis, flags, stream/file behavior, and
+exit codes are frozen in Revision 1.6:
+
+```
+yamlprims [--merge=reject|apply|as_key] check [--lint-yaml11] [--format=text|json] [--] FILE...
+yamlprims [--merge=reject|apply|as_key] dump [--plain|--ijson] [--max-output-bytes=N] [--] FILE
+yamlprims [--merge=reject|apply|as_key] emit [--from-wire|--from-plain] [--compat-quoting=yaml11-safe|core-only] [--max-output-bytes=N] [--] FILE
+yamlprims --help|-h
+yamlprims --version|-V
+```
+
+- **Global and subcommand flags.**
+  - `--merge=reject|apply|as_key` selects `Options.merge_keys` (`reject` default)
+    and may appear before the subcommand or interspersed with subcommand flags
+    before `--`.
+  - `--compat-quoting=yaml11-safe|yaml11_safe|core-only|core_only` (or
+    `--compat-quoting <val>`) is accepted on `emit` (`yaml11-safe` default).
+  - `--max-output-bytes=N` (or `--max-output-bytes N`, with `N >= 1`) is
+    accepted on `dump`, `emit`, and `check --lint-yaml11 --format=json` to
+    override `limits.max_output_bytes`.
+  - `--lint-yaml11` and `--format=text|json` (or `--format text|json`, `text`
+    default) are accepted only on `check`; `--format` requires `--lint-yaml11`,
+    and `--format=json` requires exactly one `FILE` argument.
+  - `--help` / `-h` (alone) writes usage to `stdout` and exits `0`. `--version`
+    / `-V` (alone) writes `yamlprims <CARGO_PKG_VERSION>\n` to `stdout` and
+    exits `0`. Unknown or repeated flags, combining `--help` or `--version` with
+    any other argument, missing `FILE`, or passing multiple `FILE` arguments to
+    `dump`, `emit`, or `check --lint-yaml11 --format=json` writes usage to
+    `stderr`, writes nothing to `stdout`, and exits `2`.
+- **File and `stdin` handling.**
+  - `-` selects `stdin` and may appear at most once per invocation (a second `-`
+    is a usage error, exit `2`). `--` stops option parsing so following
+    arguments (other than bare `-`, which still selects `stdin`) are treated as
+    literal file paths even if they begin with `-`.
+  - Each input read stops at `opts.limits.max_input_bytes + 1` bytes (`8 MiB + 1`
+    default) via `Read::take`, so oversized inputs are reported by the core's
+    `LimitExceeded(MaxInputBytes)` gate before UTF-8 validation.
+- **Subcommands and output buffering.**
+  - `check FILE...`: validates every input using multi-document stream semantics
+    (`load_all_bytes`, or `lint_yaml11_bytes` when `--lint-yaml11` is set). An
+    empty stream is valid (`0` documents, `0` warnings).
+    - Without `--lint-yaml11`: silent on success (exit `0`). On a YAML error or
+      file open/read failure, writes `<file>:<line>:<col>: <kind>: <message>\n`
+      (or `<file>: <kind>: <message>\n` for `Site::NotSource`, or
+      `<file>: cannot read: <io_error>\n` for read failure) to `stderr`,
+      continues through remaining `FILE` arguments, and exits `1`.
+    - With `--lint-yaml11` and `--format=text` (default): for each `FILE`, runs
+      `lint_yaml11_bytes`. On a hard YAML or read error, writes the error
+      diagnostic to `stderr` and sets exit status to `1`. On `Ok(result)`, writes
+      each warning in `result.diagnostics` to `stderr` as
+      `<file>:<start_line>:<start_col>: warning[<code>]: <message>\n` (followed
+      by `<file>: warning[max_warnings]: truncated after <max_warnings> warnings (<warning_count> total)\n`
+      when `result.truncated` is `true`); if `result.warning_count > 0`, sets
+      exit status to `1`. Continues through all `FILE` arguments and exits `0`
+      only when every file succeeded with zero warnings.
+    - With `--lint-yaml11 --format=json FILE`: requires a single `FILE`. On a
+      file open/read error, writes `<file>: cannot read: <io_error>\n` to
+      `stderr` and exits `2`. On a hard YAML error, writes the error diagnostic
+      to `stderr`, writes nothing to `stdout`, and exits `1`. On `Ok(result)`,
+      encodes `result` to a canonical `yamlprims-lint/1` JSON envelope (§11.7)
+      via `encode_lint(&result, &opts)` before writing `stdout`: if encoding
+      fails (`OutputLimitExceeded`), writes the diagnostic to `stderr` with no
+      `stdout` and exits `1`; otherwise writes the JSON line to `stdout` and
+      exits `0` when `result.warning_count == 0` or `1` when
+      `result.warning_count > 0`.
+  - `dump FILE`:
+    - Default (wire format): runs `load_all_bytes` and writes one
+      `yamlprims-value/1` `documents` envelope + `\n` to `stdout` (exit `0`; an
+      empty file emits `{"format":"yamlprims-value","version":1,"documents":[]}`).
+      On a YAML error, writes the diagnostic to `stderr` and writes one
+      `yamlprims-value/1` `error` envelope + `\n` to `stdout` (exit `1`; if
+      `encode_error` itself fails with `OutputLimitExceeded`, writes that
+      diagnostic to `stderr` with no `stdout` and exits `1`).
+    - `--plain`: requires **exactly one document** (`docs.len() == 1` from
+      `load_all_bytes`; zero-document empty streams and multi-document streams
+      fail with `<file>: --plain needs exactly one document` on `stderr`, no
+      `stdout`, and exit `1`) and writes `encode_plain(doc.root(), &opts)` + `\n`
+      to `stdout` (exit `0`, or diagnostic on `stderr` with no `stdout` and exit
+      `1` on loss/error per §11.3).
+    - `--ijson`: runs `load_ijson_bytes` (§11.6) and writes the RFC 7493 I-JSON
+      payload + `\n` to `stdout` (exit `0`, or diagnostic on `stderr` with no
+      `stdout` and exit `1` on empty stream, multi-document stream, or any §11.6
+      rule violation).
+  - `emit FILE`: reads a YAML stream (or a `yamlprims-value/1` `documents` wire
+    envelope with `--from-wire`, or a single plain JSON value with
+    `--from-plain`), emits canonical YAML 1.2.2 Core text via `emit_all_with`
+    (§10.2; zero bytes on an empty `0`-document stream), and writes it to
+    `stdout` (exit `0`, or diagnostic on `stderr` with no `stdout` and exit `1`
+    on load/decode/emit failure).
+  - **Whole-payload buffering and exit codes.** Every command completes
+    serialization in memory before writing to `stdout`, so YAML, policy, or
+    `OutputLimitExceeded` errors never write a partial payload to `stdout`. Exit
+    codes are:
+    - `0`: success (with zero lint warnings when `--lint-yaml11` is active).
+    - `1`: YAML input error, policy/projection/emission error, lint warning(s)
+      found under `check --lint-yaml11`, or unreadable file under `check`.
+    - `2`: CLI usage error, unreadable input file under `dump`, `emit`, or
+      `check --lint-yaml11 --format=json`, or an OS `stdout` write/flush failure.
 
 ## 11. Wire format `yamlprims-value/1`
 
@@ -1753,40 +2168,104 @@ whenever `dec_opts.limits.max_input_bytes` accommodates the wire JSON length and
   `Value` exposes kind-checked accessors over `Null`, `Bool`, `Integer`
   (128-bit), `Float` (`float64` preserving bits), `String`, `Sequence`,
   `Mapping`, and `Tagged`. Every `Node` carries its `NodeSpan`, `Via`, and
-  `TagStart`. Errors are `*yaml.Error`. Exposes `Load*`, `Encode*`,
-  `DecodeWire`, `ToPlain`, `FromPlain`, `Marshal`, `Emit*`, `EncodeIJSON`, and
-  `LoadIJSON*`.
+  `TagStart`. Errors are `*yaml.Error`. Exposes `Load*`, `LoadReader*`,
+  `LoadAllReader*`, `Unmarshal*`, `UnmarshalReader*`, `UnmarshalNode`,
+  `Encode*`, `DecodeWire`, `ToPlain`, `FromPlain`, `Marshal`, `MarshalWriter*`,
+  `Emit*`, `EmitWriter*`, `EmitAllWriter*`, `EncodeIJSON*`, `LoadIJSON*`,
+  `LintYAML11*`, and `EncodeLint*`.
 - **TypeScript (`@3leaps/yamlprims`).** Zero-import `wasm32-unknown-unknown`
   package. A discriminated union on `kind`: `int.value` is a `bigint`;
   `float.value` is a `number` built from `bits`; `mapping.entries` is a
   `Mapping` of `[Node, Node]` pairs. Errors are `YamlprimsError` with
   `byteOffset`, `utf16Offset`, `line`, `column`, `path`, and `related`. Exposes
   `load*`, `encode*`, `decodeWire`, `toPlain`, `fromPlain`, `loadPlain`,
-  `loadIjson`, `dump`, and `dumpAll`.
+  `parse`, `parseAll`, `loadIjson`, `dump`, `dumpAll`, `stringify`,
+  `stringifyAll`, `lintYaml11`, and `encodeLint`.
 - **Python (`yamlprims`).** `#![forbid(unsafe_code)]` `PyO3` `cp310-abi3`
   extension. `Node` preserves 128-bit `int`, `float` + `bits`, lossless
   `Mapping` (keyed by §5.1 `key_eq`, never colliding `True`, `1`, and `1.0`),
   and `Tagged`. Errors raise `YamlprimsError`. Exposes `load*`, `encode*`,
-  `decode_wire`, `to_plain`, `from_plain`, `load_plain`, `load_ijson`, `dump`,
-  and `dump_all`.
+  `decode_wire`, `to_plain`, `from_plain`, `load_plain`, `safe_load`,
+  `safe_load_all`, `load_ijson`, `dump`, `dump_all`, `safe_dump`,
+  `safe_dump_all`, `lint_yaml11`, and `encode_lint`.
 
 ### 11.3 Plain conversion loss matrix
 
-`toPlain()` (TypeScript) and `ToPlain()` (Go) are explicitly lossy projections:
-they drop source metadata and YAML kind distinctions that the host cannot
-retain, such as Int versus Float in a TypeScript `number`. They **fail** on the
-additional losses marked as errors below. Use the wire format for lossless data.
+`toPlain` / `parse` / `parseAll` (TypeScript), `to_plain` /
+`safe_load` / `safe_load_all` (Python), and `ToPlain` (Go) are explicitly lossy
+projections: they drop source metadata (`NodeSpan`, `Via`, `TagStart`) and
+host-indistinguishable YAML kind distinctions, such as `Int` versus `Float` in
+a TypeScript `number`. They **fail** on the additional losses marked as errors
+below. Use the `Node`/`Document` model or the wire format for lossless data.
 
-| Value                                       | TypeScript `toPlain`                                                                         | Go `ToPlain`                       |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------- |
-| Int within ±(2^53−1)                        | `number`                                                                                     | `int64`                            |
-| Int outside that range                      | **error**                                                                                    | `int64` if it fits, else **error** |
-| Float finite, −0.0, NaN, ±inf               | `number` (in memory)                                                                         | `float64`                          |
-| Float in JSON text output (`dump --plain`)  | NaN/±inf → **error**; −0.0 written as `-0.0`                                                 | same                               |
-| String key                                  | object member (object created with `Object.create(null)`, so `__proto__` is an ordinary key) | `map[string]any`                   |
-| non-String key (Int, Bool, Null, composite) | **error**                                                                                    | **error**                          |
-| Tagged                                      | **error**                                                                                    | **error**                          |
-| spans, `via`, `tag_start`                   | dropped (documented)                                                                         | dropped                            |
+| Value | TypeScript `toPlain` / `parse*` | Python `to_plain` / `safe_load*` | Go `ToPlain` |
+| --- | --- | --- | --- |
+| Int within ±(2^53−1) | `number` | `int` (arbitrary precision; full `i128::MIN..=u128::MAX` preserved) | `int64` |
+| Int outside ±(2^53−1) | **error** (`IntegerOutOfRange`) | `int` (within `i128::MIN..=u128::MAX`) | `int64` if within `math.MinInt64..=math.MaxInt64`, else **error** (`IntegerOutOfRange`) |
+| Float finite, −0.0, NaN, ±inf | `number` (in memory) | `float` (in memory) | `float64` |
+| Float in JSON text output (`dump --plain`) | NaN/±inf → **error** (`FloatOutOfRange`); −0.0 written as `-0.0` | same | same |
+| String key | object member (object created with `Object.create(null)`, so `__proto__` is an ordinary key) | `dict[str, Any]` entry (insertion order) | `map[string]any` |
+| non-String key (Int, Bool, Null, Float, composite) | **error** (`Type`) | **error** (`Type`) | **error** (`Type`) |
+| Tagged | **error** (`UnknownTag`) | **error** (`UnknownTag`) | **error** (`UnknownTag`) |
+| spans, `via`, `tag_start` | dropped (documented) | dropped (documented) | dropped (documented) |
+
+**Go `Unmarshal*` / `UnmarshalNode` target conversion (`yaml.Unmarshal`, `yaml.UnmarshalWith`, `yaml.UnmarshalReader`, `yaml.UnmarshalReaderWith`, `yaml.UnmarshalNode`).**
+The Go binding provides typed unmarshaling into a caller-supplied target `v any`
+under the same no-coercion, fail-closed guarantees as §8.1:
+- **Target pointer requirement.** `v` MUST be a non-nil pointer; a `nil`
+  interface or non-pointer (or typed `nil` pointer) fails closed with `Type`
+  (`Site::NotSource { last_known: None }`).
+- **Stream vs `Node` entrypoints.** `Unmarshal(data, v)` and
+  `UnmarshalWith(data, v, opts)` call `LoadBytesWith(data, opts)` first (so a
+  zero-document stream yields an implicit `Null` root and `> 1` documents fail
+  with `MultipleDocuments` after §7.1 Phases 1–4 validation) and then call
+  `UnmarshalNode(doc.Root, v)`. `UnmarshalReader(r, v)` and
+  `UnmarshalReaderWith(r, v, opts)` read from `r` up to `max_input_bytes + 1`
+  bytes (§10.1) before delegating to `UnmarshalWith`.
+- **Untagged-only target requirement.** Except when unmarshaling into `*Node`,
+  `*Value`, `*Document`, or `*Tagged`, encountering a `Value::Tagged` node fails
+  closed with `Type` (`expected: "<target type>", found: "tagged value"`,
+  located at `node.Span.Start`).
+- **Supported Go target types** (unmarshaling recursively tracks `PathSegment`s
+  and reports located `*Error` values at each node's `Span.Start`):
+  - `*Node`, `*Value`, `*Document`, `*Tagged`: lossless copy of the decoded
+    node/value (`*Document` wraps `node` with default metadata when called from
+    `UnmarshalNode`, or preserves loaded metadata from `Unmarshal*`; `*Tagged`
+    accepts `Value::Tagged` only and fails closed with `Type` on untagged
+    nodes).
+  - `*any` (`*interface{}`): delegates to `ToPlain(node)` (`Null` → `nil`,
+    `Bool` → `bool`, `Int` in `int64` → `int64`, `Float` → `float64`, `String`
+    → `string`, `Sequence` → `[]any`, `Mapping` with `String` keys →
+    `map[string]any`).
+  - `*bool`: accepts `Value::Bool` only (`Type` otherwise).
+  - `*int`, `*int8`, `*int16`, `*int32`, `*int64`, `*uint`, `*uint8`,
+    `*uint16`, `*uint32`, `*uint64`, `*uintptr`, `*Integer`, `*big.Int`:
+    accepts `Value::Int` only (`Type` on `Float`, `String`, `Bool`, etc.);
+    values outside the target integer width fail with `IntegerOutOfRange`.
+  - `*float32`, `*float64`: accepts `Value::Float` or exact `Value::Int` per §8.1
+    (`Value::Int` values not exactly representable in the target IEEE 754 binary
+    format fail with `IntegerOutOfRange`; finite `Value::Float` values whose
+    `float32(f)` overflows to `±Inf` fail with `FloatOutOfRange`).
+  - `*string`: accepts `Value::String` only (`!utf8.ValidString` on synthetic
+    nodes fails with `InvalidUtf8`).
+  - Pointer `*T`: `Value::Null` sets `*v = nil`; any non-`Null` value allocates
+    `new(T)` if `*v == nil` and unmarshals into `**v`.
+  - Slice `*[]E` and fixed array `*[N]E`: accepts `Value::Sequence` only
+    (`Value::Null` sets a slice target to `nil`, whereas `Value::Null` into a
+    fixed array fails with `Type`); fixed-array length mismatch fails with
+    `Type` (`expected: "sequence of length N"`).
+  - `*map[K]V` and `*Mapping`: accepts `Value::Mapping` only (`Value::Null`
+    sets `*map[K]V` to `nil`). For `map[K]V`, each entry's key and value are
+    unmarshaled into `K` and `V`; if two YAML keys that were distinct under §5.1
+    map to the same Go comparable key `K`, unmarshaling fails with
+    `DuplicateKey`.
+  - `*struct`: accepts `Value::Mapping` only. Field matching honors `yaml:"name,..."`
+    struct tags (`yaml:"-"` ignores the field; the first comma-separated token,
+    if non-empty, sets the YAML field name; otherwise the exact case-sensitive
+    exported Go field name is used). Every mapping key into a `struct` MUST be
+    `Value::String` (`Type` otherwise); any key not matching a non-ignored
+    exported struct field fails closed with `UnknownField` (`Site::Source` at
+    the offending key's `Span.Start`), matching §8.1 `#[serde(deny_unknown_fields)]`.
 
 **Normative host-to-`Node` conversion (`fromPlain` / `from_plain` / `FromPlain` / `Marshal`).**
 All host input conversions construct synthetic `Node` trees (`NodeSpan::Synthetic`)
@@ -1802,7 +2281,7 @@ or `max_scalar_bytes` check: ill-formed UTF-8 bytes in Go (`!utf8.ValidString`)
 or unpaired UTF-16 surrogates (`U+D800..=U+DFFF`) in TypeScript and Python fail
 closed with `InvalidUtf8` (`Site::NotSource { last_known: None }`):
 
-| Host input | TypeScript `fromPlain` / `dump*` | Python `from_plain` / `dump*` | Go `FromPlain` / `Marshal` |
+| Host input | TypeScript `fromPlain` / `dump*` / `stringify*` | Python `from_plain` / `dump*` / `safe_dump*` | Go `FromPlain` / `Marshal*` |
 | --- | --- | --- | --- |
 | Null / absent | `null` → `Null`; `undefined`, `symbol`, `function` → `Type` | `None` → `Null` | `nil` interface or typed `nil` pointer → `Null` |
 | Boolean | `boolean` → `Bool` | `bool` (checked before `int`) → `Bool` | `bool` → `Bool` |
@@ -1831,17 +2310,99 @@ Under [ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.
 - **Zero-import WASM ABI (`bindings/typescript`).** Linear memory is bounded;
   `options_reserve` and `input_reserve` enforce input and option ceilings before
   copying bytes into linear memory. Entry points return status `0` (`documents`
-  wire envelope or UTF-8 payload), `1` (`error` wire envelope), `2` (compact
-  `output_limit_exceeded` / `internal` fallback when even the error envelope
-  exceeds `max_output_bytes`), or trap recovery via fresh instance recreation.
+  wire envelope, `yamlprims-lint/1` JSON envelope, or UTF-8 payload), `1`
+  (`error` wire envelope), `2` (compact `output_limit_exceeded` / `internal`
+  fallback when even the error envelope exceeds `max_output_bytes`), or trap
+  recovery via fresh instance recreation. `parse(input, opts?)` and
+  `parseAll(input, opts?)` load single-document and multi-document streams and
+  project each document root through `toPlain`; `stringify(value, opts?)` and
+  `stringifyAll(values, opts?)` alias `dump` and `dumpAll`.
 - **`PyO3` extension (`bindings/python`).** Releases the Python GIL during
-  native parse/emit/projection work and wraps native calls in `catch_unwind`,
-  mapping status `2` to `OutputLimitExceeded` and status `3` to `Internal`
-  (`YamlprimsError`).
-- **Host emission (`dump` / `dumpAll` / `dump_all`).** While Rust (`emit*`) and
-  Go (`Emit*`) emit directly from in-memory `Document` / `Node` trees without
-  wire serialization, TypeScript (`dump` / `dumpAll`) and Python (`dump` /
-  `dump_all`) run the §10.2 pre-order structural and `EmitLimits` validation
+  native parse/emit/projection/lint work and wraps native calls in
+  `catch_unwind`, mapping status `2` to `OutputLimitExceeded` and status `3` to
+  `Internal` (`YamlprimsError`).
+- **Single-pass native `PyO3` `safe_load` / `safe_load_all` and `safe_dump` / `safe_dump_all` (`bindings/python`).**
+  `safe_load(input, **opts) -> Any` and `safe_load_all(input, **opts) -> list[Any]`
+  are distinct from `load_plain(input, **opts) -> str` (which continues to
+  return plain JSON text): they accept `str`, `bytes` (`bytes`, `bytearray`,
+  `memoryview`), or any file-like object with a `.read` method, parse the YAML
+  stream in Rust with the GIL released, and construct Python `None`, `bool`,
+  `int`, `float` (including `NaN` and `±inf`), `str`, `list`, and `dict` objects
+  **directly from the in-memory `yamlprims::Node` tree inside `PyO3`** without
+  intermediate `yamlprims-value/1` wire JSON serialization or Python `Node`
+  wrapper allocation.
+  - **Bounded stream reading until EOF.** When `input` is a file-like object
+    with a `.read` method, option validation (`InvalidOptions`,
+    `Site::NotSource { last_known: None }`) runs before any `.read(...)` call.
+    Let `cap = opts.limits.max_input_bytes + 1` and `bytes_seen = 0`. While
+    `bytes_seen < cap`, let `remaining = cap - bytes_seen` (`>= 1`). Before the
+    first non-empty chunk establishes stream kind (and once established as a
+    `str` stream, where Python `.read(n)` counts Unicode characters and 1
+    character encodes to `1..=4` UTF-8 bytes), the binding calls
+    `stream.read(min(16_384, remaining))`; once established as byte-like
+    (`bytes`, `bytearray`, `memoryview`), subsequent calls use
+    `stream.read(min(65_536, remaining))` (never requesting more than
+    `remaining` bytes from a binary stream), looping until `.read(...)`
+    returns an empty chunk (`""` or empty byte-like `b""`, EOF) or the
+    cumulative UTF-8 byte count reaches `cap`:
+    - All non-empty chunks from a stream MUST be uniformly `str` or uniformly
+      byte-like (`bytes`, `bytearray`, `memoryview`). Each `str` chunk is
+      validated for unpaired UTF-16 surrogates (`U+D800..=U+DFFF` →
+      `InvalidUtf8` at `Site::NotSource { last_known: None }`) and measured in
+      UTF-8 bytes (`chunk_bytes = len(chunk.encode("utf-8"))`) as it arrives so
+      the `max_input_bytes` budget is enforced in UTF-8 bytes, not UTF-16 code
+      units or Unicode scalar count.
+    - If `bytes_seen + chunk_bytes >= cap` (i.e. `> opts.limits.max_input_bytes`,
+      including when a non-conforming binary `.read(k)` returns more than `k`
+      bytes or a multibyte `str` chunk pushes UTF-8 bytes past
+      `opts.limits.max_input_bytes`), the binding stops reading immediately
+      without buffering past `cap` bytes and fails closed with
+      `LimitExceeded(MaxInputBytes)` at byte 0
+      (`Site::Source(Location { byte_offset: 0, line: 1, column: 1 })`),
+      matching §7.1 Phase 2. Thus well-behaved binary streams never consume
+      more than `max_input_bytes + 1` bytes from the underlying stream, and text
+      streams never read more than one bounded character chunk (`<= 16,384`
+      characters, `<= 64 KiB` UTF-8) past the cap before failing closed at
+      Phase 2.
+    - A `.read(...)` call that raises an exception, returns `None` (such as a
+      non-blocking `io.RawIOBase` would-block return), mixes `str` and
+      byte-like chunks, or returns any other type fails closed with `Internal`
+      (`Site::NotSource { last_known: None }`).
+  - **Loss-matrix enforcement.** The native `Node` → Python object walk is
+    iterative (heap-allocated frame stack, never recursing on the C stack) and
+    enforces the exact §11.3 `to_plain` loss-matrix rules: any `Value::Tagged`
+    node fails closed with `UnknownTag` (located at `node.span.start`), and any
+    non-`String` mapping key fails closed with `Type`
+    (`expected: "plain mapping string key"`, located at `key.span.start`).
+  - **Buffered `safe_dump` / `safe_dump_all` stream delivery.**
+    `safe_dump(value, stream=None, **opts)` and
+    `safe_dump_all(values, stream=None, **opts)` validate and render the
+    complete YAML output string `yaml_str` in memory before touching `stream`
+    (so any `EmitLimits` or `OutputLimitExceeded` failure raises
+    `YamlprimsError` with zero writes to `stream`). When `stream is None`, they
+    return `yaml_str`. When `stream` is non-`None`, they deliver `yaml_str` via
+    `stream.write` and return `None`: for a non-empty `yaml_str`, to guarantee
+    linear $O(N)$ work even when a custom writer returns small positive
+    character counts, the binding writes bounded slices
+    `chunk = yaml_str[offset : offset + step]` (starting with
+    `step = len(yaml_str)` on the first write call and clamping
+    `step = min(1_024, len(yaml_str) - offset)` on all subsequent iterations
+    after any short positive integer return `0 < n < len(chunk)`) in a loop
+    until `offset == len(yaml_str)`:
+    - If `n = stream.write(chunk)` returns `None`, `chunk` is treated as
+      completely consumed (`offset += len(chunk)`).
+    - If `n` is an `int` (and not `bool`): if `n <= 0` or `n > len(chunk)` (short
+      zero-progress or out-of-bounds write), the call fails closed with
+      `Internal` (`Site::NotSource { last_known: None }`); otherwise `offset`
+      advances by `n` (clamping `step <= 1,024` characters if `n < len(chunk)`)
+      and the loop continues until the entire `yaml_str` is written.
+    - Any other return type or any exception raised by `stream.write(...)` fails
+      closed with `Internal` (`Site::NotSource { last_known: None }`).
+- **Host emission (`dump` / `dumpAll` / `stringify*` / `dump_all` / `safe_dump*`).**
+  While Rust (`emit*`) and Go (`Emit*`) emit directly from in-memory `Document`
+  / `Node` trees without wire serialization, TypeScript (`dump` / `dumpAll` /
+  `stringify` / `stringifyAll`) and Python (`dump` / `dump_all` / `safe_dump` /
+  `safe_dump_all`) run the §10.2 pre-order structural and `EmitLimits` validation
   walk on the host side first, strip source-only metadata on the emission wire
   envelope (`span: null`, `via: null`, `tag_start: null`,
   `tag: { uri, handle: "", suffix: uri }`), and verify
@@ -1878,6 +2439,14 @@ Under [ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.
   `LimitExceeded(MaxInputBytes, configured: 67_108_864)` or
   `LimitExceeded(MaxOwnedBytes, configured: 67_108_864)`
   (`Site::NotSource { last_known: None }`).
+- **Host YAML 1.1 migration lint (`lintYaml11` / `lint_yaml11` / `LintYAML11*`).**
+  Go implements `LintYAML11*` and `EncodeLint*` natively in pure Go; TypeScript
+  (`lintYaml11`, `encodeLint`) and Python (`lint_yaml11`, `encode_lint`) invoke
+  the native Rust `lint_yaml11` and `encode_lint` entrypoints across the WASM /
+  `PyO3` bridge, decoding the canonical `yamlprims-lint/1` JSON envelope (§11.7)
+  into host `LintResult` / `LintDiagnostic` structures (with TypeScript
+  additionally computing `utf16Offset` on each diagnostic's `span.start` and
+  `span.end` from the validated UTF-8 source).
 
 ### 11.6 Strict RFC 7493 I-JSON projection
 
@@ -1936,11 +2505,72 @@ source-spanned nodes (using alias use-site provenance where present) and
 (`OutputLimitExceeded` with `Site::NotSource { last_known: None }` and no
 partial output).
 
+### 11.7 YAML 1.1 migration lint wire format (`yamlprims-lint/1`)
+
+`encode_lint(result, opts)` (Rust and Python), `EncodeLint(result)` /
+`EncodeLintWith(result, opts)` (Go), `encodeLint(result, opts?)` (TypeScript),
+and `yamlprims check --lint-yaml11 --format=json` (CLI) serialize a `LintResult`
+(§10.3) as a single line of compact UTF-8 JSON (with a trailing `\n` when
+written by CLI `check --lint-yaml11 --format=json`), using the same RFC 8785
+string/number token rules and `PathKey` grammar as §11.1 (`Span`, `Position`,
+and `PathKey` have the exact §11.1 definitions, with member order fixed as
+written below):
+
+```
+LintEnvelope   = {"format":"yamlprims-lint","version":1,"warning_count":N,"truncated":bool,"diagnostics":[LintDiagnostic*]}
+LintDiagnostic = {"code":LintCode,"span":Span,"document_index":N,"path":[PathStep*],"raw":S,"yaml12_resolution":S,"yaml11_note":S,"message":S}
+PathStep       = {"key":PathKey} | {"index":N}
+LintCode       = "yaml11_boolean" | "yaml11_number" | "yaml11_sexagesimal" | "yaml11_merge_key"
+```
+
+- **Invariants and preflight.** Before writing any output, `encode_lint`
+  validates `opts` (`InvalidOptions`, `Site::NotSource { last_known: None }`)
+  and validates the `LintResult` truncation, count, metadata-integer, `Span`,
+  and path invariants:
+  1. `result.diagnostics.len() <= opts.limits.max_warnings` (failing closed with
+     `InvalidOptions` at `Site::NotSource { last_known: None }` when exceeded;
+     `max_warnings` is a diagnostic-retention cap and not a `yamlprims-value/1`
+     `LimitKind` variant).
+  2. When `result.truncated == false`, `result.warning_count` MUST equal
+     `result.diagnostics.len()`; when `result.truncated == true`,
+     `result.warning_count` MUST be strictly greater than
+     `result.diagnostics.len()` (and in results produced by `lint_yaml11*`,
+     `result.diagnostics.len() == opts.limits.max_warnings`). Any caller-built
+     `LintResult` violating this `(warning_count, truncated, diagnostics.len())`
+     relationship fails closed with `InvalidOptions`
+     (`Site::NotSource { last_known: None }`).
+  3. Caller-built metadata integers, `LintCode`, and `Span` coordinates MUST be
+     valid: `result.warning_count`, each diagnostic's `document_index`, each
+     `PathStep::Index(i)`, and each `span.start.{byte_offset, line, column}` and
+     `span.end.{byte_offset, line, column}` MUST be in `0..=9_007_199_254_740_991`
+     (`2^53 - 1`, RFC 7493 safe integer range); each `code` MUST be one of the
+     four closed `LintCode` values; and each `span` MUST have 1-based line and
+     column numbers (`start.line >= 1`, `start.column >= 1`, `end.line >= 1`,
+     `end.column >= 1`) and ordered endpoints
+     (`start.byte_offset <= end.byte_offset` and
+     `start.line < end.line || (start.line == end.line && start.column <= end.column)`).
+     Any violation fails closed with `InvalidOptions`
+     (`Site::NotSource { last_known: None }`) before writing any JSON.
+  4. Each diagnostic's `path` is preflighted under the exact §11.1 error-path
+     rules: `path.len() <= opts.limits.max_depth` (`LimitExceeded(MaxDepth)`),
+     each `PathStep::Key(node)` has error-key nesting metric **P**
+     `<= opts.limits.max_depth` (`LimitExceeded(MaxDepth)`) and logical subtree
+     weight `weight(node) <= opts.limits.max_key_bytes`
+     (`LimitExceeded(MaxKeyBytes)`), and all string fields are valid UTF-8
+     (`InvalidUtf8`). Descriptive string fields are bounded on output with the
+     same UTF-8-safe `"…"` (`U+2026`, 3 bytes) truncation marker as §11.1:
+     `message` at 4,096 UTF-8 bytes and `raw`, `yaml12_resolution`, and
+     `yaml11_note` at 1,024 UTF-8 bytes.
+- **Output budget.** Total encoded JSON byte length is checked incrementally
+  against `opts.limits.max_output_bytes`; exceeding `max_output_bytes` fails
+  closed with `OutputLimitExceeded` (`Site::NotSource { last_known: None }`) and
+  no partial output.
+
 ## 12. Design rationale
 
 | Problem in existing stacks                                                                      | This specification                                                                      |
 | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| YAML 1.1 words (`yes`, `on`, `y`) silently become booleans, including in keys, and then collide | §4.1 Core schema only; §5.2 `DuplicateKey` with both locations                          |
+| YAML 1.1 words (`yes`, `on`, `y`) silently become booleans, including in keys, and then collide | §4.1 Core schema only; §5.2 `DuplicateKey` with both locations; §10.3 migration lint    |
 | Typed deserialization coerces quoted strings (`"8080"` → `u16`)                                 | §4.1 quoted scalars are String; §8 no coercion                                          |
 | Integers beyond 64 bits error or silently round to f64                                          | `Integer` covers `i128::MIN..=u128::MAX`; out of range is an error                      |
 | Local and global tags are dropped                                                               | non-core tags kept at every depth (§3, §4.4); typed targets never strip them (§8)       |
@@ -2004,8 +2634,9 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   is measured per category (§6), not asserted. Test load-limit boundaries with
   named configured values and valid options; test `max_documents` through stream
   APIs and `max_output_bytes` through encoders. Input-size failures belong to the
-  input gate even though the Rust kind is `LimitExceeded`. M4 warning exhaustion
-  uses its truncation marker, not a load-error pair.
+  input gate even though the Rust kind is `LimitExceeded`. Warning exhaustion
+  (`max_warnings`) uses its `truncated: true` marker (§10.3), not a load-error
+  pair.
 - **Equality.** Reordered composite keys; equal URIs with different handles;
   the same value at different locations; nested NaN; ±0; Int vs Float; alias
   keys; mutation after indexing. `get` and duplicate detection agree on every
@@ -2192,12 +2823,86 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   and plane `0..=16` `0xFFFE`/`0xFFFF` code points) in both keys and values;
   and parameterless `16 MiB` vs explicit `Options` `max_output_bytes`
   enforcement.
+- **Revision 1.6 reader/writer and host ergonomics.** Exercise Rust
+  (`from_slice*`, `from_reader*`, `load_reader*`, `load_all_reader*`,
+  `to_writer*`, `emit_writer*`, `emit_all_writer*`), Go (`LoadReader*`,
+  `LoadAllReader*`, `Unmarshal*`, `UnmarshalReader*`, `UnmarshalNode`,
+  `MarshalWriter*`, `EmitWriter*`, `EmitAllWriter*`), TypeScript (`parse`,
+  `parseAll`, `stringify`, `stringifyAll`), and Python (`safe_load`,
+  `safe_load_all`, `safe_dump`, `safe_dump_all`, including `bytes`/`bytearray`
+  and file-like `.read()` / `.write()` streams). Verify bounded reader admission
+  (`max_input_bytes + 1` via `io::Read::take` / `io.LimitReader` / looped
+  `.read(min(chunk_cap, remaining))` until EOF failing with
+  `LimitExceeded(MaxInputBytes)` at
+  `Site::Source(Location { byte_offset: 0, line: 1, column: 1 })` without
+  unbounded buffering, binary short-read streams near the cap never requesting
+  more than `remaining = (max_input_bytes + 1) - bytes_seen` bytes, multibyte
+  text streams enforced in UTF-8 bytes, and multi-chunk short-read Python
+  streams reading to EOF rather than accepting a first-chunk prefix),
+  reader/writer I/O error mapping to `Internal`
+  (`Site::NotSource { last_known: None }`, including Python short/zero-progress
+  `.write` rejection and `<= 1,024`-character windowed linear $O(N)$ delivery on
+  1-character short writes), all-or-nothing writer buffering (no bytes written
+  to `W` / `io.Writer` / `stream` when `EmitLimits` or `max_output_bytes`
+  fails), Go `Unmarshal*` strict type checking (no string-to-number/bool
+  coercion, `IntegerOutOfRange`, `FloatOutOfRange`, `UnknownField` on unknown
+  struct fields, `DuplicateKey` on colliding map keys, `*Tagged` acceptance vs
+  `Type` on `Tagged` into untagged targets), and Python single-pass native
+  `safe_load*` parity with `to_plain` (while keeping `load_plain` returning JSON
+  `str`, and verifying `UnknownTag` and non-`String` mapping key `Type`
+  rejection with source spans).
+- **Revision 1.6 YAML 1.1 migration lint (`yamlprims-lint/1`).** Exercise
+  `lint_yaml11*` (Rust/Python), `LintYAML11*` (Go), `lintYaml11` (TypeScript),
+  `encode_lint` / `EncodeLint*` / `encodeLint`, and CLI
+  `yamlprims check --lint-yaml11 [--format=text|json]` on shared conformance
+  vectors covering all four `LintCode` categories (`yaml11_boolean`,
+  `yaml11_number`, `yaml11_sexagesimal`, `yaml11_merge_key`) in both key and
+  value positions, multi-document streams (`document_index`), quoted/block/tagged
+  and non-YAML-1.1 negative controls (zero warnings on `'yes'`, `"010"`, `|-`,
+  `!!str on`, mixed-case `yEs`, zero-leading sexagesimal integer `0:10`,
+  exponent-suffixed `1:30.5e+2`, underscore-free `1.e+2`, dotless `1_0e+2`,
+  signless-exponent `1_000.5e2`, underscore-exponent `1.5e+1_0`,
+  leading-underscore-fraction `._5`, single-nonzero-final-digit
+  `01`..`07`/`0001`/`0007`/`-007`, `0o10`, `08`/`09` which resolve to Core
+  `Int(8)`/`Int(9)` under §4.1, `0o7_7`, `1,000`, `1.2.3`, and YAML 1.2
+  `true`/`false`/`0x10`/`.inf`/`.nan`), sexagesimal integers and floats (`1:30`,
+  `10:20:30`, `10:20.5`, `0:10.5`, `00:30.0`), legacy octal (`010`, `0755`,
+  `0100`, `0101`, `-010`, `-0100` → Core `int (10)`/`int (755)`/`int (100)`/`int (101)`/`int (-10)`/`int (-100)`
+  vs YAML 1.1 `int (8)`/`int (493)`/`int (64)`/`int (65)`/`int (-8)`/`int (-64)`),
+  signed hex (`-0x10`, `+0x10` → Core `str` vs YAML 1.1 `int`), underscore-grouped
+  YAML 1.1 numbers (`1_000`, `07_55`, `0x1_0`, `1_000.5`, `1._5`, `.5_0`,
+  `1_000.5e+2`, `685.230_15e+03` → Core `str` vs YAML 1.1 `int`/`float`), unquoted `<<` continued scanning under default
+  `MergeKeys::Reject` vs clean admission under `MergeKeys::Apply`, alias/merge
+  non-duplication (one warning at the anchor definition site), pre-clone
+  diagnostic path/string `max_owned_bytes` and `max_nodes` admission (rejecting
+  deep/large ancestor-key path multiplication with `LimitExceeded(MaxOwnedBytes)`
+  before cloning), `max_warnings` boundary controls (exact-cap
+  `warning_count == max_warnings` with `truncated: false` and
+  `diagnostics.len() == max_warnings` vs cap-plus-one
+  `warning_count == max_warnings + 1` with `truncated: true` and
+  `diagnostics.len() == max_warnings`, plus `encode_lint` rejection with
+  `InvalidOptions` at `Site::NotSource` of malformed caller-built `LintResult`
+  values: `diagnostics.len() > max_warnings`, inconsistent
+  `(warning_count, truncated, diagnostics.len())` triples, unknown `LintCode`,
+  `line == 0` or `column == 0`, reversed `Span` endpoints, negative `< 0`
+  `warning_count` / `document_index` / `PathStep::Index` / `Span` coordinates,
+  and `warning_count` / `document_index` / `PathStep::Index` / `Span`
+  coordinates above `2^53 - 1`), and `yamlprims-lint/1` wire
+  byte parity across all four bindings.
+- **Revision 1.6 CLI freeze.** Verify `yamlprims check` (including
+  `--lint-yaml11` and `--format=text|json`), `yamlprims dump` (wire default,
+  `--plain`, `--ijson`, and mutual exclusion of `--plain` + `--ijson`),
+  `yamlprims emit`, `--version` / `-V`, `--help` / `-h`, `-` stdin and `--`
+  end-of-flags handling, single non-empty document enforcement in `dump --plain`
+  (exiting `1` on zero-document and multi-document streams), whole-payload
+  buffered `stdout` writes, and exit codes `0` / `1` / `2`.
 
 ## 14. Open questions
 
-1. **In-memory document iterator and migration lint (M4).** Deferred until a
-   concrete consumer requires incremental per-document streaming over an
-   in-memory buffer or YAML 1.1 migration diagnostics.
+1. **In-memory document iterator and Failsafe schema (M4).** YAML 1.1 migration
+   lint is specified in §10.3 and §11.7 (`Revision 1.6`). Incremental
+   in-memory document iteration and the YAML 1.2 Failsafe schema remain deferred
+   until a concrete consumer requires them.
 2. **Limits.** The §6 and §10.2 defaults remain subject to empirical peak-memory
    and latency measurement across target workloads.
 
@@ -2209,18 +2914,34 @@ records in the yamlprims repository under `docs/decisions/` (`ADR-0001` through
 
 ## 16. Errata
 
-Tagged revisions 1.0 through 1.4 remain preserved at their `spec-v1.x` tags.
+Tagged revisions 1.0 through 1.5 remain preserved at their `spec-v1.x` tags.
 Erratum numbering belongs to this public specification and restarts per revision;
-cross-document references use revision-qualified identifiers such as `1.5/E-1`.
+cross-document references use revision-qualified identifiers such as `1.6/E-1`.
 Specification publication and decision acceptance do not establish implementation
 qualification.
 
-### Revision 1.5 — unreleased draft
+### Revision 1.6 — unreleased draft
 
-These proposed contract updates ([ADR-0005](../decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md))
-require maintainer acceptance and corresponding conformance qualification.
-Historical tags (`spec-v1.0` through `spec-v1.4`) and their pinned profiles
-remain unchanged.
+These proposed contract updates require maintainer acceptance and corresponding
+conformance qualification. Historical tags (`spec-v1.0` through `spec-v1.5`) and
+their pinned profiles remain unchanged.
+
+| ID | Sections | Change from revision 1.5 |
+| --- | --- | --- |
+| E-1 | §1, §2, §8.1–8.2, §10.1–10.2, §11.2–11.3, §11.5, §13.2 | Specify bounded byte-slice, reader, and writer entrypoints in Rust (`from_slice*`, `from_reader*`, `load_reader*`, `load_all_reader*`, `to_writer*`, `emit_writer*`, `emit_all_writer*`) and Go (`LoadReader*`, `LoadAllReader*`, `Unmarshal*`, `UnmarshalReader*`, `UnmarshalNode`, `MarshalWriter*`, `EmitWriter*`, `EmitAllWriter*`), TypeScript ergonomic aliases (`parse`, `parseAll`, `stringify`, `stringifyAll`), and Python single-pass native `PyO3` `safe_load` / `safe_load_all` (constructing Python values directly from `yamlprims::Node` without wire JSON round-tripping, with looped `.read(...)` accumulation until EOF) and `safe_dump` / `safe_dump_all` (with looped `.write(...)` completion semantics). |
+| E-2 | §1, §2, §6, §7.1, §10.1, §10.3, §11.2, §11.5, §11.7, §13.2, §14 | Specify the YAML 1.1 → YAML 1.2.2 Core migration lint surface (`lint_yaml11*`, `LintYAML11*`, `lintYaml11`, `encode_lint` / `EncodeLint*` / `encodeLint`, `LintCode`, `LintDiagnostic`, `LintResult`) anchored to the YAML 1.1 Type Repository regular expressions, pre-clone diagnostic path/string memory accounting under `max_nodes` and `max_owned_bytes`, `Limits.max_warnings` (`1,000`) truncation semantics, the `yamlprims-lint/1` JSON wire format, and CLI `yamlprims check --lint-yaml11 [--format=text\|json]`. |
+| E-3 | §1, §5.5, §10.4, §13.2 | Freeze the `yamlprims-cli` command-line contract (`check`, `dump` wire/`--plain`/`--ijson`, `emit`, `--version`, `--help`, `-` stdin, `--` end-of-flags, single non-empty document requirement for `dump --plain`, whole-payload buffered `stdout`, and exit codes `0` / `1` / `2`). |
+| E-4 | §1, §3, §15–16 | Reconcile milestone status and cross-document references for `v0.1.0`–`v0.3.0` (`ADR-0005` accepted, stack-safe `Drop`/`Clone`/`PartialEq`/`Debug` and crate traversals across all recursive walks). |
+
+Wire grammar version 1 (`yamlprims-value/1`) and the §6 subtree-weight formula
+are unchanged; §11.7 introduces the separate `yamlprims-lint/1` lint wire
+grammar.
+
+### Revision 1.5 — tagged draft specification
+
+The following updates ([ADR-0005](../decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md))
+were incorporated in revision 1.5. Its immutable tag (`spec-v1.5`) and pinned
+profiles remain unchanged.
 
 | ID | Sections | Change from revision 1.4 |
 | --- | --- | --- |

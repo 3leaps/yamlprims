@@ -1,6 +1,48 @@
-# spec-v1.5 — unreleased draft specification
+# spec-v1.6 — unreleased draft specification
 
-Revision 1.5 proposes the data-layer YAML 1.2.2 Core emitter, caller-constructed
+Revision 1.6 specifies proposed `v0.3.0` contracts for bounded stream and
+ecosystem-familiar ergonomics across all four `Profile B` bindings, the YAML 1.1
+to YAML 1.2.2 Core migration lint and its `yamlprims-lint/1` wire format, and
+the frozen `yamlprims-cli` command-line contract. Specification publication
+does not claim runtime implementation or qualification; `v0.3.0` implementation
+and qualification are tracked separately.
+
+- `1.6/E-1`: zero-friction reader/writer, byte-slice, and plain-host ergonomics
+  across Rust (`from_slice`, `from_slice_with`, `from_reader`, `from_reader_with`,
+  `load_reader`, `load_reader_with`, `load_all_reader`, `load_all_reader_with`,
+  `to_writer`, `to_writer_with`, `emit_writer`, `emit_writer_with`,
+  `emit_all_writer`, `emit_all_writer_with`), Go (`LoadReader*`, `LoadAllReader*`,
+  `Unmarshal*`, `UnmarshalReader*`, `UnmarshalNode`, `MarshalWriter*`,
+  `EmitWriter*`, `EmitAllWriter*`), TypeScript (`parse`, `parseAll`, `stringify`,
+  `stringifyAll`), and Python single-pass native `PyO3` (`safe_load`,
+  `safe_load_all`, `safe_dump`, `safe_dump_all`).
+- `1.6/E-2`: YAML 1.1 to YAML 1.2.2 Core migration lint (`lint_yaml11*` in Rust,
+  `LintYAML11*` in Go, `lintYaml11` in TypeScript, `lint_yaml11` in Python, and
+  CLI `yamlprims check --lint-yaml11 [--format=text|json]`), structured
+  `LintCode` (`yaml11_boolean`, `yaml11_number`, `yaml11_sexagesimal`,
+  `yaml11_merge_key`), `LintDiagnostic`, `LintResult`, `Limits::max_warnings`
+  (`1,000`) truncation and diagnostic path/string memory accounting, and the
+  canonical `yamlprims-lint/1` JSON wire format (`encode_lint` / `EncodeLint*` /
+  `encodeLint`).
+- `1.6/E-3`: frozen `yamlprims-cli` command-line contract (§10.4) covering
+  `check [--lint-yaml11] [--format=text|json]`, `dump [--plain|--ijson]`,
+  `emit [--from-wire|--from-plain]`, `--version`, `--help`, `-` (`stdin`), `--`,
+  single non-empty document requirement for `dump --plain`, bounded `max_input_bytes + 1`
+  reads, whole-payload buffered `stdout`, and exit codes `0`, `1`, and `2`.
+- `1.6/E-4`: specification milestone, stack-safety, and decision-record alignment
+  for the `v0.3.0` (`spec-v1.6`) documentation targets.
+
+The signed `spec-v1.5` tag and earlier tags (`spec-v1.0` through `spec-v1.4`)
+remain immutable. The `yamlprims-value/1` wire grammar remains version 1,
+`§11.7` introduces the separate `yamlprims-lint/1` lint wire grammar, and the
+§6 subtree-weight formula is unchanged. Code releases use `v<VERSION>` tags and
+per-version release notes under `docs/releases/v<VERSION>.md`.
+
+## spec-v1.5 — tagged draft specification
+
+Revision 1.5 is available at the signed `spec-v1.5` tag.
+
+Revision 1.5 specifies the data-layer YAML 1.2.2 Core emitter, caller-constructed
 tree bounds, symmetric wire decoding, and strict RFC 7493 I-JSON projection
 recorded in [ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md),
 alongside the `Profile B` multi-language architecture accepted under
