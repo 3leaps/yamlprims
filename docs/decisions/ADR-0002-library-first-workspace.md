@@ -2,7 +2,7 @@
 id: ADR-0002
 title: Library-first workspace with an internal event engine
 status: proposed
-superseded_in_part_by: ADR-0004
+superseded_in_part_by: [ADR-0004, ADR-0005]
 date: 2026-10-14
 ---
 

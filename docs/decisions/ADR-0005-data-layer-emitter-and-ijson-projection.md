@@ -1,7 +1,7 @@
 ---
 id: ADR-0005
 title: Data-layer YAML 1.2.2 Core emitter, caller-tree bounds, and RFC 7493 I-JSON projection
-status: proposed
+status: accepted
 supersedes_in_part: [ADR-0002]
 date: 2026-11-09
 ---

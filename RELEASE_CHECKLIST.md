@@ -4,9 +4,10 @@ Use this checklist for `yamlprims` releases. Specification tags (`spec-v<SPEC_VE
 
 ## 0. Start from a clean release shell
 
-Per-release values (`YAMLPRIMS_RELEASE_TAG`, `YAMLPRIMS_RELEASE_COMMIT`, `YAMLPRIMS_EXPECTED_*`, `YAMLPRIMS_RELEASE_ANCHOR_FILE`, `YAMLPRIMS_RELEASE_RUN_ID`/`_ATTEMPT`, `YAMLPRIMS_CRATE_RUN_ID`) belong to one tag. Clear them before a new release, then set this release's tag and reviewed commit:
+Start with clean release staging directories (run `make release-clean` if a previous release left `dist/release`, `dist/published`, or `dist/crates` behind). Per-release values (`YAMLPRIMS_RELEASE_TAG`, `YAMLPRIMS_RELEASE_COMMIT`, `YAMLPRIMS_EXPECTED_*`, `YAMLPRIMS_RELEASE_ANCHOR_FILE`, `YAMLPRIMS_RELEASE_RUN_ID`/`_ATTEMPT`, `YAMLPRIMS_CRATE_RUN_ID`) belong to one tag. Clear them before a new release, then set this release's tag and reviewed commit:
 
 ```sh
+make release-clean
 eval "$(make -s release-env-reset)"
 export YAMLPRIMS_RELEASE_TAG=v<VERSION>          # or spec-v<SPEC_VERSION>
 export YAMLPRIMS_RELEASE_COMMIT=<reviewed 40-hex commit on main>
@@ -36,15 +37,18 @@ When qualifying a code release or adapter change, also run the pinned `structcor
 
 ## 3. GitHub preflight and signed tag creation
 
-Source the maintainer's external release environment outside the repository and set `YAMLPRIMS_RELEASE_TAG` (`v<VERSION>` or `spec-v<SPEC_VERSION>`) and `YAMLPRIMS_RELEASE_COMMIT` (the reviewed full lowercase 40-hex commit on `main`; `release-tag` refuses unless `HEAD`, fetched `origin/main` and this value are the same commit, and `release-push-tag` refuses a local tag that names any other commit); see [docs/releases.md](docs/releases.md#signed-tags) for the required environment variables:
+Source the maintainer's external release environment outside the repository and set `YAMLPRIMS_RELEASE_TAG` (`v<VERSION>` or `spec-v<SPEC_VERSION>`), `YAMLPRIMS_RELEASE_COMMIT` (the reviewed full lowercase 40-hex commit on `main`; `release-tag` refuses unless `HEAD`, fetched `origin/main` and this value are the same commit, and `release-push-tag` refuses a local tag that names any other commit), and `YAMLPRIMS_TAG_MESSAGE_DIR` (an absolute non-symlink directory path outside the repository ending in `/<YAMLPRIMS_RELEASE_TAG>`, unless set from `YAMLPRIMS_RELEASE_TAG` by `YAMLPRIMS_APPROVED_ENV_LOADER`); see [docs/releases.md](docs/releases.md#signed-tags) for the full table of required environment variables:
 
 ```sh
 make release-github-preflight
+make release-prepare-tag-message
 make release-tag
 make release-verify-tag
 make release-push-tag
 make release-verify-remote-tag
 ```
+
+`make release-prepare-tag-message` creates `$YAMLPRIMS_TAG_MESSAGE_DIR/<tag>.txt` with a skeleton tag message if it does not already exist; replace the `<SUMMARY OF THE RELEASE>` and footer placeholders in that file with a suitable tag message (subject `Release <VERSION>` or `spec-v<SPEC_VERSION>`, a short body, and the three-line attribution footer) before running `make release-tag`, which refuses placeholders and footer-less messages.
 
 `make release-verify-remote-tag` ends by printing `export YAMLPRIMS_EXPECTED_TAG_OBJECT=…` and `export YAMLPRIMS_EXPECTED_COMMIT=…` for the pushed tag. Compare both values with the approval record, export them, and record the original ceremony anchor at an absent absolute path outside the checkout:
 
@@ -95,7 +99,7 @@ make release-crate-publish CRATE=<crate>
 
 ### 5b. PyPI (`yamlprims`) and npm (`@3leaps/yamlprims`) via OIDC Trusted Publishing
 
-Once the project exists on PyPI (`yamlprims` in the `3leaps` organization) and npm (`@3leaps/yamlprims`), and GitHub Environments `publish-pypi` and `publish-npm` (required reviewer `@3leapsdave`, deployment restricted to `v*` tags) are configured as Trusted Publishers on PyPI and npm:
+Once the project exists on PyPI (`yamlprims` in the `3leaps` organization) and npm (`@3leaps/yamlprims`), and GitHub Environments `publish-pypi` and `publish-npm` (required reviewer `@3leapsdave`, deployment restricted to `v*` tags) are configured as Trusted Publishers on PyPI and npm (no local `npm login` session is needed for the OIDC Trusted Publishing path; `npm login` is only used for the one-time first-publication bootstrap below):
 
 - Stage and verify in dry-run mode on the release tag:
   `gh workflow run registry-publish.yml --ref v<VERSION> -f tag=v<VERSION> -f registry=all -f dry_run=true`
@@ -143,3 +147,11 @@ Because npm Trusted Publishing can only be configured on an existing package and
     `npm deprecate yamlprims "Canonical package is @3leaps/yamlprims — install @3leaps/yamlprims instead."`
 - Verify live registry digests against the signed release manifest:
   `YAMLPRIMS_RELEASE_TAG=v<VERSION> scripts/release-verify-registries.sh --bootstrap-no-provenance`
+
+## 6. Clean up staged release directories
+
+When the release cycle finishes, remove the staged release directories (`dist/release`, `dist/published`, `dist/crates`, and their `.anchor` files):
+
+```sh
+make release-clean
+```

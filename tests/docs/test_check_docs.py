@@ -60,9 +60,13 @@ class DocumentationChecks(unittest.TestCase):
 
     def test_cargo_output_excluded_but_nested_documentation_checked(self):
         self.write("target/package/generated/README.md", b"generated\xff\n")
+        self.write("dist/release/NOTES.md", b"staged\xff\n")
         self.assertEqual(self.run_check()[0], 0)
         self.write("docs/target/README.md", b"authored\xff\n")
         self.rejected(f"{Path('docs/target/README.md')}: not UTF-8")
+        (self.root / "docs/target/README.md").unlink()
+        self.write("docs/dist/README.md", b"authored\xff\n")
+        self.rejected(f"{Path('docs/dist/README.md')}: not UTF-8")
 
     def test_version_format(self):
         for version in (

@@ -24,6 +24,7 @@ The maintainer configures these environment variables in their signing terminal:
 | ----------------------------------- | ---------------------------------------------------------------- |
 | `YAMLPRIMS_RELEASE_TAG`             | Unused `v<VERSION>` or `spec-v<SPEC_VERSION>` tag                |
 | `YAMLPRIMS_RELEASE_COMMIT`          | Reviewed full lowercase commit SHA                               |
+| `YAMLPRIMS_TAG_MESSAGE_DIR`         | Absolute path to an external non-symlink directory ending in `/<YAMLPRIMS_RELEASE_TAG>` (holds `<tag>.txt` for `make release-prepare-tag-message` and `make release-tag`) |
 | `YAMLPRIMS_GPG_HOMEDIR`             | Existing external GPG home                                       |
 | `YAMLPRIMS_GPG_SIGNING_FINGERPRINT` | Full uppercase authorized primary fingerprint                    |
 | `YAMLPRIMS_PGP_KEY_ID`              | Full uppercase signing-subkey fingerprint followed by `!`        |
@@ -46,6 +47,7 @@ must both equal the explicit release commit.
 make check
 make release-tooling-test
 make release-github-preflight
+make release-prepare-tag-message # creates $YAMLPRIMS_TAG_MESSAGE_DIR/<tag>.txt skeleton; fill in before release-tag
 make release-tag                 # interactive GPG pinentry; local tag only
 make release-verify-tag
 make release-push-tag            # explicit, single-tag push without force
@@ -55,7 +57,7 @@ make release-record-anchor       # needs YAMLPRIMS_EXPECTED_TAG_OBJECT, YAMLPRIM
 
 The controls reject existing tags, lightweight tags, unexpected tag messages,
 incorrect commit targets, wrong taggers, unpinned primary keys and signatures
-made by a different subkey. Code release tags use subject `Release <VERSION>` with body from `docs/releases/v<VERSION>.md`; specification tags use subject `spec-v<SPEC_VERSION>` with body from `RELEASE_NOTES.md`. The tests
+made by a different subkey. Both code release tags (`Release <VERSION>`) and specification tags (`spec-v<SPEC_VERSION>`) read their annotation message from `$YAMLPRIMS_TAG_MESSAGE_DIR/<tag>.txt` (prepared by `make release-prepare-tag-message` and validated for the exact subject, non-placeholder summary body, and three-line attribution footer). The tests
 use disposable synthetic keys and a local bare remote; they do not sign or
 publish an actual release. GitHub responses in those tests are simulated.
 
