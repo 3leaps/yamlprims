@@ -10,7 +10,7 @@ use yamlprims::{
     Node, Options, Site, Value, WireEnvelope,
 };
 
-const USAGE: &str = "usage: yamlprims [--merge=reject|apply|as_key] check FILE...\n       yamlprims [--merge=reject|apply|as_key] dump [--plain|--ijson] [--max-output-bytes=N] FILE\n       yamlprims [--merge=reject|apply|as_key] emit [--from-wire|--from-plain] [--compat-quoting=yaml11-safe|core-only] [--max-output-bytes=N] FILE\n       yamlprims --help|-h\n       yamlprims --version|-V\nUse - for stdin, and -- before filenames beginning with -.";
+const USAGE: &str = "usage: yamlprims [--merge=reject|apply|as_key] check [--lint-yaml11] [--format=text|json] [--] FILE...\n       yamlprims [--merge=reject|apply|as_key] dump [--plain|--ijson] [--max-output-bytes=N] [--] FILE\n       yamlprims [--merge=reject|apply|as_key] emit [--from-wire|--from-plain] [--compat-quoting=yaml11-safe|core-only] [--max-output-bytes=N] [--] FILE\n       yamlprims --help|-h\n       yamlprims --version|-V\nUse - for stdin, and -- before filenames beginning with -.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -26,8 +26,16 @@ enum DumpFormat {
     Ijson,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LintFormat {
+    Text,
+    Json,
+}
+
 struct Command {
     mode: Mode,
+    lint_yaml11: bool,
+    lint_format: LintFormat,
     dump_format: DumpFormat,
     from_wire: bool,
     from_plain: bool,
@@ -45,6 +53,14 @@ fn parse_merge(val: &str) -> Option<MergeKeys> {
     }
 }
 
+fn parse_lint_format(val: &str) -> Option<LintFormat> {
+    match val {
+        "text" => Some(LintFormat::Text),
+        "json" => Some(LintFormat::Json),
+        _ => None,
+    }
+}
+
 fn parse_quoting(val: &str) -> Option<CompatQuoting> {
     match val {
         "yaml11-safe" | "yaml11_safe" => Some(CompatQuoting::Yaml11Safe),
@@ -55,6 +71,8 @@ fn parse_quoting(val: &str) -> Option<CompatQuoting> {
 
 fn parse(args: impl IntoIterator<Item = OsString>) -> Option<Command> {
     let mut mode = None;
+    let mut lint_yaml11 = false;
+    let mut lint_format: Option<LintFormat> = None;
     let mut plain = false;
     let mut ijson = false;
     let mut from_wire = false;
@@ -70,7 +88,24 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Option<Command> {
             literal = true;
             continue;
         }
-        if !literal && arg == "--plain" {
+        if !literal && arg == "--lint-yaml11" {
+            if lint_yaml11 {
+                return None;
+            }
+            lint_yaml11 = true;
+        } else if !literal && arg == "--format" {
+            if lint_format.is_some() {
+                return None;
+            }
+            let next = iter.next()?;
+            lint_format = Some(parse_lint_format(next.to_str()?)?);
+        } else if !literal && arg.to_str().is_some_and(|a| a.starts_with("--format=")) {
+            if lint_format.is_some() {
+                return None;
+            }
+            let val = arg.to_str()?.strip_prefix("--format=")?;
+            lint_format = Some(parse_lint_format(val)?);
+        } else if !literal && arg == "--plain" {
             if plain || ijson {
                 return None;
             }
@@ -150,11 +185,16 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Option<Command> {
         }
     }
     let mode = mode?;
+    let resolved_lint_format = lint_format.unwrap_or(LintFormat::Text);
+    let check_json = mode == Mode::Check && lint_yaml11 && resolved_lint_format == LintFormat::Json;
     if files.is_empty()
         || (mode != Mode::Check && files.len() != 1)
+        || (check_json && files.len() != 1)
+        || (mode != Mode::Check && (lint_yaml11 || lint_format.is_some()))
+        || (!lint_yaml11 && lint_format.is_some())
         || (mode != Mode::Dump && (plain || ijson))
         || (mode != Mode::Emit && (from_wire || from_plain || quoting.is_some()))
-        || (mode == Mode::Check && max_output_bytes.is_some())
+        || (mode == Mode::Check && !check_json && max_output_bytes.is_some())
         || files.iter().filter(|p| p.as_os_str() == "-").count() > 1
     {
         return None;
@@ -186,6 +226,8 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Option<Command> {
     }
     Some(Command {
         mode,
+        lint_yaml11,
+        lint_format: resolved_lint_format,
         dump_format,
         from_wire,
         from_plain,
@@ -850,20 +892,85 @@ fn emit_cmd(path: &Path, bytes: &[u8], command: &Command, writer: impl Write) ->
     0
 }
 
+fn check_lint_json(path: &Path, bytes: &[u8], command: &Command, writer: impl Write) -> u8 {
+    let result = match yamlprims::lint_yaml11_bytes(bytes, &command.opts) {
+        Ok(r) => r,
+        Err(e) => {
+            diagnostic(report(path, &e));
+            return 1;
+        }
+    };
+    let text = match yamlprims::encode_lint(&result, &command.opts) {
+        Ok(t) => t,
+        Err(e) => {
+            diagnostic(report(path, &e));
+            return 1;
+        }
+    };
+    if let Err(e) = write_line(writer, &text) {
+        diagnostic(format!("cannot write stdout: {e}"));
+        return 2;
+    }
+    if result.warning_count == 0 {
+        0
+    } else {
+        1
+    }
+}
+
 fn run(command: Command) -> u8 {
     let mut status = 0;
+    let check_json = command.mode == Mode::Check
+        && command.lint_yaml11
+        && command.lint_format == LintFormat::Json;
     for path in &command.files {
         let bytes = match read(path, &command.opts) {
             Ok(bytes) => bytes,
             Err(e) => {
                 diagnostic(format!("{}: cannot read: {e}", path.display()));
-                status = if command.mode == Mode::Check { 1 } else { 2 };
+                status = if command.mode == Mode::Check && !check_json {
+                    1
+                } else {
+                    2
+                };
                 continue;
             }
         };
         match command.mode {
             Mode::Check => {
-                if let Err(e) = yamlprims::load_all_bytes(&bytes, &command.opts) {
+                if check_json {
+                    return check_lint_json(path, &bytes, &command, io::stdout().lock());
+                } else if command.lint_yaml11 {
+                    match yamlprims::lint_yaml11_bytes(&bytes, &command.opts) {
+                        Ok(result) => {
+                            for d in &result.diagnostics {
+                                diagnostic(format!(
+                                    "{}:{}:{}: warning[{}]: {}",
+                                    path.display(),
+                                    d.span.start.line,
+                                    d.span.start.column,
+                                    d.code,
+                                    d.message
+                                ));
+                            }
+                            if result.truncated {
+                                diagnostic(format!(
+                                    "{}: warning[max_warnings]: truncated after {} warnings ({} total)",
+                                    path.display(),
+                                    command.opts.limits.max_warnings,
+                                    result.warning_count
+                                ));
+                            }
+                            if result.warning_count > 0 {
+                                status = status.max(1);
+                            }
+                        }
+                        Err(e) => {
+                            diagnostic(report(path, &e));
+                            status = status.max(1);
+                        }
+                    }
+                } else if let Err(e) = yamlprims::load_all_bytes(&bytes, &command.opts) {
                     diagnostic(report(path, &e));
                     status = status.max(1);
                 }

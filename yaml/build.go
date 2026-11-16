@@ -43,6 +43,8 @@ type built struct {
 	weight         uint64
 	height         int
 	mergeDirective bool
+	lintHazard     scalarHazard
+	lintRaw        string
 }
 
 type started struct {
@@ -114,6 +116,8 @@ type loader struct {
 	anchors     map[int]anchored
 	openAnchors map[int]struct{}
 	path        []PathSegment
+	docIndex    int
+	lint        *lintCollector
 }
 
 func newLoader(input string, bom int, opts Options) *loader {
@@ -378,6 +382,7 @@ func (l *loader) loadStream(single bool, allowEmptySingle bool) ([]Document, *Er
 			if ev.Version != nil && ev.Version.Major != 1 {
 				return nil, errSourceSimple(ErrorKindUnsupportedYamlVersion, at, "unsupported YAML version")
 			}
+			l.docIndex = len(docs)
 			clear(l.anchors)
 			clear(l.openAnchors)
 			rootBuilt, err := l.node(0)
@@ -474,7 +479,8 @@ func (l *loader) node(base int) (built, *Error) {
 				l.path = append(l.path, PathIndex(len(top.seqItems)))
 			}
 		}
-		st, err := l.start(base + len(stack))
+		inMapKey := len(stack) > 0 && stack[len(stack)-1].kind == openMap && stack[len(stack)-1].pending == nil
+		st, err := l.start(base+len(stack), inMapKey)
 		if err != nil {
 			return built{}, err
 		}
@@ -487,7 +493,7 @@ func (l *loader) node(base int) (built, *Error) {
 	}
 }
 
-func (l *loader) start(depth int) (started, *Error) {
+func (l *loader) start(depth int, inMapKey bool) (started, *Error) {
 	ev, gspan, err := l.next()
 	if err != nil {
 		return started{}, err
@@ -572,6 +578,19 @@ func (l *loader) start(depth int) (started, *Error) {
 		}
 		if err := l.register(anchor, &b); err != nil {
 			return started{}, err
+		}
+		untaggedPlain := style == engine.ScalarStylePlain && class.kind == tagClassNone
+		if l.lint != nil && untaggedPlain && !(inMapKey && b.mergeDirective) {
+			if h := classifyUntaggedPlain(text); h != hazardNone {
+				if inMapKey {
+					b.lintHazard = h
+					b.lintRaw = text
+				} else {
+					if err := l.lint.recordScalar(l, h, text, b.node.value, span); err != nil {
+						return started{}, err
+					}
+				}
+			}
 		}
 		return started{leaf: b}, nil
 
@@ -719,7 +738,17 @@ func (l *loader) accept(o *openFrame, b built) *Error {
 				}
 			}
 			isDirective := k.mergeDirective
-			if isDirective && l.opts.MergeKeys == MergeKeysReject {
+			if l.lint != nil {
+				if isDirective {
+					if err := l.lint.recordMergeKey(l, kspan); err != nil {
+						return err
+					}
+				} else if k.lintHazard != hazardNone {
+					if err := l.lint.recordScalar(l, k.lintHazard, k.lintRaw, k.node.value, kspan); err != nil {
+						return err
+					}
+				}
+			} else if isDirective && l.opts.MergeKeys == MergeKeysReject {
 				return withAliasUse(
 					l.errAt(ErrorKindMergeRejected, kspan.Start, "merge keys are rejected (merge_keys = Reject)"),
 					keyUse,

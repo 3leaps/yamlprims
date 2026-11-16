@@ -8,9 +8,10 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyInt, PyList, PyString};
 use yamlprims::{
-    decode_wire, emit_all_with, encode, encode_error, encode_plain, load_all_bytes, load_bytes,
-    load_ijson_bytes, CompatQuoting, EmitLimits, EmitOptions, Error, ErrorKind, Limits, MergeKeys,
-    Node, NodeSpan, Options, RelatedRole, Site, UnknownTags, Value, Via, WireEnvelope,
+    decode_lint_wire, decode_wire, emit_all_with, encode, encode_error, encode_lint, encode_plain,
+    lint_yaml11_bytes, load_all_bytes, load_bytes, load_ijson_bytes, CompatQuoting, EmitLimits,
+    EmitOptions, Error, ErrorKind, Limits, MergeKeys, Node, NodeSpan, Options, RelatedRole, Site,
+    UnknownTags, Value, Via, WireEnvelope,
 };
 
 fn build_options(merge_keys: &str, unknown_tags: &str, limits: &[usize]) -> Result<Options, Error> {
@@ -157,6 +158,81 @@ fn load_ijson(
     py.detach(|| {
         run_with_panic_guard(|| match load_ijson_bytes(input, &opts) {
             Ok(json) => (0, json),
+            Err(e) => finish_error(&e, &err_opts),
+        })
+    })
+}
+
+#[pyfunction]
+fn lint_wire(
+    py: Python<'_>,
+    input: &[u8],
+    merge_keys: &str,
+    unknown_tags: &str,
+    limits: Vec<usize>,
+) -> (u32, String) {
+    let opts = match build_options(merge_keys, unknown_tags, &limits) {
+        Ok(o) => o,
+        Err(e) => return finish_error(&e, &Options::default()),
+    };
+    let mut bridge_opts = opts.clone();
+    bridge_opts.limits.max_output_bytes = bridge_opts
+        .limits
+        .max_output_bytes
+        .max(Limits::default().max_output_bytes);
+    py.detach(|| {
+        run_with_panic_guard(|| match lint_yaml11_bytes(input, &opts) {
+            Ok(res) => match encode_lint(&res, &bridge_opts) {
+                Ok(wire) => (0, wire),
+                Err(e) => finish_error(&e, &bridge_opts),
+            },
+            Err(e) => finish_error(&e, &bridge_opts),
+        })
+    })
+}
+
+#[pyfunction]
+fn encode_lint_wire(
+    py: Python<'_>,
+    wire: &str,
+    merge_keys: &str,
+    unknown_tags: &str,
+    limits: Vec<usize>,
+) -> (u32, String) {
+    let opts = match build_options(merge_keys, unknown_tags, &limits) {
+        Ok(o) => o,
+        Err(e) => return finish_error(&e, &Options::default()),
+    };
+    let mut err_opts = opts.clone();
+    err_opts.limits.max_output_bytes = err_opts
+        .limits
+        .max_output_bytes
+        .max(Limits::default().max_output_bytes);
+
+    let mut decode_opts = opts.clone();
+    decode_opts.limits.max_input_bytes = decode_opts
+        .limits
+        .max_input_bytes
+        .max(wire.len().saturating_add(1024));
+    decode_opts.limits.max_nodes = decode_opts
+        .limits
+        .max_nodes
+        .max(Limits::default().max_nodes);
+    decode_opts.limits.max_owned_bytes = decode_opts
+        .limits
+        .max_owned_bytes
+        .max(Limits::default().max_owned_bytes);
+    decode_opts.limits.max_scalar_bytes = decode_opts
+        .limits
+        .max_scalar_bytes
+        .max(Limits::default().max_scalar_bytes);
+
+    py.detach(|| {
+        run_with_panic_guard(|| match decode_lint_wire(wire, &decode_opts) {
+            Ok(res) => match encode_lint(&res, &opts) {
+                Ok(out) => (0, out),
+                Err(e) => finish_error(&e, &err_opts),
+            },
             Err(e) => finish_error(&e, &err_opts),
         })
     })
@@ -561,6 +637,8 @@ fn _yamlprims(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_wire, m)?)?;
     m.add_function(wrap_pyfunction!(load_plain, m)?)?;
     m.add_function(wrap_pyfunction!(load_ijson, m)?)?;
+    m.add_function(wrap_pyfunction!(lint_wire, m)?)?;
+    m.add_function(wrap_pyfunction!(encode_lint_wire, m)?)?;
     m.add_function(wrap_pyfunction!(emit_wire, m)?)?;
     m.add_function(wrap_pyfunction!(safe_load_native, m)?)?;
     m.add("DEFAULT_MAX_INPUT_BYTES", def.max_input_bytes)?;

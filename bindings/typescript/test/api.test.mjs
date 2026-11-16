@@ -23,9 +23,11 @@ import {
   dumpAll,
   encode,
   encodeError,
+  encodeLint,
   encodePlain,
   fromPlain,
   keyEq,
+  lintYaml11,
   load,
   loadAll,
   loadAllBytes,
@@ -808,4 +810,64 @@ test("spec-v1.6 parse, parseAll, stringify, and stringifyAll host ergonomics", (
   assert.equal(stringify(obj), dump(obj));
   assert.equal(stringify(obj, { compatQuoting: "core_only" }), dump(obj, { compatQuoting: "core_only" }));
   assert.equal(stringifyAll([obj, [1, 2]]), dumpAll([obj, [1, 2]]));
+});
+
+test("spec-v1.6 lintYaml11 and encodeLint migration lint surface", () => {
+  // Multi-byte UTF-8 prefix before hazard verifies utf16Offset calculation on diagnostic spans
+  const yaml = "🚀:\n  bool_flag: yes\n  octal_mode: 0755\n  timeout: 1:30\n  <<: {a: 1}\n";
+  const res = lintYaml11(yaml);
+  assert.equal(res.truncated, false);
+  assert.equal(res.warningCount, 4);
+  assert.equal(res.diagnostics.length, 4);
+
+  assert.equal(res.diagnostics[0].code, "yaml11_boolean");
+  assert.equal(res.diagnostics[0].raw, "yes");
+  assert.equal(res.diagnostics[0].yaml12Resolution, 'string ("yes")');
+  // '🚀' is 4 UTF-8 bytes and 2 UTF-16 code units, so utf16Offset === byteOffset - 2
+  assert.equal(
+    res.diagnostics[0].span.start.utf16Offset,
+    res.diagnostics[0].span.start.byteOffset - 2,
+  );
+  assert.equal(
+    res.diagnostics[0].span.end.utf16Offset,
+    res.diagnostics[0].span.end.byteOffset - 2,
+  );
+
+  assert.equal(res.diagnostics[1].code, "yaml11_number");
+  assert.equal(res.diagnostics[1].yaml12Resolution, "int (755)");
+
+  assert.equal(res.diagnostics[2].code, "yaml11_sexagesimal");
+  assert.equal(res.diagnostics[3].code, "yaml11_merge_key");
+
+  // encodeLint produces canonical yamlprims-lint/1 JSON
+  const wire = encodeLint(res);
+  const parsedWire = JSON.parse(wire);
+  assert.equal(parsedWire.format, "yamlprims-lint");
+  assert.equal(parsedWire.version, 1);
+  assert.equal(parsedWire.warning_count, 4);
+  assert.equal(parsedWire.truncated, false);
+  assert.equal(parsedWire.diagnostics.length, 4);
+
+  // Truncation under maxWarnings
+  const truncRes = lintYaml11("a: yes\nb: no\nc: on\n", { limits: { maxWarnings: 2 } });
+  assert.equal(truncRes.truncated, true);
+  assert.equal(truncRes.warningCount, 3);
+  assert.equal(truncRes.diagnostics.length, 2);
+
+  // encodeLint rejects inconsistent caller-constructed LintResult
+  assert.throws(
+    () =>
+      encodeLint({
+        diagnostics: truncRes.diagnostics,
+        warningCount: 3,
+        truncated: false,
+      }),
+    (e) => e instanceof YamlprimsError && e.kind === "invalid_options",
+  );
+
+  // encodeLint enforces maxOutputBytes
+  assert.throws(
+    () => encodeLint(res, { limits: { maxOutputBytes: 32 } }),
+    (e) => e instanceof YamlprimsError && e.kind === "output_limit_exceeded",
+  );
 });

@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 use yamlprims::{
-    emit_all_writer, emit_all_writer_with, emit_writer, emit_writer_with, from_reader,
-    from_reader_with, from_slice, from_slice_with, load_all_reader, load_all_reader_with,
-    load_reader, load_reader_with, to_writer, to_writer_with, Document, EmitOptions, ErrorKind,
-    LimitKind, Location, Node, Options, Site, Value,
+    emit_all_writer, emit_all_writer_with, emit_writer, emit_writer_with, encode_lint, from_reader,
+    from_reader_with, from_slice, from_slice_with, lint_yaml11, lint_yaml11_bytes,
+    lint_yaml11_reader, lint_yaml11_reader_with, lint_yaml11_with, load_all_reader,
+    load_all_reader_with, load_reader, load_reader_with, to_writer, to_writer_with, Document,
+    EmitOptions, ErrorKind, LimitKind, LintCode, LintDiagnostic, LintResult, Location, MergeKeys,
+    Node, Options, PathSegment, Site, Span, Value,
 };
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,4 +253,103 @@ fn writer_entrypoints_buffer_and_validate_before_touching_writer() {
     assert_eq!(err_all_io.kind, ErrorKind::Internal);
     assert_eq!(err_all_io.site, Site::NotSource { last_known: None });
     assert_eq!(writes_all_io, 1);
+}
+
+#[test]
+fn lint_yaml11_and_encode_lint_contract() {
+    let src = "\
+flag: yes
+ratio: 19:59:59
+octal: 0755
+quoted: 'yes'
+tagged: !custom yes
+";
+    let res = lint_yaml11(src).expect("lint_yaml11 should succeed");
+    assert_eq!(res.warning_count, 3);
+    assert!(!res.truncated);
+    let codes: Vec<LintCode> = res.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![
+            LintCode::Yaml11Boolean,
+            LintCode::Yaml11Sexagesimal,
+            LintCode::Yaml11Number,
+        ]
+    );
+
+    let res_bytes = lint_yaml11_bytes(src.as_bytes(), &Options::default()).unwrap();
+    assert_eq!(res_bytes, res);
+    let res_reader = lint_yaml11_reader(src.as_bytes()).unwrap();
+    assert_eq!(res_reader, res);
+
+    // Alias and merge non-amplification + merge_keys modes
+    let merge_src = "\
+base: &b
+  a: yes
+alias_copy: *b
+merged:
+  <<: *b
+";
+    let mut apply_opts = Options::default();
+    apply_opts.merge_keys = MergeKeys::Apply;
+    let res_apply = lint_yaml11_with(merge_src, &apply_opts).unwrap();
+    let apply_codes: Vec<LintCode> = res_apply.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        apply_codes,
+        vec![LintCode::Yaml11Boolean, LintCode::Yaml11MergeKey]
+    );
+
+    let mut as_key_opts = Options::default();
+    as_key_opts.merge_keys = MergeKeys::AsKey;
+    let res_as_key =
+        lint_yaml11_reader_with(&b"plain:\n  <<: 1\nquoted:\n  '<<': 2\n"[..], &as_key_opts)
+            .unwrap();
+    assert_eq!(res_as_key.diagnostics.len(), 1);
+    assert_eq!(res_as_key.diagnostics[0].code, LintCode::Yaml11MergeKey);
+
+    // max_warnings truncation
+    let mut trunc_opts = Options::default();
+    trunc_opts.limits.max_warnings = 2;
+    let res_trunc = lint_yaml11_with(src, &trunc_opts).unwrap();
+    assert_eq!(res_trunc.diagnostics.len(), 2);
+    assert_eq!(res_trunc.warning_count, 3);
+    assert!(res_trunc.truncated);
+
+    // encode_lint wire format and invariant checks
+    let wire = encode_lint(&res_apply, &apply_opts).expect("encode_lint should succeed");
+    assert!(wire.starts_with("{\"format\":\"yamlprims-lint\",\"version\":1,"));
+
+    // Invalid warning_count -> InvalidOptions error
+    let mut bad_res: LintResult = res.clone();
+    bad_res.warning_count = 99;
+    let err = encode_lint(&bad_res, &Options::default()).expect_err("mismatched warning_count");
+    assert_eq!(err.kind, ErrorKind::InvalidOptions);
+
+    // Span with start > end -> InvalidOptions error
+    let mut bad_span_res: LintResult = res.clone();
+    bad_span_res.diagnostics[0] = LintDiagnostic::new(
+        LintCode::Yaml11Boolean,
+        Span {
+            start: Location {
+                byte_offset: 10,
+                line: 2,
+                column: 1,
+            },
+            end: Location {
+                byte_offset: 5,
+                line: 1,
+                column: 6,
+            },
+        },
+        0,
+        vec![PathSegment::Key(Box::new(Value::String(
+            "flag".to_string(),
+        )))],
+        "yes",
+        "str (\"yes\")",
+        "bool (true) in YAML 1.1",
+        "bad span",
+    );
+    let err_span = encode_lint(&bad_span_res, &Options::default()).expect_err("bad span");
+    assert_eq!(err_span.kind, ErrorKind::InvalidOptions);
 }
