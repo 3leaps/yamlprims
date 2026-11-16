@@ -388,13 +388,33 @@ pub fn to_string<T: Serialize + ?Sized>(value: &T) -> Result<String, Error> {
     to_string_with(value, &EmitOptions::default())
 }
 
-/// Serialize `value` to canonical YAML 1.2.2 Core text under `opts` (spec-v1.5 §8.2).
+/// Serialize `value` to canonical YAML 1.2.2 Core text under `opts` (spec-v1.6 §8.2).
 pub fn to_string_with<T: Serialize + ?Sized>(
     value: &T,
     opts: &EmitOptions,
 ) -> Result<String, Error> {
     let node = to_node(value, opts)?;
     emit_with(&node, opts)
+}
+
+/// Serialize `value` to canonical YAML 1.2.2 Core text and write to `writer` under [`EmitOptions::default()`] (spec-v1.6 §8.2).
+pub fn to_writer<W: std::io::Write, T: Serialize + ?Sized>(
+    writer: W,
+    value: &T,
+) -> Result<(), Error> {
+    to_writer_with(writer, value, &EmitOptions::default())
+}
+
+/// Serialize `value` to canonical YAML 1.2.2 Core text in memory under `opts` before writing the complete output to `writer` (spec-v1.6 §8.2).
+pub fn to_writer_with<W: std::io::Write, T: Serialize + ?Sized>(
+    mut writer: W,
+    value: &T,
+    opts: &EmitOptions,
+) -> Result<(), Error> {
+    let yaml = to_string_with(value, opts)?;
+    writer
+        .write_all(yaml.as_bytes())
+        .map_err(|e| ser_err(ErrorKind::Internal, format!("io write error: {e}")))
 }
 
 struct NodeSerializer<'a> {

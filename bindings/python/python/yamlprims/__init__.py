@@ -10,7 +10,7 @@ import math
 import os
 import re
 import struct
-from typing import Any, Final, Iterator, Mapping as TypingMapping, Sequence, Union
+from typing import Any, Final, Iterator, Mapping as TypingMapping, NoReturn, Sequence, Union
 
 from . import _yamlprims as _native
 
@@ -60,6 +60,10 @@ __all__ = [
     "load_bytes",
     "load_ijson",
     "load_plain",
+    "safe_dump",
+    "safe_dump_all",
+    "safe_load",
+    "safe_load_all",
     "to_plain",
     "validate_emit_options",
     "validate_options",
@@ -4506,3 +4510,244 @@ def dump(
 ) -> str:
     """Emit a single `Document`, `Node`, or plain Python value as a YAML 1.2.2 Core document (`spec-v1.5 §10.2`, `§11.5`)."""
     return dump_all([value], options, **kwargs)
+
+
+# ---- PyYAML Migration Ergonomics (`spec-v1.6 §11.5`) ----------------------
+
+
+def _merge_load_options(
+    options: Options | TypingMapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> Options:
+    if kwargs:
+        if options is None:
+            options = dict(kwargs)
+        elif isinstance(options, TypingMapping):
+            merged = dict(options)
+            merged.update(kwargs)
+            options = merged
+        else:
+            raise _invalid_options_error("cannot combine Options instance with keyword arguments")
+    return validate_options(options)
+
+
+def _raise_max_input_bytes(max_input_bytes: int) -> NoReturn:
+    raise YamlprimsError(
+        kind="limit_exceeded",
+        message=f"max_input_bytes ({max_input_bytes}) exceeded",
+        detail={"limit": "max_input_bytes", "configured": max_input_bytes},
+        site={"source": Location(byte_offset=0, line=1, column=1)},
+    )
+
+
+def _read_bounded_input(data: Any, opts: Options) -> bytes:
+    max_input_bytes = opts.limits.max_input_bytes
+    if isinstance(data, str):
+        if _has_unpaired_surrogate(data):
+            raise _not_source_error(
+                "invalid_utf8",
+                {"invalid_len": None},
+                "input string contains unpaired UTF-16 surrogate",
+            )
+        if len(data) > max_input_bytes:
+            _raise_max_input_bytes(max_input_bytes)
+        encoded_data = data.encode("utf-8")
+        if len(encoded_data) > max_input_bytes:
+            _raise_max_input_bytes(max_input_bytes)
+        return encoded_data
+
+    if isinstance(data, bytes):
+        if len(data) > max_input_bytes:
+            _raise_max_input_bytes(max_input_bytes)
+        return data
+
+    try:
+        view = memoryview(data)
+    except TypeError:
+        view = None
+    if view is not None:
+        with view:
+            if view.nbytes > max_input_bytes:
+                _raise_max_input_bytes(max_input_bytes)
+            return view.tobytes()
+
+    read_fn = getattr(data, "read", None)
+    if not callable(read_fn):
+        raise TypeError(
+            f"input must be str, bytes-like, or a file-like object with a .read method, not {type(data).__name__}"
+        )
+
+    cap = max_input_bytes + 1
+    bytes_seen = 0
+    stream_kind: str | None = None
+    chunks: list[bytes] = []
+
+    while bytes_seen < cap:
+        remaining = cap - bytes_seen
+        req = min(65_536, remaining) if stream_kind == "bytes" else min(16_384, remaining)
+        try:
+            chunk = read_fn(req)
+        except Exception as exc:
+            raise _not_source_error("internal", {}, f"stream read error: {exc}") from None
+
+        if isinstance(chunk, str):
+            if chunk == "":
+                break
+            if stream_kind is not None and stream_kind != "str":
+                raise _not_source_error(
+                    "internal",
+                    {},
+                    "stream.read() mixed str and byte-like chunks",
+                )
+            stream_kind = "str"
+            if _has_unpaired_surrogate(chunk):
+                raise _not_source_error(
+                    "invalid_utf8",
+                    {"invalid_len": None},
+                    "stream chunk contains unpaired UTF-16 surrogate",
+                )
+            if len(chunk) >= remaining:
+                _raise_max_input_bytes(max_input_bytes)
+            encoded = chunk.encode("utf-8")
+            chunk_bytes = len(encoded)
+            if bytes_seen + chunk_bytes >= cap:
+                _raise_max_input_bytes(max_input_bytes)
+            chunks.append(encoded)
+            bytes_seen += chunk_bytes
+        elif isinstance(chunk, (bytes, bytearray, memoryview)):
+            chunk_bytes = chunk.nbytes if isinstance(chunk, memoryview) else len(chunk)
+            if chunk_bytes == 0:
+                break
+            if stream_kind is not None and stream_kind != "bytes":
+                raise _not_source_error(
+                    "internal",
+                    {},
+                    "stream.read() mixed str and byte-like chunks",
+                )
+            stream_kind = "bytes"
+            if bytes_seen + chunk_bytes >= cap:
+                _raise_max_input_bytes(max_input_bytes)
+            raw_chunk = (
+                chunk
+                if isinstance(chunk, bytes)
+                else (chunk.tobytes() if isinstance(chunk, memoryview) else bytes(chunk))
+            )
+            chunks.append(raw_chunk)
+            bytes_seen += chunk_bytes
+        else:
+            raise _not_source_error(
+                "internal",
+                {},
+                f"stream.read() returned unsupported type: {type(chunk).__name__}",
+            )
+
+    return b"".join(chunks)
+
+
+def safe_load(
+    input: Any,
+    options: Options | TypingMapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Load a single YAML 1.2.2 Core document into plain Python objects (`spec-v1.6 §11.5`)."""
+    opts = _merge_load_options(options, **kwargs)
+    raw = _read_bounded_input(input, opts)
+    status, obj, payload = _native.safe_load_native(
+        raw,
+        True,
+        opts.merge_keys,
+        opts.unknown_tags,
+        opts.limits._to_native_list(),
+    )
+    if status == 0:
+        return obj
+    env = _handle_native_status(status, payload, opts)
+    if env.kind == "error" and env.error is not None:
+        raise env.error
+    raise _not_source_error("internal", {}, "expected error envelope from safe_load_native")
+
+
+def safe_load_all(
+    input: Any,
+    options: Options | TypingMapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> list[Any]:
+    """Load all YAML 1.2.2 Core documents into a list of plain Python objects (`spec-v1.6 §11.5`)."""
+    opts = _merge_load_options(options, **kwargs)
+    raw = _read_bounded_input(input, opts)
+    status, obj, payload = _native.safe_load_native(
+        raw,
+        False,
+        opts.merge_keys,
+        opts.unknown_tags,
+        opts.limits._to_native_list(),
+    )
+    if status == 0:
+        return obj
+    env = _handle_native_status(status, payload, opts)
+    if env.kind == "error" and env.error is not None:
+        raise env.error
+    raise _not_source_error("internal", {}, "expected error envelope from safe_load_native")
+
+
+def _deliver_buffered_yaml(yaml_str: str, stream: Any) -> None:
+    write_fn = getattr(stream, "write", None)
+    if not callable(write_fn):
+        raise _not_source_error("internal", {}, "stream has no callable write method")
+    total_len = len(yaml_str)
+    offset = 0
+    clamped = False
+    while offset < total_len:
+        remaining = total_len - offset
+        step = min(1_024, remaining) if clamped else remaining
+        chunk = yaml_str[offset : offset + step]
+        try:
+            n = write_fn(chunk)
+        except Exception as exc:
+            raise _not_source_error("internal", {}, f"stream write error: {exc}") from None
+        if n is None:
+            offset += len(chunk)
+        elif type(n) is int:
+            if n <= 0 or n > len(chunk):
+                raise _not_source_error(
+                    "internal",
+                    {},
+                    f"stream.write() returned invalid character count: {n}",
+                )
+            if n < len(chunk):
+                clamped = True
+            offset += n
+        else:
+            raise _not_source_error(
+                "internal",
+                {},
+                f"stream.write() returned unsupported type: {type(n).__name__}",
+            )
+
+
+def safe_dump(
+    value: Any,
+    stream: Any = None,
+    options: EmitOptions | TypingMapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> str | None:
+    """Emit a single YAML 1.2.2 Core document, returning `str` or writing to `stream` (`spec-v1.6 §11.5`)."""
+    yaml_str = dump(value, options, **kwargs)
+    if stream is None:
+        return yaml_str
+    _deliver_buffered_yaml(yaml_str, stream)
+    return None
+
+
+def safe_dump_all(
+    documents: Sequence[Any],
+    stream: Any = None,
+    options: EmitOptions | TypingMapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> str | None:
+    """Emit a sequence of YAML 1.2.2 Core documents, returning `str` or writing to `stream` (`spec-v1.6 §11.5`)."""
+    yaml_str = dump_all(documents, options, **kwargs)
+    if stream is None:
+        return yaml_str
+    _deliver_buffered_yaml(yaml_str, stream)
+    return None

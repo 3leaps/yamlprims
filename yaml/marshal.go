@@ -3,7 +3,9 @@ package yaml
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"math"
+	"math/big"
 	"reflect"
 	"sort"
 	"strings"
@@ -17,7 +19,7 @@ func resolveEmitOpts(opts []EmitOptions) EmitOptions {
 	return DefaultEmitOptions()
 }
 
-// FromPlain converts a Go host value into a synthetic Node under EmitOptions (spec-v1.5 §11.3).
+// FromPlain converts a Go host value into a synthetic Node under EmitOptions (spec-v1.6 §11.3).
 func FromPlain(v any, opts ...EmitOptions) (Node, *Error) {
 	o := resolveEmitOpts(opts)
 	if err := o.Validate(); err != nil {
@@ -27,7 +29,7 @@ func FromPlain(v any, opts ...EmitOptions) (Node, *Error) {
 	return hostToNode(v, o, &nodesUsed, 0, false)
 }
 
-// Marshal converts a Go host value into canonical YAML 1.2.2 Core text under EmitOptions (spec-v1.5 §11.3).
+// Marshal converts a Go host value into canonical YAML 1.2.2 Core text under EmitOptions (spec-v1.6 §11.3).
 func Marshal(v any, opts ...EmitOptions) (string, *Error) {
 	o := resolveEmitOpts(opts)
 	node, err := FromPlain(v, o)
@@ -37,9 +39,23 @@ func Marshal(v any, opts ...EmitOptions) (string, *Error) {
 	return EmitWith(node, o)
 }
 
-// MarshalWith converts a Go host value into canonical YAML 1.2.2 Core text under opts (spec-v1.5 §11.3).
+// MarshalWith converts a Go host value into canonical YAML 1.2.2 Core text under opts (spec-v1.6 §11.3).
 func MarshalWith(v any, opts EmitOptions) (string, *Error) {
 	return Marshal(v, opts)
+}
+
+// MarshalWriter converts a Go host value into canonical YAML 1.2.2 Core text and writes it to w (spec-v1.6 §11.2, §11.3).
+func MarshalWriter(w io.Writer, v any, opts ...EmitOptions) *Error {
+	return MarshalWriterWith(w, v, resolveEmitOpts(opts))
+}
+
+// MarshalWriterWith converts a Go host value into canonical YAML 1.2.2 Core text in memory under opts before writing it to w (spec-v1.6 §11.2, §11.3).
+func MarshalWriterWith(w io.Writer, v any, opts EmitOptions) *Error {
+	s, err := MarshalWith(v, opts)
+	if err != nil {
+		return err
+	}
+	return writeBufferedYAML(w, s)
 }
 
 func chargeMarshalNode(nodesUsed *int, opts EmitOptions) *Error {
@@ -388,6 +404,30 @@ func hostToNode(v any, opts EmitOptions, nodesUsed *int, depth int, inKey bool) 
 			return Node{}, err
 		}
 		return NewSyntheticNode(IntValue(*tv)), nil
+	case big.Int:
+		if err := chargeMarshalNode(nodesUsed, opts); err != nil {
+			return Node{}, err
+		}
+		iv, ok := IntegerFromBigInt(&tv)
+		if !ok {
+			return Node{}, emitSimpleErr(ErrorKindIntegerOutOfRange, "big.Int out of 128-bit range")
+		}
+		return NewSyntheticNode(IntValue(iv)), nil
+	case *big.Int:
+		if tv == nil {
+			if err := chargeMarshalNode(nodesUsed, opts); err != nil {
+				return Node{}, err
+			}
+			return NewSyntheticNode(NullValue()), nil
+		}
+		if err := chargeMarshalNode(nodesUsed, opts); err != nil {
+			return Node{}, err
+		}
+		iv, ok := IntegerFromBigInt(tv)
+		if !ok {
+			return Node{}, emitSimpleErr(ErrorKindIntegerOutOfRange, "big.Int out of 128-bit range")
+		}
+		return NewSyntheticNode(IntValue(iv)), nil
 	}
 
 	rv := reflect.ValueOf(v)
@@ -409,7 +449,7 @@ func reflectToNode(rv reflect.Value, opts EmitOptions, nodesUsed *int, depth int
 		}
 		if rv.CanInterface() {
 			switch rv.Interface().(type) {
-			case Node, *Node, Value, *Value, Document, *Document, Tagged, *Tagged, Mapping, *Mapping, Integer, *Integer:
+			case Node, *Node, Value, *Value, Document, *Document, Tagged, *Tagged, Mapping, *Mapping, Integer, *Integer, big.Int, *big.Int:
 				return hostToNode(rv.Interface(), opts, nodesUsed, depth, inKey)
 			}
 		}
@@ -423,7 +463,7 @@ func reflectToNode(rv reflect.Value, opts EmitOptions, nodesUsed *int, depth int
 	}
 	if rv.CanInterface() {
 		switch rv.Interface().(type) {
-		case Node, Value, Document, Tagged, Mapping, Integer:
+		case Node, Value, Document, Tagged, Mapping, Integer, big.Int:
 			return hostToNode(rv.Interface(), opts, nodesUsed, depth, inKey)
 		}
 	}

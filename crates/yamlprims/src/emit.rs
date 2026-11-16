@@ -1327,7 +1327,7 @@ pub fn emit(node: &Node) -> Result<String, Error> {
     emit_with(node, &EmitOptions::default())
 }
 
-/// Emit a single `Node` as canonical YAML 1.2.2 Core text under `opts` (spec-v1.5 §10.2).
+/// Emit a single `Node` as canonical YAML 1.2.2 Core text under `opts` (spec-v1.6 §10.2).
 pub fn emit_with(node: &Node, opts: &EmitOptions) -> Result<String, Error> {
     opts.validate()?;
     let mut nodes_visited = 0usize;
@@ -1338,12 +1338,29 @@ pub fn emit_with(node: &Node, opts: &EmitOptions) -> Result<String, Error> {
     Ok(out.into_string())
 }
 
-/// Emit a slice of `Document` values as a canonical YAML 1.2.2 Core stream under [`EmitOptions::default()`] (spec-v1.5 §10.2).
+/// Emit a single `Node` to `writer` under [`EmitOptions::default()`] (spec-v1.6 §10.2).
+pub fn emit_writer<W: std::io::Write>(writer: W, node: &Node) -> Result<(), Error> {
+    emit_writer_with(writer, node, &EmitOptions::default())
+}
+
+/// Emit a single `Node` in memory under `opts` before writing the complete YAML text to `writer` (spec-v1.6 §10.2).
+pub fn emit_writer_with<W: std::io::Write>(
+    mut writer: W,
+    node: &Node,
+    opts: &EmitOptions,
+) -> Result<(), Error> {
+    let yaml = emit_with(node, opts)?;
+    writer
+        .write_all(yaml.as_bytes())
+        .map_err(|e| emit_err(ErrorKind::Internal, format!("io write error: {e}")))
+}
+
+/// Emit a slice of `Document` values as a canonical YAML 1.2.2 Core stream under [`EmitOptions::default()`] (spec-v1.6 §10.2).
 pub fn emit_all(docs: &[Document]) -> Result<String, Error> {
     emit_all_with(docs, &EmitOptions::default())
 }
 
-/// Emit a slice of `Document` values as a canonical YAML 1.2.2 Core stream under `opts` (spec-v1.5 §10.2).
+/// Emit a slice of `Document` values as a canonical YAML 1.2.2 Core stream under `opts` (spec-v1.6 §10.2).
 pub fn emit_all_with(docs: &[Document], opts: &EmitOptions) -> Result<String, Error> {
     preflight_documents(docs, opts)?;
     if docs.is_empty() {
@@ -1371,4 +1388,21 @@ pub fn emit_all_with(docs: &[Document], opts: &EmitOptions) -> Result<String, Er
         emit_root_node(&mut out, &doc.root, opts.compat_quoting)?;
     }
     Ok(out.into_string())
+}
+
+/// Emit a slice of `Document` values to `writer` under [`EmitOptions::default()`] (spec-v1.6 §10.2).
+pub fn emit_all_writer<W: std::io::Write>(writer: W, docs: &[Document]) -> Result<(), Error> {
+    emit_all_writer_with(writer, docs, &EmitOptions::default())
+}
+
+/// Emit a slice of `Document` values in memory under `opts` before writing the complete YAML stream to `writer` (spec-v1.6 §10.2).
+pub fn emit_all_writer_with<W: std::io::Write>(
+    mut writer: W,
+    docs: &[Document],
+    opts: &EmitOptions,
+) -> Result<(), Error> {
+    let yaml = emit_all_with(docs, opts)?;
+    writer
+        .write_all(yaml.as_bytes())
+        .map_err(|e| emit_err(ErrorKind::Internal, format!("io write error: {e}")))
 }

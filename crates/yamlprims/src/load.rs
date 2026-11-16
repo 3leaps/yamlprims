@@ -4,6 +4,21 @@ use crate::error::internal;
 use crate::error::{Error, ErrorKind, LimitKind};
 use crate::options::Options;
 use crate::value::Location;
+use std::io::Read as _;
+
+/// Validate `opts` first, then read at most `opts.limits.max_input_bytes.saturating_add(1)`
+/// bytes from `reader`, mapping any `std::io::Error` to `ErrorKind::Internal` with
+/// `Site::NotSource { last_known: None }` (spec §8.1, §10.1).
+pub(crate) fn read_bounded<R: std::io::Read>(reader: R, opts: &Options) -> Result<Vec<u8>, Error> {
+    opts.validate()?;
+    let cap = (opts.limits.max_input_bytes as u64).saturating_add(1);
+    let mut buf = Vec::new();
+    reader
+        .take(cap)
+        .read_to_end(&mut buf)
+        .map_err(|e| Error::not_source(ErrorKind::Internal, None, format!("io read error: {e}")))?;
+    Ok(buf)
+}
 
 /// Gate raw bytes: size, BOM, UTF-8 (§6, §7.2).
 pub(crate) fn gate_bytes<'a>(input: &'a [u8], opts: &Options) -> Result<(&'a str, usize), Error> {

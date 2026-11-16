@@ -2,6 +2,7 @@ package yaml
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"strings"
 	"unicode/utf8"
@@ -1370,12 +1371,12 @@ func emitRootNode(out *outBuf, root *Node, quoting CompatQuoting) *Error {
 	return nil
 }
 
-// Emit serializes a single Node to canonical YAML 1.2.2 Core text under DefaultEmitOptions() (spec-v1.5 §10.2).
+// Emit serializes a single Node to canonical YAML 1.2.2 Core text under DefaultEmitOptions() (spec-v1.6 §10.2).
 func Emit(node Node) (string, *Error) {
 	return EmitWith(node, DefaultEmitOptions())
 }
 
-// EmitWith serializes a single Node to canonical YAML 1.2.2 Core text under opts (spec-v1.5 §10.2).
+// EmitWith serializes a single Node to canonical YAML 1.2.2 Core text under opts (spec-v1.6 §10.2).
 func EmitWith(node Node, opts EmitOptions) (string, *Error) {
 	if err := opts.Validate(); err != nil {
 		return "", err
@@ -1392,12 +1393,26 @@ func EmitWith(node Node, opts EmitOptions) (string, *Error) {
 	return string(out.buf), nil
 }
 
-// EmitAll serializes a slice of Documents to a canonical YAML 1.2.2 Core stream under DefaultEmitOptions() (spec-v1.5 §10.2).
+// EmitWriter serializes a single Node to w under DefaultEmitOptions() or opts[0] (spec-v1.6 §10.2, §11.2).
+func EmitWriter(w io.Writer, node Node, opts ...EmitOptions) *Error {
+	return EmitWriterWith(w, node, resolveEmitOpts(opts))
+}
+
+// EmitWriterWith serializes a single Node in memory under opts before writing the complete YAML text to w (spec-v1.6 §10.2, §11.2).
+func EmitWriterWith(w io.Writer, node Node, opts EmitOptions) *Error {
+	s, err := EmitWith(node, opts)
+	if err != nil {
+		return err
+	}
+	return writeBufferedYAML(w, s)
+}
+
+// EmitAll serializes a slice of Documents to a canonical YAML 1.2.2 Core stream under DefaultEmitOptions() (spec-v1.6 §10.2).
 func EmitAll(docs []Document) (string, *Error) {
 	return EmitAllWith(docs, DefaultEmitOptions())
 }
 
-// EmitAllWith serializes a slice of Documents to a canonical YAML 1.2.2 Core stream under opts (spec-v1.5 §10.2).
+// EmitAllWith serializes a slice of Documents to a canonical YAML 1.2.2 Core stream under opts (spec-v1.6 §10.2).
 func EmitAllWith(docs []Document, opts EmitOptions) (string, *Error) {
 	if err := preflightEmitDocuments(docs, opts); err != nil {
 		return "", err
@@ -1432,4 +1447,28 @@ func EmitAllWith(docs []Document, opts EmitOptions) (string, *Error) {
 		}
 	}
 	return string(out.buf), nil
+}
+
+// EmitAllWriter serializes a slice of Documents to w under DefaultEmitOptions() or opts[0] (spec-v1.6 §10.2, §11.2).
+func EmitAllWriter(w io.Writer, docs []Document, opts ...EmitOptions) *Error {
+	return EmitAllWriterWith(w, docs, resolveEmitOpts(opts))
+}
+
+// EmitAllWriterWith serializes a slice of Documents in memory under opts before writing the complete YAML stream to w (spec-v1.6 §10.2, §11.2).
+func EmitAllWriterWith(w io.Writer, docs []Document, opts EmitOptions) *Error {
+	s, err := EmitAllWith(docs, opts)
+	if err != nil {
+		return err
+	}
+	return writeBufferedYAML(w, s)
+}
+
+func writeBufferedYAML(w io.Writer, s string) *Error {
+	if w == nil {
+		return emitSimpleErr(ErrorKindInternal, "nil io.Writer")
+	}
+	if _, ioErr := io.WriteString(w, s); ioErr != nil {
+		return emitSimpleErr(ErrorKindInternal, "io write error: "+ioErr.Error())
+	}
+	return nil
 }

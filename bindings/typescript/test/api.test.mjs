@@ -33,6 +33,10 @@ import {
   loadIjson,
   loadPlain,
   mappingGet,
+  parse,
+  parseAll,
+  stringify,
+  stringifyAll,
   toPlain,
   validateEmitOptions,
   validateIjsonOptions,
@@ -759,4 +763,49 @@ test("spec-v1.5 dump, dumpAll, fromPlain, CompatQuoting, and EmitLimits", () => 
     () => loadIjson("!custom x\n", { limits: { maxOutputBytes: 4, maxScalarBytes: 4, maxKeyBytes: 4 } }),
     (e) => e instanceof YamlprimsError && e.kind === "unknown_tag",
   );
+});
+
+test("spec-v1.6 parse, parseAll, stringify, and stringifyAll host ergonomics", () => {
+  const parsed = parse("name: demo\nenabled: yes\nports: [80, 443]\n");
+  assert.equal(Object.getPrototypeOf(parsed), null);
+  assert.equal(parsed.name, "demo");
+  assert.equal(parsed.enabled, "yes");
+  assert.deepEqual(parsed.ports, [80, 443]);
+
+  // Bytes input works identically
+  const parsedFromBytes = parse(enc("a: 1\n"));
+  assert.equal(parsedFromBytes.a, 1);
+
+  // parseAll returns array of plain values (empty stream -> [])
+  assert.deepEqual(parseAll("# comment only\n"), []);
+  const multiParsed = parseAll("---\na: 1\n---\n- true\n- null\n");
+  assert.equal(multiParsed.length, 2);
+  assert.equal(multiParsed[0].a, 1);
+  assert.deepEqual(multiParsed[1], [true, null]);
+
+  // parse rejects multi-document stream with multiple_documents
+  assert.throws(
+    () => parse("---\n1\n---\n2\n"),
+    (e) => e instanceof YamlprimsError && e.kind === "multiple_documents",
+  );
+
+  // parse / parseAll enforce toPlain loss matrix (integer outside ±(2^53-1), non-string key, tagged)
+  assert.throws(
+    () => parse("9007199254740992\n"),
+    (e) => e instanceof YamlprimsError && e.kind === "type",
+  );
+  assert.throws(
+    () => parseAll("1: one\n"),
+    (e) => e instanceof YamlprimsError && e.kind === "type",
+  );
+  assert.throws(
+    () => parse("!custom val\n"),
+    (e) => e instanceof YamlprimsError && e.kind === "type",
+  );
+
+  // stringify and stringifyAll alias dump and dumpAll
+  const obj = { enabled: "yes", count: 2 };
+  assert.equal(stringify(obj), dump(obj));
+  assert.equal(stringify(obj, { compatQuoting: "core_only" }), dump(obj, { compatQuoting: "core_only" }));
+  assert.equal(stringifyAll([obj, [1, 2]]), dumpAll([obj, [1, 2]]));
 });
