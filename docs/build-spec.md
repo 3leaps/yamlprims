@@ -1,8 +1,6 @@
 # yamlprims build specification
 
-Status: implementation plan with working Rust and pure-Go twin cores, isolated TypeScript WASM and Python `PyO3/maturin` bindings, and an initial CLI. Published releases
-remain specification-only. See [implementation status](implementation.md) for the
-current code surface and qualification limits.
+Status: active implementation specification covering the shipped `Profile B` Rust (`crates/yamlprims`, `crates/yamlprims-cli`) and pure-Go twin (`yaml/`) cores, isolated TypeScript WASM (`bindings/typescript/`) and Python `PyO3/maturin` (`bindings/python/`) bindings, and the `yamlprims-cli` command-line contract (`spec-v1.6`). See [implementation status](implementation.md) for current coverage and [release notes](releases/) for published release anchors.
 The [behavioral specification](spec/yamlprims-spec.md) defines semantics; this
 document defines package boundaries, implementation order and acceptance.
 
@@ -18,25 +16,27 @@ TypeScript binding (`bindings/typescript/`) and a standalone `PyO3/maturin`
 
 | Package / Surface        | Path                     | Responsibility                                                                                       | First milestone |
 | ------------------------ | ------------------------ | ---------------------------------------------------------------------------------------------------- | --------------- |
-| `yamlprims` (Rust)       | `crates/yamlprims/`      | Owned model, event adapter, Core Schema resolution, budgets, closed `SyntaxKind`, Serde, wire codecs | M1              |
-| `yamlprims-cli` (Rust)   | `crates/yamlprims-cli/`  | Binary `yamlprims`; file/stdin handling, diagnostics, `check` and `dump`                             | M1              |
-| `yaml` (Go twin)         | `yaml/` (`go.mod`)       | Pure-Go twin (`github.com/3leaps/yamlprims/yaml`, `CGO_ENABLED=0`, stdlib-only); locked wire parity  | M1              |
-| `@3leaps/yamlprims` (TS) | `bindings/typescript/`   | Universal `wasm32-unknown-unknown` module (zero imports) and typed TypeScript host model             | M2              |
-| `yamlprims` (Python)     | `bindings/python/`       | Standalone `PyO3/maturin` (`abi3-py310`, `#![forbid(unsafe_code)]`) binding (`CARGO_TARGET_DIR=target/python`) | M2 |
+| `yamlprims` (Rust)       | `crates/yamlprims/`      | Owned model, event adapter, Core Schema resolution, budgets, closed `SyntaxKind`, Serde, emitter, I-JSON, YAML 1.1 lint, wire codecs | M1–M3 + M4 lint |
+| `yamlprims-cli` (Rust)   | `crates/yamlprims-cli/`  | Binary `yamlprims`; bounded file/stdin handling, `check` (`--lint-yaml11`), `dump` (`--plain`, `--ijson`), and `emit` | M1–M3 + M4 lint |
+| `yaml` (Go twin)         | `yaml/` (`go.mod`)       | Pure-Go twin (`github.com/3leaps/yamlprims/yaml`, `CGO_ENABLED=0`, stdlib-only); locked wire, emitter, I-JSON, and lint parity | M1–M3 + M4 lint |
+| `@3leaps/yamlprims` (TS) | `bindings/typescript/`   | Universal `wasm32-unknown-unknown` module (zero imports) and typed TypeScript host model             | M2–M3 + M4 lint |
+| `yamlprims` (Python)     | `bindings/python/`       | Standalone `PyO3/maturin` (`abi3-py310`, `#![forbid(unsafe_code)]`) binding (`CARGO_TARGET_DIR=target/python`) | M2–M3 + M4 lint |
 
 `yamlprims-cli` depends on `yamlprims`. `bindings/typescript` and `bindings/python`
 are separate Cargo manifests outside the root `[workspace]` that depend on
 `../../crates/yamlprims` by path, keeping WASM and `pyo3` dependencies out of the
 root `Cargo.lock` and the `crates.io` source-archive verification closure.
 The Go module (`github.com/3leaps/yamlprims/yaml`) is a pure-Go twin (`CGO_ENABLED=0`,
-standard library only) verified against the 19-row `structcorpus` conformance lock
-and `make crosscheck`. This `Profile B` + WASM + `PyO3` architecture supersedes
+standard library only) verified against the 20-row `structcorpus` conformance lock
+(`conformance/pins/pin-b52fcd0.json`) and `make crosscheck`. This `Profile B` + WASM + `PyO3` architecture supersedes
 the earlier M2 draft for a C ABI crate (`crates/yamlprims-ffi` + `cgo`) and a
 native Node-API addon (`crates/yamlprims-node`) in `spec-v1.4` §11.5 without
 mutating the signed `spec-v1.4` specification file bytes (see
-[ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)).
-TypeScript and Python remain marked planned/unqualified until each surface's
-conformance and parity receipts land.
+[ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md) and
+[ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
+TypeScript (`@3leaps/yamlprims`) and Python (`yamlprims`) are verified against
+`conformance/vectors/cases.jsonl` and `structcorpus --crosscheck-jsonl` via
+`make ts-check` and `make python-check`.
 
 Keep `Value`, `Node`, `Integer`, `Mapping`, `Options`, `Error`, `SyntaxKind` and
 codecs in the core package initially. Modules provide internal boundaries; extra
@@ -59,8 +59,12 @@ crates/yamlprims/src/
   resolve.rs             Core scalar/tag rules
   build.rs               owned-tree construction, anchors and merge
   budget.rs              checked counters and preflight expansion costs
-  de.rs                  shared-tree Serde conversion
-  wire.rs                canonical wire/error encoding and plain projection
+  de.rs                  shared-tree Serde Deserialize conversion
+  ser.rs                 shared-tree Serde Serialize conversion
+  emit.rs                deterministic 2-space block-first Core YAML emitter
+  ijson.rs               strict RFC 7493 I-JSON projection
+  lint.rs                YAML 1.1 -> YAML 1.2.2 Core migration lint and yamlprims-lint/1
+  wire.rs                canonical wire/error encoding, decode_wire, and plain projection
 crates/yamlprims-cli/src/main.rs
 yaml/                    pure-Go twin (github.com/3leaps/yamlprims/yaml, CGO_ENABLED=0, stdlib-only)
 cmd/structcorpus-driver/ Go conformance and crosscheck harness
@@ -114,12 +118,12 @@ crates.io reads package versions from Cargo manifests, independently of Git tags
 Never move the earlier specification tag. Corpus profiles
 pin immutable specification bytes and the exact revision they implement.
 
-Revision `1.4` is tagged as `spec-v1.4`; the working tree carries draft revision
-`1.5` (`SPEC_VERSION` is `1.5`, proposing [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)
-for deterministic Core YAML emission, strict RFC 7493 I-JSON projection,
-checked caller-tree constructors, iterative `Drop` for `Node`, and symmetric
-`decode_wire`). Existing tags `spec-v1.0` through `spec-v1.4` and their pinned
-expectations remain immutable. Revision 1.3 adds nested empty-scalar normalization and the
+Revisions `1.0` through `1.5` are tagged as `spec-v1.0` through `spec-v1.5`; the
+working tree carries revision `1.6` (`SPEC_VERSION` is `1.6`, incorporating
+accepted [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)
+and specifying bounded reader/writer and host ergonomics, YAML 1.1 migration
+lint `yamlprims-lint/1`, and the frozen CLI contract). Existing tags
+`spec-v1.0` through `spec-v1.5` and their pinned expectations remain immutable. Revision 1.3 adds nested empty-scalar normalization and the
 zero-width collection exception, and clarifies UTF-8 input scope, f32 conversion
 and exact keep-chomping EOF values. Its new anchor rules require a new profile
 citing the final specification commit/file digest and independently reviewed
@@ -348,23 +352,19 @@ The proposed M1 core qualification matrix uses native execution on five targets:
 | Windows x86_64 | `x86_64-pc-windows-msvc`    |
 | Windows ARM64  | `aarch64-pc-windows-msvc`   |
 
-Run the core tests on both the proposed MSRV and stable Rust for each target,
+Run the core tests on both the MSRV (`1.88`) and stable Rust for each target,
 recording exact toolchain versions and executed coverage. Report compile-only
 checks separately; cross-compilation does not establish native conformance.
-These are planned runtime qualification cells, not current support claims.
-The existing five-platform CI validates documentation only and does not satisfy
-Q0 or M1 acceptance. Runtime transfer still requires Q0 before implementation.
-
 Name and qualify any additional target separately. Test a 32-bit target before
-claiming it, especially for usize/metadata and numeric boundaries. This core
-matrix does not qualify the M2 native boundaries or language packages.
+claiming it, especially for usize/metadata and numeric boundaries.
 
-CLI contract before its package release: define stdout/stderr, exit codes for
-input/usage/I/O/internal errors, stdin, multiple files, byte limits and atomic
-output behavior. Never leave partial JSON presented as a successful wire result.
-Wire `dump` and `check` use the specification's multi-document semantics. The
-plain-output representation for zero or multiple documents still needs an
-explicit CLI contract.
+CLI contract (`spec-v1.6` §10.4): `check` (with optional `--lint-yaml11` and
+`--format=text|json`), `dump` (default `yamlprims-value/1` wire, `--plain` for a
+single non-empty document, or `--ijson`), and `emit` (`--compat-quoting=yaml11_safe|core_only`)
+buffer the complete output payload before writing to `stdout` so a serialization
+or limit refusal never leaves partial output on `stdout`, exiting `0` on
+success, `1` on YAML/validation/limit/lint refusal, and `2` on CLI usage or I/O
+errors. Operating-system write failures can still leave partial output on `stdout`.
 
 ### M2 — Isolated WASM and PyO3 language bindings
 
@@ -416,12 +416,21 @@ root Go module (`github.com/3leaps/yamlprims/yaml`) and Rust crates (`yamlprims`
 `yamlprims-cli`), followed by npm (`@3leaps/yamlprims`) and PyPI (`yamlprims`)
 with post-publish registry byte verification (`make release-verify-registries`).
 
-### M3 and M4 — Core emitter, I-JSON projection, and demand-driven additions
+### M3 and M4 — Core emitter, I-JSON projection, reader/writer ergonomics, and YAML 1.1 migration lint
 
-Under proposed [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md),
-M3 (`v0.2.0`) specifies deterministic data-layer Core YAML emission, `serde::Serialize`,
+Under accepted [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md),
+M3 (`v0.2.0`–`v0.2.2`) delivers deterministic data-layer Core YAML emission, `serde::Serialize`,
 symmetric `decode_wire`, strict RFC 7493 I-JSON projection, and caller-tree bounds
-across all four `Profile B` bindings. M4 retains the optional in-memory document
-iterator, migration lint, and Failsafe schema only for concrete consumers; they
-are not hidden prerequisites for M1–M3. Streaming input, source-preserving editing
-and a new parser engine require new scope and decision records.
+across all four `Profile B` bindings. Revision `1.6` (`v0.3.0`) delivers bounded
+reader/writer and host ergonomics (`from_slice*`, `from_reader*`, `load_reader*`,
+`load_all_reader*`, `to_writer*`, `emit_writer*`, `emit_all_writer*` in Rust;
+`LoadReader*`, `LoadAllReader*`, `Unmarshal*`, `UnmarshalReader*`, `UnmarshalNode`,
+`MarshalWriter*`, `EmitWriter*`, `EmitAllWriter*` in Go; `parse`, `parseAll`,
+`stringify`, `stringifyAll` in TypeScript; single-pass native `PyO3` `safe_load`,
+`safe_load_all`, `safe_dump`, `safe_dump_all` in Python), the M4 YAML 1.1 →
+YAML 1.2.2 Core migration lint (`lint_yaml11*`, `LintYAML11*`, `lintYaml11`,
+`encode_lint`, `yamlprims-lint/1`, and CLI `check --lint-yaml11`), and the frozen
+`yamlprims-cli` command-line contract. Incremental in-memory document iteration
+and the YAML 1.2 Failsafe schema remain deferred until a concrete consumer
+requires them. Streaming input, source-preserving editing and a new parser engine
+require new scope and decision records.

@@ -174,3 +174,15 @@
 {"id": "ijson.rule6.noncharacter_fdd0_fail", "input": "\"\\ufdd0\"\n", "single": true, "check_plain": true}
 {"id": "ijson.rule6.noncharacter_fffe_fail", "input": "\"\\ufffe\"\n", "single": true, "check_plain": true}
 {"id": "ijson.jcs_numbers", "input": "neg_zero: -0.0\nint_float: 1.0\nexp20: 1e20\nexp21: 1e21\nexp_m6: 1e-6\nexp_m7: 1e-7\n", "single": true, "check_plain": true}
+{"id": "lint.hazards.all_four_codes_and_keys", "input": "yes: on\nno: off\n1:30: 10:20:30\n010: 0755\n---\ny: n\n", "single": false, "check_plain": false}
+{"id": "lint.negatives.quoted_tagged_and_non_yaml11", "input": "q_yes: 'yes'\nq_oct: \"010\"\nlit: |-\n  yes\ntagged: !!str on\nmixed_case: yEs\nzero_sex: 0:10\nexp_sex: 1:30.5e+2\nno_under_exp: 1.e+2\ndotless_exp: 1_0e+2\nsignless_exp: 1_000.5e2\nunder_exp: 1.5e+1_0\nlead_under_frac: ._5\nsingle_nz_oct: [01, 07, 0001, 0007, -007, 0o10, 08, 09, 0o7_7]\ncomma_num: 1,000\nmulti_dot: 1.2.3\nyaml12_core: [true, false, 0x10, .inf, .nan]\n", "single": true, "check_plain": true}
+{"id": "lint.sexagesimal.ints_and_floats", "input": "int2: 1:30\nint3: 10:20:30\nneg_int: -1:30\nflt1: 10:20.5\nflt_zero_head: 0:10.5\nflt_double_zero: 00:30.0\nunder_sex: 1_0:20\n", "single": true, "check_plain": true}
+{"id": "lint.numbers.octal_hex_binary_underscores", "input": "oct_010: 010\noct_0755: 0755\noct_0100: 0100\noct_0101: 0101\noct_neg_010: -010\noct_neg_0100: -0100\nbin_val: 0b1010\nsigned_hex_neg: -0x10\nsigned_hex_pos: +0x10\nunder_int: 1_000\nunder_oct: 07_55\nunder_hex: 0x1_0\nunder_flt: 1_000.5\nunder_dot_flt: 1._5\nunder_lead_dot: .5_0\nunder_exp1: 1_000.5e+2\nunder_exp2: 685.230_15e+03\n", "single": true, "check_plain": true}
+{"id": "lint.merge.reject_continues_scanning", "input": "base: &b {a: yes}\nmerged: {<<: *b, b: on, c: 0755}\n", "single": true, "merge": "reject", "check_plain": true}
+{"id": "lint.merge.apply_and_alias_non_duplication", "input": "base: &b {a: yes, b: 1:30}\nalias_copy: *b\nmerged: {<<: *b, c: no}\n", "single": true, "merge": "apply", "check_plain": true}
+{"id": "lint.merge.as_key", "input": "plain_merge: {<<: 1}\nquoted_merge: {'<<': 2}\n", "single": true, "merge": "as-key", "check_plain": true}
+{"id": "lint.limits.max_warnings_exact_cap", "input": "- yes\n- no\n- on\n", "single": true, "limits": {"max_warnings": 3}, "check_plain": true}
+{"id": "lint.limits.max_warnings_truncated", "input": "- yes\n- no\n- on\n", "single": true, "limits": {"max_warnings": 2}, "check_plain": true}
+{"id": "lint.limits.path_max_owned_bytes_reject", "input": "long_ancestor_key_name_for_lint_budget: {inner: yes}\n", "single": true, "limits": {"max_owned_bytes": 430, "max_scalar_bytes": 256, "max_key_bytes": 256}, "check_plain": true}
+{"id": "lint.limits.max_output_bytes_reject", "input": "flag: yes\n", "single": true, "limits": {"max_output_bytes": 64}, "check_plain": true}
+{"id": "lint.booleans.all_spellings", "input": "[y, Y, yes, Yes, YES, n, N, no, No, NO, on, On, ON, off, Off, OFF]\n", "single": true, "check_plain": true}

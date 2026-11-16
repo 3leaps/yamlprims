@@ -58,9 +58,9 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use yamlprims::{
-    decode_wire, emit_all_with, encode, encode_error, encode_plain, from_node, load_all_bytes,
-    load_bytes, load_ijson_bytes, EmitOptions, Error, ErrorKind, LimitKind, Limits, MergeKeys,
-    Node, NodeSpan, Options, UnknownTags, Value, WireEnvelope,
+    decode_wire, emit_all_with, encode, encode_error, encode_lint, encode_plain, from_node,
+    lint_yaml11_bytes, load_all_bytes, load_bytes, load_ijson_bytes, EmitOptions, Error, ErrorKind,
+    LimitKind, Limits, MergeKeys, Node, NodeSpan, Options, UnknownTags, Value, WireEnvelope,
 };
 
 struct Profile {
@@ -1389,6 +1389,7 @@ fn run_crosscheck_jsonl() -> ExitCode {
                     "plain": "",
                     "emit": "",
                     "ijson": "",
+                    "lint": "",
                 })
             );
             continue;
@@ -1527,6 +1528,13 @@ fn run_crosscheck_jsonl() -> ExitCode {
             Ok(out) => out,
             Err(e) => encode_error(&e, &rt_opts).expect("encode_error"),
         };
+        let lint_out = match lint_yaml11_bytes(&input, &opts) {
+            Err(e) => encode_error(&e, &rt_opts).expect("encode_error"),
+            Ok(res) => match encode_lint(&res, &opts) {
+                Ok(out) => out,
+                Err(enc_err) => encode_error(&enc_err, &rt_opts).expect("encode_error"),
+            },
+        };
         println!(
             "{}",
             json!({
@@ -1536,6 +1544,7 @@ fn run_crosscheck_jsonl() -> ExitCode {
                 "plain": plain,
                 "emit": emit_out,
                 "ijson": ijson_out,
+                "lint": lint_out,
             })
         );
     }

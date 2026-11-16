@@ -1,11 +1,13 @@
-# Open design items before implementation freeze
+# Design review and milestone contract history
 
-Status: open design work. Specification revision 1.4 is tagged at `spec-v1.4`
-(earlier revisions remain available at their immutable tags), while working
-draft revision 1.5 (`SPEC_VERSION` `1.5`, [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md))
-proposes the caller-tree bounds, deterministic Core YAML emitter, symmetric wire
-decoder, and strict RFC 7493 I-JSON projection below. Neither specification text
-nor specification publication establishes implementation qualification.
+Status: specification revisions `1.0` through `1.5` are tagged at `spec-v1.0`
+through `spec-v1.5` (earlier revisions remain available at their immutable tags),
+and working revision `1.6` (`SPEC_VERSION` `1.6`, incorporating accepted
+[ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md))
+specifies bounded reader/writer and host ergonomics, YAML 1.1 migration lint
+(`yamlprims-lint/1`), and the frozen CLI contract. Neither specification text
+nor specification publication alone establishes implementation qualification;
+see [implementation status](implementation.md) for current verification coverage.
 
 ## M1 contract freeze
 

@@ -20,7 +20,9 @@ from yamlprims import (
     dump_all,
     encode,
     encode_error,
+    encode_lint,
     encode_plain,
+    lint_yaml11,
     load_all_bytes,
     load_bytes,
     load_ijson,
@@ -91,7 +93,7 @@ class TestCorpus(unittest.TestCase):
                 self.assertEqual(rt, wire, f"{cid}: syntax_code round-trip mismatch")
                 out_lines.append(
                     json.dumps(
-                        {"id": cid, "plain": "", "wire": wire, "emit": "", "ijson": ""},
+                        {"id": cid, "plain": "", "wire": wire, "emit": "", "ijson": "", "lint": ""},
                         separators=(",", ":"),
                         ensure_ascii=False,
                     )
@@ -184,6 +186,15 @@ class TestCorpus(unittest.TestCase):
             except YamlprimsError as ijson_err:
                 ijson_out = encode_error(ijson_err, rt_opts)
 
+            try:
+                lint_res = lint_yaml11(input_bytes, opts)
+                try:
+                    lint_out = encode_lint(lint_res, opts)
+                except YamlprimsError as lint_enc_err:
+                    lint_out = encode_error(lint_enc_err, rt_opts)
+            except YamlprimsError as lint_err:
+                lint_out = encode_error(lint_err, rt_opts)
+
             out_lines.append(
                 json.dumps(
                     {
@@ -192,6 +203,7 @@ class TestCorpus(unittest.TestCase):
                         "wire": wire,
                         "emit": emit_out,
                         "ijson": ijson_out,
+                        "lint": lint_out,
                     },
                     separators=(",", ":"),
                     ensure_ascii=False,

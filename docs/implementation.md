@@ -6,19 +6,24 @@ twin (`yaml/` in root `go.mod`, `github.com/3leaps/yamlprims/yaml`,
 driver (`cmd/structcorpus-driver`), isolated TypeScript WASM
 ([`bindings/typescript/`](../bindings/typescript/README.md), `@3leaps/yamlprims`)
 and Python `PyO3/maturin` ([`bindings/python/`](../bindings/python/README.md),
-`yamlprims`) bindings, and a thin `yamlprims-cli` consumer (`v0.2.0`; see
-[docs/releases/v0.2.0.md](releases/v0.2.0.md)).
+`yamlprims`) bindings, and the `yamlprims-cli` command-line binary (see
+[docs/releases/](releases/)).
 Package versions, specification tags and wire versions are separate namespaces.
 
-Available operations include single-document and stream loading from UTF-8,
-owned values with exact integers and arbitrary keys, explicit merge policy,
+Available operations include single-document and stream loading from UTF-8 strings,
+byte slices, and bounded readers (`v0.3.0+` `load_reader`, `load_all_reader`, `from_slice`,
+`from_reader` in Rust; `v0.3.0+` `LoadReader`, `LoadAllReader`, `Unmarshal`, `UnmarshalReader`
+in Go; `load` and `v0.3.0+` `parse`, `parseAll` in TypeScript; `load` and `v0.3.0+` `safe_load`, `safe_load_all`
+in Python), owned values with exact integers and arbitrary keys, explicit merge policy,
 source spans, checked caller-tree constructors (`Document::new`, `Tag::try_new`,
 `Tagged::new`), stack-safe heap-worklist `Drop`/`Clone`/`PartialEq` and bounded
 `Debug`, typed Serde conversion (`Deserialize` and `Serialize`), canonical
 wire/error encoding and symmetric `decode_wire`, plain JSON projection,
 deterministic 2-space block-first YAML 1.2.2 Core emission (`emit`, `emit_all`,
-`CompatQuoting::Yaml11Safe`), and strict RFC 7493 I-JSON projection
-(`encode_ijson`, `load_ijson`). The core forbids unsafe code and performs no
+and `v0.3.0+` `emit_writer`, `emit_all_writer`, `to_writer`, `CompatQuoting::Yaml11Safe`),
+strict RFC 7493 I-JSON projection (`encode_ijson`, `load_ijson`), and YAML 1.1
+migration lint (`v0.3.0+` `lint_yaml11*`, `LintYAML11*`, `lintYaml11`, `encode_lint`,
+`yamlprims-lint/1`, and CLI `check --lint-yaml11`). The core forbids unsafe code and performs no
 filesystem, environment or network access. Granit-parser 2.0.0 is the internal
 engine.
 
@@ -81,11 +86,11 @@ native nesting guards with headroom for the pinned scanner's simple-key
 lookahead. Focused controls cover depth boundaries, native and adapter error
 precedence, coordinates, pass counts and the native resource fallback.
 
-## Revision 1.4 and 1.5 conformance integration and remaining gaps
+## Revision 1.4, 1.5, and 1.6 conformance integration
 
-The working specification is at revision 1.5 (`SPEC_VERSION` `1.5`,
-[ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)). Historical
-specification tags (`spec-v1.0` through `spec-v1.4`) and conformance pins
+The working specification is at revision 1.6 (`SPEC_VERSION` `1.6`,
+incorporating accepted [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)). Historical
+specification tags (`spec-v1.0` through `spec-v1.5`) and conformance pins
 retain their exact bindings. The pinned conformance baseline at
 `b52fcd090d6879a0bd58ec5a5496c6a4de90504e` (`conformance/pins/pin-b52fcd0.json`)
 adds the four revision 5 policy profiles citing specification 1.5 (same
@@ -112,42 +117,50 @@ and Go drivers); it does not close the broader M1 release gates below.
 
 ## Remaining gates before API freeze
 
-- Acceptance and qualification of proposed loader depth/accounting/precedence
-  rules; separately, safety of arbitrary hand-built trees across clone, drop,
-  equality, formatting and conversion. New caller-tree guarantees are deferred.
-- Every open M1 item in [the design review](design-review.md): error precedence,
-  construction-time error bounds, anchor-cache accounting, checked construction,
-  wire decoding, metadata ranges, enum source-style handling and nested provenance
-  (the closed 81-code `SyntaxKind` parser vocabulary is implemented and unit-tested
-  in `crates/yamlprims`).
+- External corpus qualification of the `spec-v1.5` / `spec-v1.6` additions
+  (checked caller-tree constructors, heap-worklist `Drop`/`Clone`/`PartialEq` and
+  bounded `Debug`, symmetric `decode_wire`, Core YAML emission, strict RFC 7493
+  I-JSON projection, reader/writer ergonomics, and YAML 1.1 migration lint
+  `yamlprims-lint/1`), which are currently verified in-tree across all four
+  bindings and `conformance/vectors/cases.jsonl` (`188` vectors).
+- Every open M1 item in [the design review](design-review.md): external corpus
+  qualification of error precedence, construction-time error bounds,
+  anchor-cache accounting, checked construction, wire decoding, metadata ranges,
+  enum source-style handling and nested provenance (the closed 81-code
+  `SyntaxKind` parser vocabulary is implemented and unit-tested in
+  `crates/yamlprims`).
 - A contract-to-test matrix for every implemented MUST and reviewed disposition
   of uncovered cases. Existing passing tests do not settle those design questions.
-- Independent review and freeze of CLI behavior: stdin, cardinality, I/O limits,
-  stream/error output and failure handling. The [initial CLI](../crates/yamlprims-cli/README.md)
-  has bounded file/stdin reads, multi-document check/wire dump, exactly-one-document
-  plain dump, and serialization before stdout. Operating-system write failures
-  can still leave partial output. No binding placeholder is included.
+- The [CLI](../crates/yamlprims-cli/README.md) (`spec-v1.6` §10.4) has bounded
+  file/stdin reads, multi-document `check` (with optional `--lint-yaml11` and
+  `--format=text|json`), `dump` (`yamlprims-value/1` wire default, `--plain` for
+  a single non-empty document, and `--ijson`), and `emit`
+  (`--compat-quoting=yaml11_safe|core_only`), buffering complete output payloads
+  before writing to `stdout` and exiting `0` on success, `1` on
+  YAML/validation/limit/lint refusal, and `2` on CLI usage or I/O errors.
+  Operating-system write failures can still leave partial output on `stdout`.
 
-Published packages do not yet establish production qualification. Still open:
-the complete native five-target MSRV/stable matrix, contained stress with
-original resource budgets, bounded fuzz/mutation/Miri, phase-specific
+Published packages do not yet establish full production qualification. Still open:
+the complete native five-target MSRV/stable qualification matrix, contained
+stress with original resource budgets, bounded fuzz/mutation/Miri, phase-specific
 memory/time measurements, dependency and license audit, and package/downstream
-qualification. Logical weight limits
-are not RSS limits. The current Rust workflow is baseline coverage on Linux;
-documentation CI is not runtime qualification. The `Profile B` pure-Go twin (`yaml/` in root `go.mod`, `CGO_ENABLED=0`,
-standard library only) and its conformance driver (`cmd/structcorpus-driver`)
-are qualified against all 20 result rows of `conformance/pins/pin-b52fcd0.json`
-(`conformance/requalify.sh`) and verified for byte-for-byte wire, `DecodeWire`
-round-trip, plain-JSON, `emit_all`, and `encode_ijson` parity with the Rust core via `make crosscheck`. The
-isolated M2/M3 language bindings (`bindings/typescript/` zero-import WASM module
-and `bindings/python/` `PyO3/maturin` `abi3-py310` wheel) are verified in-tree
-against `conformance/vectors/cases.jsonl` (`176` vectors) and `structcorpus --crosscheck-jsonl`
-via `make ts-check` and `make python-check`, and ship as signed release assets
-for npm (`@3leaps/yamlprims`) and PyPI (`yamlprims`) ([build specification](build-spec.md),
+qualification. Logical weight limits are deterministic accounting bounds, not
+physical RSS limits. The `Profile B` pure-Go twin (`yaml/` in root `go.mod`,
+`CGO_ENABLED=0`, standard library only) and its conformance driver
+(`cmd/structcorpus-driver`) are verified against all 20 result rows of
+`conformance/pins/pin-b52fcd0.json` (`conformance/requalify.sh`) and verified for
+byte-for-byte wire, `DecodeWire` round-trip, plain-JSON, `emit_all`,
+`encode_ijson`, and `encode_lint` (`yamlprims-lint/1`) parity with the Rust core
+via `make crosscheck`. The isolated language bindings (`bindings/typescript/`
+zero-import WASM module and `bindings/python/` `PyO3/maturin` `abi3-py310` wheel)
+are verified in-tree against `conformance/vectors/cases.jsonl` (`188` vectors)
+and `structcorpus --crosscheck-jsonl` via `make ts-check` and `make python-check`,
+and ship as signed release assets for npm (`@3leaps/yamlprims`) and PyPI
+(`yamlprims`) ([build specification](build-spec.md),
 [ADR-0004](decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md),
 [ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
 
-The working specification is a new draft; tagged specifications remain at their
-immutable baselines. Historical draft-status prose inside those tags does not
-describe current package availability; this page and the repository README
+The working specification is at revision `1.6`; tagged specifications remain at
+their immutable baselines. Historical draft-status prose inside those tags does
+not describe current package availability; this page and the repository README
 describe current implementation status.
