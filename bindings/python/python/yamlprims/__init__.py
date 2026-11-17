@@ -25,7 +25,10 @@ __all__ = [
     "I128_MAX",
     "I128_MIN",
     "LIMIT_KINDS",
+    "LINT_CODES",
     "Limits",
+    "LintDiagnostic",
+    "LintResult",
     "Location",
     "MAX_SAFE_METADATA_INT",
     "Mapping",
@@ -51,9 +54,11 @@ __all__ = [
     "dump_all",
     "encode",
     "encode_error",
+    "encode_lint",
     "encode_plain",
     "from_plain",
     "key_eq",
+    "lint_yaml11",
     "load",
     "load_all",
     "load_all_bytes",
@@ -4751,3 +4756,342 @@ def safe_dump_all(
         return yaml_str
     _deliver_buffered_yaml(yaml_str, stream)
     return None
+
+
+# ---- YAML 1.1 Migration Lint (`spec-v1.6 §10.3`, `§11.7`) ----------------
+
+LINT_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "yaml11_boolean",
+        "yaml11_number",
+        "yaml11_sexagesimal",
+        "yaml11_merge_key",
+    }
+)
+
+
+@dataclass(frozen=True)
+class LintDiagnostic:
+    """Single YAML 1.1 compatibility hazard recorded during `lint_yaml11` (`spec-v1.6 §10.3`)."""
+
+    code: str
+    span: Span
+    document_index: int
+    path: tuple[PathSegment, ...]
+    raw: str
+    yaml12_resolution: str
+    yaml11_note: str
+    message: str
+
+
+@dataclass(frozen=True)
+class LintResult:
+    """Complete stream lint result returned by `lint_yaml11` (`spec-v1.6 §10.3`)."""
+
+    diagnostics: tuple[LintDiagnostic, ...]
+    warning_count: int
+    truncated: bool
+
+
+def _decode_lint_wire_envelope(wire_text: str, opts: Options) -> LintResult:
+    max_json_depth = opts.limits.max_depth * 4 + 32
+    max_tokens = max(opts.limits.max_nodes * 16 + 1024, 65_536)
+    root = _WireJsonParser(wire_text, max_json_depth, max_tokens).parse_root()
+    if root.t != "obj":
+        raise _not_source_error("internal", {}, "lint wire root must be a JSON object")
+    rm: dict[str, _JVal] = root.v
+    _expect_exact_keys(
+        rm,
+        ("format", "version", "warning_count", "truncated", "diagnostics"),
+    )
+    if _expect_str(rm.get("format"), "format") != "yamlprims-lint":
+        raise _not_source_error("internal", {}, "unsupported lint wire format")
+    if _expect_nonneg_int(rm.get("version"), "version") != 1:
+        raise _not_source_error("internal", {}, "unsupported lint wire version")
+    warning_count = _expect_nonneg_int(rm.get("warning_count"), "warning_count")
+    truncated = _expect_bool(rm.get("truncated"), "truncated")
+    diags_val = rm.get("diagnostics")
+    if diags_val is None or diags_val.t != "arr":
+        raise _not_source_error("internal", {}, "diagnostics must be an array")
+
+    path_ctx = _DecodeCtx(
+        opts=opts,
+        nodes_remaining=opts.limits.max_nodes,
+        is_path_key=True,
+        forbid_locations=True,
+    )
+    diagnostics: list[LintDiagnostic] = []
+    for dval in diags_val.v:
+        if dval.t != "obj":
+            raise _not_source_error("internal", {}, "LintDiagnostic must be an object")
+        dm: dict[str, _JVal] = dval.v
+        _expect_exact_keys(
+            dm,
+            (
+                "code",
+                "span",
+                "document_index",
+                "path",
+                "raw",
+                "yaml12_resolution",
+                "yaml11_note",
+                "message",
+            ),
+        )
+        code = _expect_str(dm.get("code"), "code")
+        if code not in LINT_CODES:
+            raise _not_source_error("internal", {}, f"unknown LintCode: {code}")
+        span = _decode_span(dm["span"])
+        doc_idx = _expect_nonneg_int(dm.get("document_index"), "document_index")
+        pval = dm.get("path")
+        if pval is None or pval.t != "arr":
+            raise _not_source_error("internal", {}, "diagnostic.path must be an array")
+        path_segs: list[PathSegment] = []
+        for s_item in pval.v:
+            if s_item.t != "obj" or len(s_item.v) != 1:
+                raise _not_source_error("internal", {}, "invalid diagnostic path segment")
+            sm: dict[str, _JVal] = s_item.v
+            if "index" in sm:
+                idx_v = _expect_nonneg_int(sm["index"], "path.index")
+                path_segs.append(PathSegment.from_index(idx_v))
+            elif "key" in sm:
+                k_node = _decode_node(sm["key"], path_ctx, 0, False)
+                path_segs.append(PathSegment.from_key(k_node))
+            else:
+                raise _not_source_error("internal", {}, "unknown diagnostic path segment")
+        raw = _expect_str(dm.get("raw"), "raw")
+        yaml12_res = _expect_str(dm.get("yaml12_resolution"), "yaml12_resolution")
+        yaml11_note = _expect_str(dm.get("yaml11_note"), "yaml11_note")
+        message = _expect_str(dm.get("message"), "message")
+        diagnostics.append(
+            LintDiagnostic(
+                code=code,
+                span=span,
+                document_index=doc_idx,
+                path=tuple(path_segs),
+                raw=raw,
+                yaml12_resolution=yaml12_res,
+                yaml11_note=yaml11_note,
+                message=message,
+            )
+        )
+    return LintResult(
+        diagnostics=tuple(diagnostics),
+        warning_count=warning_count,
+        truncated=truncated,
+    )
+
+
+def lint_yaml11(
+    input: Any,
+    options: Options | TypingMapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> LintResult:
+    """Inspect a YAML stream (`str`, `bytes`, or file-like `.read()`) for unquoted YAML 1.1 compatibility hazards (`spec-v1.6 §10.3`)."""
+    opts = _merge_load_options(options, **kwargs)
+    raw = _read_bounded_input(input, opts)
+    status, payload = _native.lint_wire(
+        raw,
+        opts.merge_keys,
+        opts.unknown_tags,
+        opts.limits._to_native_list(),
+    )
+    if status == 0:
+        payload_len = len(payload.encode("utf-8"))
+        lim = opts.limits
+        bridge_nodes = max(lim.max_nodes, lim.max_expanded_nodes, 250_000)
+        bridge_owned = max(
+            lim.max_owned_bytes,
+            min(MAX_SAFE_METADATA_INT, payload_len * 4 + 65_536),
+        )
+        bridge_opts = Options(
+            merge_keys=opts.merge_keys,
+            unknown_tags=opts.unknown_tags,
+            limits=Limits(
+                max_input_bytes=max(lim.max_input_bytes, lim.max_output_bytes, payload_len, 1),
+                max_depth=255,
+                max_nodes=bridge_nodes,
+                max_expanded_nodes=max(lim.max_expanded_nodes, bridge_nodes),
+                max_alias_events=lim.max_alias_events,
+                max_owned_bytes=bridge_owned,
+                max_scalar_bytes=min(bridge_owned, max(lim.max_scalar_bytes, payload_len)),
+                max_key_bytes=min(bridge_owned, max(lim.max_key_bytes, payload_len)),
+                max_mapping_entries=max(lim.max_mapping_entries, 250_000),
+                max_documents=max(lim.max_documents, 1_024),
+                max_output_bytes=max(lim.max_output_bytes, payload_len, 1),
+                max_warnings=lim.max_warnings,
+            ),
+        )
+        return _decode_lint_wire_envelope(payload, bridge_opts)
+    env = _handle_native_status(status, payload, opts)
+    if env.kind == "error" and env.error is not None:
+        raise env.error
+    raise _not_source_error("internal", {}, "expected error envelope from lint_wire")
+
+
+def _is_safe_meta_int(val: Any) -> bool:
+    return type(val) is int and 0 <= val <= MAX_SAFE_METADATA_INT
+
+
+def _validate_lint_span(span: Any) -> Span:
+    if not isinstance(span, Span):
+        raise _invalid_options_error("LintDiagnostic.span must be a Span")
+    s, e = span.start, span.end
+    if not isinstance(s, Location) or not isinstance(e, Location):
+        raise _invalid_options_error("LintDiagnostic.span start and end must be Locations")
+    if (
+        not _is_safe_meta_int(s.byte_offset)
+        or not _is_safe_meta_int(s.line)
+        or not _is_safe_meta_int(s.column)
+        or not _is_safe_meta_int(e.byte_offset)
+        or not _is_safe_meta_int(e.line)
+        or not _is_safe_meta_int(e.column)
+        or s.line < 1
+        or s.column < 1
+        or e.line < 1
+        or e.column < 1
+        or s.byte_offset > e.byte_offset
+        or s.line > e.line
+        or (s.line == e.line and s.column > e.column)
+    ):
+        raise _invalid_options_error("LintDiagnostic.span has invalid coordinates")
+    return span
+
+
+def encode_lint(
+    result: LintResult,
+    options: Options | TypingMapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> str:
+    """Encode a `LintResult` as a canonical `yamlprims-lint/1` JSON envelope (`spec-v1.6 §11.7`)."""
+    opts = _merge_load_options(options, **kwargs)
+    if not isinstance(result, LintResult):
+        raise _invalid_options_error("encode_lint requires a LintResult")
+    if not isinstance(result.diagnostics, (tuple, list)):
+        raise _invalid_options_error("LintResult.diagnostics must be a sequence")
+    if not _is_safe_meta_int(result.warning_count):
+        raise _invalid_options_error("LintResult.warning_count out of range")
+    if type(result.truncated) is not bool:
+        raise _invalid_options_error("LintResult.truncated must be a bool")
+    diags = tuple(result.diagnostics)
+    if len(diags) > opts.limits.max_warnings:
+        raise _invalid_options_error("LintResult.diagnostics length exceeds max_warnings")
+    if result.truncated:
+        if result.warning_count <= len(diags):
+            raise _invalid_options_error(
+                "truncated LintResult must have warning_count > len(diagnostics)"
+            )
+    elif result.warning_count != len(diags):
+        raise _invalid_options_error(
+            "non-truncated LintResult must have warning_count == len(diagnostics)"
+        )
+
+    for d in diags:
+        if not isinstance(d, LintDiagnostic):
+            raise _invalid_options_error("LintResult.diagnostics items must be LintDiagnostic")
+        if type(d.code) is not str or d.code not in LINT_CODES:
+            raise _invalid_options_error("invalid LintDiagnostic.code")
+        _validate_lint_span(d.span)
+        if not _is_safe_meta_int(d.document_index):
+            raise _invalid_options_error("invalid LintDiagnostic.document_index")
+        if not isinstance(d.path, (tuple, list)):
+            raise _invalid_options_error("LintDiagnostic.path must be a sequence")
+        for seg in d.path:
+            if not isinstance(seg, PathSegment):
+                raise _invalid_options_error("LintDiagnostic.path items must be PathSegment")
+            if seg.kind == "index":
+                if not _is_safe_meta_int(seg.index):
+                    raise _invalid_options_error("LintDiagnostic.path index out of range")
+            elif seg.kind == "key":
+                if not isinstance(seg.key, Node):
+                    raise _invalid_options_error("LintDiagnostic.path key must be a Node")
+            else:
+                raise _invalid_options_error("invalid PathSegment kind")
+        if len(d.path) > opts.limits.max_depth:
+            raise _not_source_error(
+                "limit_exceeded",
+                {"limit": "max_depth", "configured": opts.limits.max_depth},
+                f"diagnostic path has {len(d.path)} segments, more than max_depth",
+            )
+        for seg in d.path:
+            if seg.kind == "key" and seg.key is not None:
+                _preflight_key_node(seg.key, opts.limits)
+        for s_field in (d.raw, d.yaml12_resolution, d.yaml11_note, d.message):
+            if not isinstance(s_field, str):
+                raise _invalid_options_error("LintDiagnostic string fields must be str")
+            _validate_utf8_str(s_field)
+
+    w = _BoundedWriter(MAX_SAFE_METADATA_INT)
+    path_opts = Options(
+        merge_keys=opts.merge_keys,
+        unknown_tags=opts.unknown_tags,
+        limits=Limits(
+            max_input_bytes=opts.limits.max_input_bytes,
+            max_depth=MAX_DEPTH_CEILING,
+            max_nodes=MAX_SAFE_METADATA_INT,
+            max_expanded_nodes=opts.limits.max_expanded_nodes,
+            max_alias_events=opts.limits.max_alias_events,
+            max_owned_bytes=opts.limits.max_owned_bytes,
+            max_scalar_bytes=opts.limits.max_scalar_bytes,
+            max_key_bytes=opts.limits.max_key_bytes,
+            max_mapping_entries=opts.limits.max_mapping_entries,
+            max_documents=opts.limits.max_documents,
+            max_output_bytes=MAX_SAFE_METADATA_INT,
+            max_warnings=opts.limits.max_warnings,
+        ),
+    )
+    st = _EncodeState(opts=path_opts, nodes_remaining=MAX_SAFE_METADATA_INT)
+    w.push_raw('{"format":"yamlprims-lint","version":1,"warning_count":')
+    w.push_meta_int(result.warning_count, "warning_count")
+    w.push_raw(
+        ',"truncated":true,"diagnostics":['
+        if result.truncated
+        else ',"truncated":false,"diagnostics":['
+    )
+    for i, d in enumerate(diags):
+        if i > 0:
+            w.push_raw(",")
+        w.push_raw('{"code":')
+        w.push_string(d.code)
+        w.push_raw(',"span":')
+        w.push_span(d.span)
+        w.push_raw(',"document_index":')
+        w.push_meta_int(d.document_index, "document_index")
+        w.push_raw(',"path":[')
+        for j, p in enumerate(d.path):
+            if j > 0:
+                w.push_raw(",")
+            if p.kind == "index" and p.index is not None:
+                w.push_raw('{"index":')
+                w.push_meta_int(p.index, "path.index")
+                w.push_raw("}")
+            elif p.kind == "key" and p.key is not None:
+                w.push_raw('{"key":')
+                _write_node_value(w, p.key, False, st, 0)
+                w.push_raw(',"span":null,"via":null,"tag_start":null}}')
+            else:
+                raise _invalid_options_error("invalid PathSegment")
+        w.push_raw('],"raw":')
+        w.push_bounded_string(d.raw, MAX_FIELD_BYTES)
+        w.push_raw(',"yaml12_resolution":')
+        w.push_bounded_string(d.yaml12_resolution, MAX_FIELD_BYTES)
+        w.push_raw(',"yaml11_note":')
+        w.push_bounded_string(d.yaml11_note, MAX_FIELD_BYTES)
+        w.push_raw(',"message":')
+        w.push_bounded_string(d.message, MAX_MESSAGE_BYTES)
+        w.push_raw("}")
+    w.push_raw("]}")
+    wire_in = w.finish()
+
+    status, payload = _native.encode_lint_wire(
+        wire_in,
+        opts.merge_keys,
+        opts.unknown_tags,
+        opts.limits._to_native_list(),
+    )
+    if status == 0:
+        return payload
+    env = _handle_native_status(status, payload, opts)
+    if env.kind == "error" and env.error is not None:
+        raise env.error
+    raise _not_source_error("internal", {}, "expected error envelope from encode_lint_wire")

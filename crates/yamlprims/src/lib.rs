@@ -11,6 +11,7 @@ mod emit;
 mod engine;
 mod error;
 mod ijson;
+mod lint;
 mod load;
 mod options;
 mod protocol;
@@ -27,6 +28,10 @@ pub use error::{
     Error, ErrorDetail, ErrorKind, LimitKind, PathSegment, Related, RelatedRole, Site, SyntaxKind,
 };
 pub use ijson::{encode_ijson, load_ijson, load_ijson_bytes, load_ijson_with};
+pub use lint::{
+    encode_lint, lint_yaml11, lint_yaml11_bytes, lint_yaml11_reader, lint_yaml11_reader_with,
+    lint_yaml11_with, LintCode, LintDiagnostic, LintResult,
+};
 pub use options::{Limits, MergeKeys, Options, UnknownTags};
 pub use protocol::{Spanned, TaggedValue};
 pub use ser::{to_node, to_string, to_string_with, to_writer, to_writer_with};
@@ -34,7 +39,7 @@ pub use value::{
     key_eq, Document, InsertError, Integer, Location, Mapping, Node, NodeSpan, Span, Tag, Tagged,
     Value, Via,
 };
-pub use wire::{decode_wire, WireEnvelope};
+pub use wire::{decode_lint_wire, decode_wire, WireEnvelope};
 
 use serde::de::DeserializeOwned;
 

@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
-const MAX_WIRE_META_UINT: u64 = 9_007_199_254_740_991;
+pub(crate) const MAX_WIRE_META_UINT: u64 = 9_007_199_254_740_991;
 
 /// Decoded `yamlprims-value/1` wire result envelope (spec-v1.5 §10.1, §11.1).
 #[derive(Clone, Debug)]
@@ -58,7 +58,7 @@ impl Out {
         self.s.push_str(t);
         Ok(())
     }
-    fn num(&mut self, n: usize) -> Result<(), Error> {
+    pub(crate) fn num(&mut self, n: usize) -> Result<(), Error> {
         self.push(&n.to_string())
     }
     pub(crate) fn string(&mut self, v: &str) -> Result<(), Error> {
@@ -66,7 +66,7 @@ impl Out {
     }
     /// A JSON string of `v`, cut on a character boundary with `…` if it is longer than `max`
     /// bytes (descriptive text only; never structured identity).
-    fn bounded_string(&mut self, v: &str, max: usize) -> Result<(), Error> {
+    pub(crate) fn bounded_string(&mut self, v: &str, max: usize) -> Result<(), Error> {
         if v.len() <= max {
             return self.string(v);
         }
@@ -124,7 +124,7 @@ impl Out {
     fn loc(&mut self, l: &Location) -> Result<(), Error> {
         self.push(&format!("[{},{},{}]", l.byte_offset, l.line, l.column))
     }
-    fn span(&mut self, s: &Span) -> Result<(), Error> {
+    pub(crate) fn span(&mut self, s: &Span) -> Result<(), Error> {
         self.push(&format!(
             "[{},{},{},{},{},{}]",
             s.start.byte_offset,
@@ -331,7 +331,7 @@ pub(crate) fn encode_documents(docs: &[Document], max: usize) -> Result<String, 
 /// `syntax_kind` that is not a snake_case code is an invalid kind/detail pair: `Internal`.
 /// Descriptive text (message, type descriptions, field names) is truncated while writing.
 /// The walk is iterative and stops at the first bound, so its work is bounded too.
-fn preflight(e: &Error, l: &Limits) -> Result<(), Error> {
+pub(crate) fn preflight_path(path: &[PathSegment], l: &Limits) -> Result<(), Error> {
     let limit = |limit: LimitKind, configured: usize, what: std::fmt::Arguments<'_>| {
         Error::not_source(
             ErrorKind::LimitExceeded {
@@ -342,17 +342,17 @@ fn preflight(e: &Error, l: &Limits) -> Result<(), Error> {
             what,
         )
     };
-    if e.path.len() > l.max_depth {
+    if path.len() > l.max_depth {
         return Err(limit(
             LimitKind::MaxDepth,
             l.max_depth,
             format_args!(
                 "error path has {} segments, more than max_depth",
-                e.path.len()
+                path.len()
             ),
         ));
     }
-    for seg in &e.path {
+    for seg in path {
         let PathSegment::Key(k) = seg else { continue };
         // Each node is charged when pushed, so the stack never holds more than the key's
         // weight budget allows.
@@ -401,6 +401,32 @@ fn preflight(e: &Error, l: &Limits) -> Result<(), Error> {
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn preflight(e: &Error, l: &Limits) -> Result<(), Error> {
+    preflight_path(&e.path, l)
+}
+
+pub(crate) fn write_path_segments(o: &mut Out, path: &[PathSegment]) -> Result<(), Error> {
+    for (i, p) in path.iter().enumerate() {
+        if i > 0 {
+            o.push(",")?;
+        }
+        match p {
+            PathSegment::Index(n) => {
+                o.push("{\"index\":")?;
+                o.num(*n)?;
+                o.push("}")?
+            }
+            PathSegment::Key(k) => {
+                o.push("{\"key\":")?;
+                // A PathKey: the key's value with null locations, written without a copy.
+                value(o, k, false)?;
+                o.push(",\"span\":null,\"via\":null,\"tag_start\":null}}")?
             }
         }
     }
@@ -476,24 +502,7 @@ pub(crate) fn encode_error(e: &Error, l: &Limits) -> Result<String, Error> {
         o.push("}")?;
     }
     o.push("],\"path\":[")?;
-    for (i, p) in e.path.iter().enumerate() {
-        if i > 0 {
-            o.push(",")?;
-        }
-        match p {
-            PathSegment::Index(n) => {
-                o.push("{\"index\":")?;
-                o.num(*n)?;
-                o.push("}")?
-            }
-            PathSegment::Key(k) => {
-                o.push("{\"key\":")?;
-                // A PathKey: the key's value with null locations, written without a copy.
-                value(&mut o, k, false)?;
-                o.push(",\"span\":null,\"via\":null,\"tag_start\":null}}")?
-            }
-        }
-    }
+    write_path_segments(&mut o, &e.path)?;
     o.push("],\"message\":")?;
     o.bounded_string(&e.message, MAX_MESSAGE)?;
     o.push("}}")?;
@@ -626,6 +635,26 @@ pub fn decode_wire(wire_json: &str, opts: &Options) -> Result<WireEnvelope, Erro
         owned_bytes: 0,
     };
     parser.parse_envelope()
+}
+
+/// Strictly validate and decode a `yamlprims-lint/1` JSON wire envelope (spec-v1.6 §11.7).
+pub fn decode_lint_wire(wire_json: &str, opts: &Options) -> Result<crate::lint::LintResult, Error> {
+    opts.validate()?;
+    if wire_json.len() > opts.limits.max_input_bytes {
+        return Err(wire_limit_err(
+            LimitKind::MaxInputBytes,
+            opts.limits.max_input_bytes,
+        ));
+    }
+    let mut parser = WireParser {
+        src: wire_json,
+        bytes: wire_json.as_bytes(),
+        pos: 0,
+        limits: &opts.limits,
+        nodes_used: 0,
+        owned_bytes: 0,
+    };
+    parser.parse_lint_envelope()
 }
 
 fn wire_limit_err(limit: LimitKind, configured: usize) -> Error {
@@ -2056,6 +2085,248 @@ impl<'a> WireParser<'a> {
             }
             self.expect_byte(b'}')?;
         }
+    }
+
+    fn parse_lint_envelope(&mut self) -> Result<crate::lint::LintResult, Error> {
+        let inv = |msg: &'static str| Error::not_source(ErrorKind::InvalidOptions, None, msg);
+        self.expect_byte(b'{')?;
+        let mut seen = HashSet::with_capacity(5);
+        let mut has_format = false;
+        let mut has_version = false;
+        let mut warning_count: Option<usize> = None;
+        let mut truncated: Option<bool> = None;
+        let mut diagnostics: Option<Vec<crate::lint::LintDiagnostic>> = None;
+        let mut first = true;
+
+        loop {
+            let Some(b) = self.peek_byte() else {
+                return Err(inv("lint wire decode: unexpected EOF in envelope"));
+            };
+            if b == b'}' {
+                self.pos += 1;
+                break;
+            }
+            if !first {
+                self.expect_byte(b',')?;
+            }
+            first = false;
+            let key = self.parse_string()?;
+            if !seen.insert(key.clone()) {
+                return Err(inv("lint wire decode: duplicate envelope member"));
+            }
+            self.expect_byte(b':')?;
+            match key.as_str() {
+                "format" => {
+                    let f = self.parse_string()?;
+                    if f != "yamlprims-lint" {
+                        return Err(inv("lint wire decode: unsupported format"));
+                    }
+                    has_format = true;
+                }
+                "version" => {
+                    let v = self.parse_meta_u64().map_err(|_| inv("invalid version"))?;
+                    if v != 1 {
+                        return Err(inv("lint wire decode: unsupported version"));
+                    }
+                    has_version = true;
+                }
+                "warning_count" => {
+                    warning_count = Some(
+                        self.parse_meta_usize()
+                            .map_err(|_| inv("invalid warning_count"))?,
+                    );
+                }
+                "truncated" => {
+                    truncated = Some(self.parse_bool().map_err(|_| inv("invalid truncated"))?);
+                }
+                "diagnostics" => {
+                    diagnostics = Some(self.parse_lint_diagnostics()?);
+                }
+                _ => return Err(inv("lint wire decode: unknown envelope member")),
+            }
+        }
+        self.skip_ws();
+        if self.pos != self.bytes.len() {
+            return Err(inv("lint wire decode: trailing content after envelope"));
+        }
+        let (true, true, Some(warning_count), Some(truncated), Some(diagnostics)) = (
+            has_format,
+            has_version,
+            warning_count,
+            truncated,
+            diagnostics,
+        ) else {
+            return Err(inv("lint wire decode: incomplete envelope"));
+        };
+        Ok(crate::lint::LintResult::new(
+            diagnostics,
+            warning_count,
+            truncated,
+        ))
+    }
+
+    fn parse_lint_diagnostics(&mut self) -> Result<Vec<crate::lint::LintDiagnostic>, Error> {
+        let inv = |msg: &'static str| Error::not_source(ErrorKind::InvalidOptions, None, msg);
+        self.expect_byte(b'[')?;
+        let mut out = Vec::new();
+        let mut first = true;
+        loop {
+            let Some(b) = self.peek_byte() else {
+                return Err(inv("lint wire decode: unexpected EOF in diagnostics"));
+            };
+            if b == b']' {
+                self.pos += 1;
+                return Ok(out);
+            }
+            if !first {
+                self.expect_byte(b',')?;
+            }
+            first = false;
+            if out.len() + 1 > self.limits.max_warnings {
+                return Err(inv("LintResult diagnostics length exceeds max_warnings"));
+            }
+            out.push(self.parse_lint_diagnostic()?);
+        }
+    }
+
+    fn parse_lint_diagnostic(&mut self) -> Result<crate::lint::LintDiagnostic, Error> {
+        let inv = |msg: &'static str| Error::not_source(ErrorKind::InvalidOptions, None, msg);
+        self.expect_byte(b'{')?;
+        let mut seen = HashSet::with_capacity(8);
+        let mut code: Option<crate::lint::LintCode> = None;
+        let mut span: Option<Span> = None;
+        let mut document_index: Option<usize> = None;
+        let mut path: Option<Vec<PathSegment>> = None;
+        let mut raw: Option<String> = None;
+        let mut yaml12_resolution: Option<String> = None;
+        let mut yaml11_note: Option<String> = None;
+        let mut message: Option<String> = None;
+        let mut first = true;
+
+        loop {
+            let Some(b) = self.peek_byte() else {
+                return Err(inv("lint wire decode: unexpected EOF in diagnostic"));
+            };
+            if b == b'}' {
+                self.pos += 1;
+                break;
+            }
+            if !first {
+                self.expect_byte(b',')?;
+            }
+            first = false;
+            let k = self.parse_string()?;
+            if !seen.insert(k.clone()) {
+                return Err(inv("lint wire decode: duplicate diagnostic member"));
+            }
+            self.expect_byte(b':')?;
+            match k.as_str() {
+                "code" => {
+                    let cs = self.parse_string()?;
+                    let c = match cs.as_str() {
+                        "yaml11_boolean" => crate::lint::LintCode::Yaml11Boolean,
+                        "yaml11_number" => crate::lint::LintCode::Yaml11Number,
+                        "yaml11_sexagesimal" => crate::lint::LintCode::Yaml11Sexagesimal,
+                        "yaml11_merge_key" => crate::lint::LintCode::Yaml11MergeKey,
+                        _ => return Err(inv("invalid LintCode")),
+                    };
+                    code = Some(c);
+                }
+                "span" => {
+                    self.expect_byte(b'[')?;
+                    let sb = self
+                        .parse_meta_usize()
+                        .map_err(|_| inv("invalid span coordinate"))?;
+                    self.expect_byte(b',')?;
+                    let sl = self
+                        .parse_meta_usize()
+                        .map_err(|_| inv("invalid span coordinate"))?;
+                    self.expect_byte(b',')?;
+                    let sc = self
+                        .parse_meta_usize()
+                        .map_err(|_| inv("invalid span coordinate"))?;
+                    self.expect_byte(b',')?;
+                    let eb = self
+                        .parse_meta_usize()
+                        .map_err(|_| inv("invalid span coordinate"))?;
+                    self.expect_byte(b',')?;
+                    let el = self
+                        .parse_meta_usize()
+                        .map_err(|_| inv("invalid span coordinate"))?;
+                    self.expect_byte(b',')?;
+                    let ec = self
+                        .parse_meta_usize()
+                        .map_err(|_| inv("invalid span coordinate"))?;
+                    self.expect_byte(b']')?;
+                    span = Some(Span {
+                        start: Location {
+                            byte_offset: sb,
+                            line: sl,
+                            column: sc,
+                        },
+                        end: Location {
+                            byte_offset: eb,
+                            line: el,
+                            column: ec,
+                        },
+                    });
+                }
+                "document_index" => {
+                    document_index = Some(
+                        self.parse_meta_usize()
+                            .map_err(|_| inv("invalid document_index"))?,
+                    );
+                }
+                "path" => {
+                    path = Some(self.parse_error_path()?);
+                }
+                "raw" => {
+                    raw = Some(self.parse_string()?);
+                }
+                "yaml12_resolution" => {
+                    yaml12_resolution = Some(self.parse_string()?);
+                }
+                "yaml11_note" => {
+                    yaml11_note = Some(self.parse_string()?);
+                }
+                "message" => {
+                    message = Some(self.parse_string()?);
+                }
+                _ => return Err(inv("lint wire decode: unknown diagnostic member")),
+            }
+        }
+        let (
+            Some(code),
+            Some(span),
+            Some(document_index),
+            Some(path),
+            Some(raw),
+            Some(yaml12_resolution),
+            Some(yaml11_note),
+            Some(message),
+        ) = (
+            code,
+            span,
+            document_index,
+            path,
+            raw,
+            yaml12_resolution,
+            yaml11_note,
+            message,
+        )
+        else {
+            return Err(inv("lint wire decode: incomplete diagnostic"));
+        };
+        Ok(crate::lint::LintDiagnostic::new(
+            code,
+            span,
+            document_index,
+            path,
+            raw,
+            yaml12_resolution,
+            yaml11_note,
+            message,
+        ))
     }
 }
 

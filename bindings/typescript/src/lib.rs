@@ -22,9 +22,9 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use yamlprims::{
-    decode_wire, emit_all_with, encode, encode_error, encode_plain, load_all_bytes, load_bytes,
-    load_ijson_bytes, CompatQuoting, EmitLimits, EmitOptions, Error, ErrorKind, Limits, MergeKeys,
-    Options, Site, UnknownTags, WireEnvelope,
+    decode_lint_wire, decode_wire, emit_all_with, encode, encode_error, encode_lint, encode_plain,
+    lint_yaml11_bytes, load_all_bytes, load_bytes, load_ijson_bytes, CompatQuoting, EmitLimits,
+    EmitOptions, Error, ErrorKind, Limits, MergeKeys, Options, Site, UnknownTags, WireEnvelope,
 };
 
 /// Wire ABI version exported by this module.
@@ -451,6 +451,148 @@ pub extern "C" fn emit_wire(input_len: usize, options_len: usize) -> u32 {
                 },
                 Ok(WireEnvelope::Error(e)) => finish_error(&mut s, &e, &Options::default()),
                 Err(e) => finish_error(&mut s, &e, &Options::default()),
+            }
+        })
+        .unwrap_or(2)
+}
+
+/// Inspect a YAML stream from the reserved input buffer for unquoted YAML 1.1
+/// compatibility hazards (`spec-v1.6 §10.3`) and encode the resulting
+/// `LintResult` as a `yamlprims-lint/1` JSON envelope in `STATE.output`.
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "C" fn lint_wire(input_len: usize, options_len: usize) -> u32 {
+    STATE
+        .try_with(|cell| {
+            let Ok(mut s) = cell.try_borrow_mut() else {
+                return 2;
+            };
+            s.output.clear();
+            let valid_reservation = s.options_valid
+                && s.input_valid
+                && options_len == s.options.len()
+                && input_len == s.input.len();
+            s.options_valid = false;
+            s.input_valid = false;
+            if !valid_reservation {
+                s.options = Vec::new();
+                s.input = Vec::new();
+                s.write_fallback_internal("invalid buffer reservation");
+                return 2;
+            }
+
+            let opts = match parse_options(&s.options) {
+                Ok(o) => o,
+                Err(e) => {
+                    s.options = Vec::new();
+                    s.input = Vec::new();
+                    return finish_error(&mut s, &e, &Options::default());
+                }
+            };
+
+            let res = lint_yaml11_bytes(&s.input, &opts);
+            s.options = Vec::new();
+            s.input = Vec::new();
+
+            let mut bridge_opts = opts.clone();
+            bridge_opts.limits.max_output_bytes = bridge_opts
+                .limits
+                .max_output_bytes
+                .max(Limits::default().max_output_bytes);
+
+            match res {
+                Ok(lint_res) => match encode_lint(&lint_res, &bridge_opts) {
+                    Ok(wire) => {
+                        s.output.extend_from_slice(wire.as_bytes());
+                        0
+                    }
+                    Err(e) => finish_encode_failure(&mut s, &e, &bridge_opts),
+                },
+                Err(e) => finish_error(&mut s, &e, &bridge_opts),
+            }
+        })
+        .unwrap_or(2)
+}
+
+/// Decode a `yamlprims-lint/1` JSON envelope from the reserved input buffer
+/// into a native `LintResult` and encode it with `yamlprims::encode_lint`
+/// (`spec-v1.6 §11.7`) under the reserved `Options`.
+#[allow(unsafe_code)]
+#[no_mangle]
+pub extern "C" fn encode_lint_wire(input_len: usize, options_len: usize) -> u32 {
+    STATE
+        .try_with(|cell| {
+            let Ok(mut s) = cell.try_borrow_mut() else {
+                return 2;
+            };
+            s.output.clear();
+            let valid_reservation = s.options_valid
+                && s.input_valid
+                && options_len == s.options.len()
+                && input_len == s.input.len();
+            s.options_valid = false;
+            s.input_valid = false;
+            if !valid_reservation {
+                s.options = Vec::new();
+                s.input = Vec::new();
+                s.write_fallback_internal("invalid buffer reservation");
+                return 2;
+            }
+
+            let opts = match parse_options(&s.options) {
+                Ok(o) => o,
+                Err(e) => {
+                    s.options = Vec::new();
+                    s.input = Vec::new();
+                    return finish_error(&mut s, &e, &Options::default());
+                }
+            };
+
+            let input_bytes = std::mem::take(&mut s.input);
+            s.options = Vec::new();
+
+            let mut err_opts = opts.clone();
+            err_opts.limits.max_output_bytes = err_opts
+                .limits
+                .max_output_bytes
+                .max(Limits::default().max_output_bytes);
+
+            let Ok(wire_str) = std::str::from_utf8(&input_bytes) else {
+                let err = Error::new(
+                    ErrorKind::InvalidUtf8 { invalid_len: None },
+                    Site::NotSource { last_known: None },
+                    "invalid UTF-8 in lint wire envelope",
+                );
+                return finish_error(&mut s, &err, &err_opts);
+            };
+
+            let mut decode_opts = opts.clone();
+            decode_opts.limits.max_input_bytes = decode_opts
+                .limits
+                .max_input_bytes
+                .max(MAX_WASM_INPUT_CEILING);
+            decode_opts.limits.max_nodes = decode_opts
+                .limits
+                .max_nodes
+                .max(Limits::default().max_nodes);
+            decode_opts.limits.max_owned_bytes = decode_opts
+                .limits
+                .max_owned_bytes
+                .max(MAX_WASM_INPUT_CEILING);
+            decode_opts.limits.max_scalar_bytes = decode_opts
+                .limits
+                .max_scalar_bytes
+                .max(Limits::default().max_scalar_bytes);
+
+            match decode_lint_wire(wire_str, &decode_opts) {
+                Ok(lint_res) => match encode_lint(&lint_res, &opts) {
+                    Ok(wire) => {
+                        s.output.extend_from_slice(wire.as_bytes());
+                        0
+                    }
+                    Err(e) => finish_encode_failure(&mut s, &e, &err_opts),
+                },
+                Err(e) => finish_error(&mut s, &e, &err_opts),
             }
         })
         .unwrap_or(2)

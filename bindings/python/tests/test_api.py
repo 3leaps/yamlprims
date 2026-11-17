@@ -17,11 +17,14 @@ from yamlprims import (
     DEFAULT_IJSON_MAX_OUTPUT_BYTES,
     I128_MAX,
     I128_MIN,
+    LINT_CODES,
     U128_MAX,
     Document,
     EmitLimits,
     EmitOptions,
     Limits,
+    LintDiagnostic,
+    LintResult,
     Location,
     Mapping,
     Node,
@@ -41,9 +44,11 @@ from yamlprims import (
     dump_all,
     encode,
     encode_error,
+    encode_lint,
     encode_plain,
     from_plain,
     key_eq,
+    lint_yaml11,
     load,
     load_all,
     load_all_bytes,
@@ -749,6 +754,127 @@ class TestApi(unittest.TestCase):
             )
         self.assertEqual(cm_dump_fail.exception.kind, "output_limit_exceeded")
         self.assertEqual(sw_fail.chunks, [])
+
+    def test_spec_v16_lint_yaml11_and_encode_lint(self) -> None:
+        import io
+        import json
+
+        self.assertEqual(
+            LINT_CODES,
+            frozenset(
+                {
+                    "yaml11_boolean",
+                    "yaml11_number",
+                    "yaml11_sexagesimal",
+                    "yaml11_merge_key",
+                }
+            ),
+        )
+
+        # Priority ordering: 19:59:59 is yaml11_sexagesimal (not yaml11_number)
+        yaml_src = (
+            "flag: yes\n"
+            "ratio: 19:59:59\n"
+            "octal: 0755\n"
+            "quoted: 'yes'\n"
+            "tagged: !custom yes\n"
+        )
+        res = lint_yaml11(yaml_src)
+        self.assertEqual(res.warning_count, 3)
+        self.assertFalse(res.truncated)
+        self.assertEqual(
+            [d.code for d in res.diagnostics],
+            ["yaml11_boolean", "yaml11_sexagesimal", "yaml11_number"],
+        )
+        self.assertEqual(res.diagnostics[0].document_index, 0)
+        self.assertEqual(res.diagnostics[0].raw, "yes")
+        self.assertEqual(res.diagnostics[0].path[0].key.as_str(), "flag")
+
+        # Stream input (StringIO and BytesIO)
+        res_sio = lint_yaml11(io.StringIO(yaml_src))
+        self.assertEqual([d.code for d in res_sio.diagnostics], [d.code for d in res.diagnostics])
+        res_bio = lint_yaml11(io.BytesIO(yaml_src.encode("utf-8")))
+        self.assertEqual([d.code for d in res_bio.diagnostics], [d.code for d in res.diagnostics])
+
+        # Non-conforming stream chunks rejected before copy/encode in lint_yaml11 too
+        import array
+        import tracemalloc
+
+        big_ba = bytearray(4 * 1024 * 1024)
+        big_u32 = array.array("I", [0] * (1024 * 1024))
+        big_str = "a" * (4 * 1024 * 1024)
+        tight_in_opts = Options(
+            limits=Limits(max_input_bytes=16, max_scalar_bytes=16, max_key_bytes=16, max_owned_bytes=16)
+        )
+
+        class ConstantChunkStream:
+            def __init__(self, chunk_val: object) -> None:
+                self.chunk_val = chunk_val
+
+            def read(self, n: int = -1) -> object:
+                return self.chunk_val
+
+        for oversized_chunk in (
+            big_ba,
+            memoryview(big_ba),
+            memoryview(big_u32),
+            big_str,
+        ):
+            tracemalloc.start()
+            try:
+                with self.assertRaises(YamlprimsError) as cm_over:
+                    lint_yaml11(ConstantChunkStream(oversized_chunk), tight_in_opts)
+                peak = tracemalloc.get_traced_memory()[1]
+            finally:
+                tracemalloc.stop()
+            self.assertEqual(cm_over.exception.kind, "limit_exceeded")
+            self.assertEqual(cm_over.exception.detail, {"limit": "max_input_bytes", "configured": 16})
+            self.assertEqual(cm_over.exception.location(), Location(0, 1, 1))
+            self.assertLess(peak, 64 * 1024)
+
+        # Merge key handling across merge_keys="reject", "apply", and "as_key"
+        merge_src = (
+            "base: &b\n"
+            "  a: yes\n"
+            "merged:\n"
+            "  <<: *b\n"
+            "quoted_merge:\n"
+            "  '<<': 1\n"
+        )
+        res_rej = lint_yaml11(merge_src)
+        self.assertEqual([d.code for d in res_rej.diagnostics], ["yaml11_boolean", "yaml11_merge_key"])
+        self.assertIn("MergeKeys::Reject", res_rej.diagnostics[1].yaml12_resolution)
+
+        res_apply = lint_yaml11(merge_src, merge_keys="apply")
+        self.assertEqual([d.code for d in res_apply.diagnostics], ["yaml11_boolean", "yaml11_merge_key"])
+        self.assertIn("MergeKeys::Apply", res_apply.diagnostics[1].yaml12_resolution)
+
+        res_as_key = lint_yaml11("plain_merge:\n  <<: 1\nquoted_merge:\n  '<<': 2\n", merge_keys="as_key")
+        self.assertEqual([d.code for d in res_as_key.diagnostics], ["yaml11_merge_key"])
+        self.assertIn("MergeKeys::AsKey", res_as_key.diagnostics[0].yaml12_resolution)
+
+        # max_warnings truncation
+        res_trunc = lint_yaml11(yaml_src, Options(limits=Limits(max_warnings=2)))
+        self.assertEqual(len(res_trunc.diagnostics), 2)
+        self.assertEqual(res_trunc.warning_count, 3)
+        self.assertTrue(res_trunc.truncated)
+
+        # encode_lint wire format and invariant validation
+        wire = encode_lint(res_apply)
+        parsed = json.loads(wire)
+        self.assertEqual(parsed["format"], "yamlprims-lint")
+        self.assertEqual(parsed["version"], 1)
+        self.assertFalse(parsed["truncated"])
+        self.assertEqual(len(parsed["diagnostics"]), 2)
+
+        bad_res = LintResult(
+            diagnostics=res.diagnostics,
+            warning_count=99,
+            truncated=False,
+        )
+        with self.assertRaises(YamlprimsError) as cm_bad_lint:
+            encode_lint(bad_res)
+        self.assertEqual(cm_bad_lint.exception.kind, "invalid_options")
 
 
 if __name__ == "__main__":

@@ -36,11 +36,26 @@ pub struct Related {
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, PartialEq)]
 pub enum PathSegment {
     Key(Box<Value>),
     Index(usize),
 }
+
+impl Clone for PathSegment {
+    fn clone(&self) -> Self {
+        match self {
+            PathSegment::Key(v) => {
+                #[cfg(test)]
+                crate::lint::record_test_key_clone();
+                PathSegment::Key(v.clone())
+            }
+            PathSegment::Index(i) => PathSegment::Index(*i),
+        }
+    }
+}
+
+impl Eq for PathSegment {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LimitKind {

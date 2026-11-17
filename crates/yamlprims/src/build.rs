@@ -4,6 +4,7 @@ use crate::budget::{limit_err, metrics, tag_bytes, Budget, ENTRY_OVERHEAD, NODE_
 use crate::engine::{Engine, Event, EventSpan, ScalarStyle, StructureStyle};
 use crate::error::internal;
 use crate::error::{Error, ErrorKind, LimitKind, PathSegment, RelatedRole};
+use crate::lint::{classify_untagged_plain, LintCollector, LintResult, ScalarHazard};
 use crate::load::scan_location;
 use crate::options::{MergeKeys, Options, UnknownTags};
 use crate::resolve::{resolve_scalar, Resolved, TagClass};
@@ -41,6 +42,8 @@ struct Built {
     height: usize,
     /// Scalar key written as a merge directive (§5.3 recognition).
     merge_directive: bool,
+    /// Deferred scalar migration hazard when started directly in mapping-key position.
+    lint_key: Option<(ScalarHazard, String)>,
 }
 
 /// What started at a node position.
@@ -107,6 +110,8 @@ pub(crate) struct Loader<'a> {
     anchors: HashMap<usize, Anchored>,
     open_anchors: HashSet<usize>,
     path: Vec<PathSegment>,
+    doc_index: usize,
+    lint: Option<LintCollector>,
 }
 
 impl<'a> Loader<'a> {
@@ -121,7 +126,15 @@ impl<'a> Loader<'a> {
             anchors: HashMap::new(),
             open_anchors: HashSet::new(),
             path: Vec::new(),
+            doc_index: 0,
+            lint: None,
         }
+    }
+
+    pub(crate) fn new_lint(input: &'a str, bom: usize, opts: &'a Options) -> Loader<'a> {
+        let mut l = Self::new(input, bom, opts);
+        l.lint = Some(LintCollector::default());
+        l
     }
 
     /// §7.2: a block collection ends at the exclusive end of its last content
@@ -283,7 +296,7 @@ impl<'a> Loader<'a> {
     ) -> Result<(), Error> {
         self.budget
             .charge(&self.opts.limits, count, weight, expanded)
-            .map_err(|(kind, configured)| self.err_limit(kind, configured, at))
+            .map_err(|(kind, configured)| self.err_limit_take(kind, configured, at))
     }
 
     fn err_limit(&self, k: LimitKind, configured: usize, at: Location) -> Error {
@@ -292,24 +305,36 @@ impl<'a> Loader<'a> {
         e
     }
 
+    fn err_limit_take(&mut self, k: LimitKind, configured: usize, at: Location) -> Error {
+        let mut e = limit_err(k, configured, at);
+        e.path = std::mem::take(&mut self.path);
+        e
+    }
+
+    /// Run `lint_yaml11*` across the stream (`spec-v1.6` §10.3).
+    pub(crate) fn lint_stream(mut self) -> Result<LintResult, Error> {
+        self.load_stream_ref(false, true)?;
+        Ok(self.lint.take().unwrap_or_default().result)
+    }
+
     /// Load every document in the stream.
     /// `single` selects the one-document API: a second document is `MultipleDocuments`.
     /// Otherwise the configured `max_documents` applies (`LimitExceeded`), whatever its value.
-    pub(crate) fn load_all(self, single: bool) -> Result<Vec<Document>, Error> {
-        self.load_stream(single, true)
+    pub(crate) fn load_all(mut self, single: bool) -> Result<Vec<Document>, Error> {
+        self.load_stream_ref(single, true)
     }
 
     /// Load a single explicit document for `load_ijson*`: rejects zero-document streams with
     /// `ErrorKind::Type { expected: "single YAML document", found: "empty_stream" }` at EOF
     /// and a second document with `ErrorKind::MultipleDocuments` at its start.
-    pub(crate) fn load_single_non_empty(self) -> Result<Document, Error> {
-        let mut docs = self.load_stream(true, false)?;
+    pub(crate) fn load_single_non_empty(mut self) -> Result<Document, Error> {
+        let mut docs = self.load_stream_ref(true, false)?;
         docs.pop()
             .ok_or_else(|| internal("missing single document"))
     }
 
-    fn load_stream(
-        mut self,
+    fn load_stream_ref(
+        &mut self,
         single: bool,
         allow_empty_single: bool,
     ) -> Result<Vec<Document>, Error> {
@@ -375,6 +400,7 @@ impl<'a> Loader<'a> {
                             ));
                         }
                     }
+                    self.doc_index = docs.len();
                     self.anchors.clear();
                     self.open_anchors.clear();
                     let mut root = self.node(0)?.node;
@@ -450,7 +476,10 @@ impl<'a> Loader<'a> {
                     self.path.push(PathSegment::Index(items.len()));
                 }
             }
-            match self.start(base + stack.len())? {
+            let in_map_key = stack
+                .last()
+                .is_some_and(|top| matches!(top.kind, OpenKind::Map { pending: None, .. }));
+            match self.start(base + stack.len(), in_map_key)? {
                 Started::Leaf(b) => built = Some(b),
                 Started::Open(o) => stack.push(*o),
             }
@@ -459,7 +488,7 @@ impl<'a> Loader<'a> {
 
     /// Read the event that starts a node at `depth`: a finished scalar or alias copy, or a
     /// collection opened (guarded and charged) and awaiting its children.
-    fn start(&mut self, depth: usize) -> Result<Started, Error> {
+    fn start(&mut self, depth: usize, in_map_key: bool) -> Result<Started, Error> {
         let (ev, gspan) = self.next()?;
         let mut span = gspan.span;
         if let Event::Scalar(_, ScalarStyle::Literal | ScalarStyle::Folded, ..) = ev {
@@ -483,6 +512,8 @@ impl<'a> Loader<'a> {
                         return Err(self.err(ErrorKind::UnknownTag, tag_loc, "unknown tag"));
                     }
                 }
+                let untagged_plain =
+                    matches!(style, ScalarStyle::Plain) && matches!(class, TagClass::None);
                 let merge_directive = match class {
                     TagClass::None => matches!(style, ScalarStyle::Plain) && text == "<<",
                     // Only meaningful in key position; the caller decides.
@@ -526,6 +557,7 @@ impl<'a> Loader<'a> {
                     weight,
                     height: 0,
                     merge_directive,
+                    lint_key: None,
                 };
                 if merge_tagged_other {
                     // Recorded so a key-position caller can raise TagValueMismatch.
@@ -533,6 +565,24 @@ impl<'a> Loader<'a> {
                     b.node.set_tag_start(tag_loc);
                 }
                 self.register(anchor, &b)?;
+                if self.lint.is_some() && untagged_plain && !(in_map_key && b.merge_directive) {
+                    if let Some(hazard) = classify_untagged_plain(&text) {
+                        if in_map_key {
+                            b.lint_key = Some((hazard, text.into_owned()));
+                        } else if let Some(lint) = self.lint.as_mut() {
+                            lint.record_scalar(
+                                hazard,
+                                &text,
+                                &b.node.value,
+                                span,
+                                self.doc_index,
+                                &mut self.path,
+                                self.opts,
+                                &mut self.budget,
+                            )?;
+                        }
+                    }
+                }
                 Ok(Started::Leaf(b))
             }
             Event::Alias(id) => {
@@ -572,6 +622,7 @@ impl<'a> Loader<'a> {
                     weight,
                     height,
                     merge_directive: false,
+                    lint_key: None,
                 }))
             }
             Event::SequenceStart(style, anchor, tag) | Event::MappingStart(style, anchor, tag) => {
@@ -670,7 +721,28 @@ impl<'a> Loader<'a> {
                     }
                 }
                 let is_directive = k.merge_directive;
-                if is_directive && self.opts.merge_keys == MergeKeys::Reject {
+                if let Some(lint) = self.lint.as_mut() {
+                    if is_directive {
+                        lint.record_merge_key(
+                            kspan,
+                            self.doc_index,
+                            &mut self.path,
+                            self.opts,
+                            &mut self.budget,
+                        )?;
+                    } else if let Some((hazard, raw)) = k.lint_key.take() {
+                        lint.record_scalar(
+                            hazard,
+                            &raw,
+                            &k.node.value,
+                            kspan,
+                            self.doc_index,
+                            &mut self.path,
+                            self.opts,
+                            &mut self.budget,
+                        )?;
+                    }
+                } else if is_directive && self.opts.merge_keys == MergeKeys::Reject {
                     return Err(with_alias_use(
                         self.err(
                             ErrorKind::MergeRejected,
@@ -823,6 +895,7 @@ impl<'a> Loader<'a> {
             weight,
             height: height + 1,
             merge_directive: false,
+            lint_key: None,
         };
         if anchor != 0 {
             self.open_anchors.remove(&anchor);

@@ -450,6 +450,29 @@ export class YamlprimsError extends Error {
   }
 }
 
+export type LintCode =
+  | "yaml11_boolean"
+  | "yaml11_number"
+  | "yaml11_sexagesimal"
+  | "yaml11_merge_key";
+
+export interface LintDiagnostic {
+  code: LintCode;
+  span: Span;
+  documentIndex: number;
+  path: PathSegment[];
+  raw: string;
+  yaml12Resolution: string;
+  yaml11Note: string;
+  message: string;
+}
+
+export interface LintResult {
+  diagnostics: LintDiagnostic[];
+  warningCount: number;
+  truncated: boolean;
+}
+
 export function defaultLimits(): Limits {
   return {
     maxInputBytes: 8 * 1024 * 1024,
@@ -857,6 +880,8 @@ interface WasmExports {
   load_plain: (inputLen: number, optionsLen: number) => number;
   load_ijson: (inputLen: number, optionsLen: number) => number;
   emit_wire: (inputLen: number, optionsLen: number) => number;
+  lint_wire: (inputLen: number, optionsLen: number) => number;
+  encode_lint_wire: (inputLen: number, optionsLen: number) => number;
   output_ptr: () => number;
   output_len: () => number;
   release: () => void;
@@ -952,13 +977,20 @@ function decodeFallbackStatus2(bytes: Uint8Array, defaultMaxOutput: number): Yam
 function runWasmLoad(
   inputBytes: Uint8Array,
   opts: Options,
-  mode: "wire-single" | "wire-all" | "plain" | "ijson",
+  mode: "wire-single" | "wire-all" | "plain" | "ijson" | "lint" | "encode-lint",
   simulateTrap = false,
 ): { status: number; output: Uint8Array } {
   if (instanceBusy) {
     throw notSourceError("internal", {}, "reentrant WASM execution is forbidden");
   }
-  const optsBytes = serializeWasmOptions(opts, mode === "ijson");
+  const wasmOpts =
+    mode === "encode-lint" && opts.limits.maxInputBytes < MAX_WASM_INPUT_CEILING
+      ? {
+          ...opts,
+          limits: { ...opts.limits, maxInputBytes: MAX_WASM_INPUT_CEILING },
+        }
+      : opts;
+  const optsBytes = serializeWasmOptions(wasmOpts, mode === "ijson" || mode === "encode-lint");
   const exports = getWasmExports();
   instanceBusy = true;
   let localTrapped = false;
@@ -975,15 +1007,15 @@ function runWasmLoad(
       new Uint8Array(exports.memory.buffer, optPtr, optsBytes.byteLength).set(optsBytes);
     }
 
-    const wasmMaxInput = clampU32(opts.limits.maxInputBytes);
+    const wasmMaxInput = clampU32(wasmOpts.limits.maxInputBytes);
     const inPtr = exports.input_reserve(inputBytes.byteLength, wasmMaxInput) >>> 0;
     if (inPtr === 0) {
-      if (inputBytes.byteLength > opts.limits.maxInputBytes) {
+      if (inputBytes.byteLength > wasmOpts.limits.maxInputBytes) {
         throw new YamlprimsError({
           kind: "limit_exceeded",
-          detail: { limit: "max_input_bytes", configured: opts.limits.maxInputBytes },
+          detail: { limit: "max_input_bytes", configured: wasmOpts.limits.maxInputBytes },
           site: { source: { byteOffset: 0, utf16Offset: 0, line: 1, column: 1 } },
-          message: `max_input_bytes (${opts.limits.maxInputBytes}) exceeded`,
+          message: `max_input_bytes (${wasmOpts.limits.maxInputBytes}) exceeded`,
         });
       }
       if (inputBytes.byteLength > MAX_WASM_INPUT_CEILING) {
@@ -1010,11 +1042,15 @@ function runWasmLoad(
         ? exports.load_plain(inputBytes.byteLength, optsBytes.byteLength) >>> 0
         : mode === "ijson"
           ? exports.load_ijson(inputBytes.byteLength, optsBytes.byteLength) >>> 0
-          : exports.load_wire(
-              inputBytes.byteLength,
-              optsBytes.byteLength,
-              mode === "wire-single" ? 1 : 0,
-            ) >>> 0;
+          : mode === "lint"
+            ? exports.lint_wire(inputBytes.byteLength, optsBytes.byteLength) >>> 0
+            : mode === "encode-lint"
+              ? exports.encode_lint_wire(inputBytes.byteLength, optsBytes.byteLength) >>> 0
+              : exports.load_wire(
+                  inputBytes.byteLength,
+                  optsBytes.byteLength,
+                  mode === "wire-single" ? 1 : 0,
+                ) >>> 0;
     const outPtr = exports.output_ptr() >>> 0;
     const outLen = exports.output_len() >>> 0;
     const output = new Uint8Array(exports.memory.buffer, outPtr, outLen).slice();
@@ -4332,6 +4368,311 @@ export function loadIjson(input: string | Uint8Array, options?: OptionsInput): s
       throw decoded.error;
     }
     throw notSourceError("internal", {}, "expected error envelope from load_ijson status 1");
+  }
+  return text;
+}
+
+const VALID_LINT_CODES: ReadonlySet<string> = new Set([
+  "yaml11_boolean",
+  "yaml11_number",
+  "yaml11_sexagesimal",
+  "yaml11_merge_key",
+]);
+
+function decodeLintEnvelope(
+  wireJson: string,
+  opts: Options,
+  sourceBytes: Uint8Array,
+): LintResult {
+  const maxJsonDepth = opts.limits.maxDepth * 4 + 32;
+  const root = new WireJsonParser(wireJson, maxJsonDepth).parseRoot();
+  if (root.t !== "obj") {
+    throw notSourceError("internal", {}, "lint wire root must be a JSON object");
+  }
+  expectExactKeys(root.map, [
+    "format",
+    "version",
+    "warning_count",
+    "truncated",
+    "diagnostics",
+  ]);
+  const fmt = expectStr(root.map.get("format"), "format");
+  if (fmt !== "yamlprims-lint") {
+    throw notSourceError("internal", {}, `unsupported lint wire format: ${fmt}`);
+  }
+  const ver = expectInt(root.map.get("version"), "version");
+  if (ver !== 1) {
+    throw notSourceError("internal", {}, `unsupported lint wire version: ${ver}`);
+  }
+  const warningCount = expectInt(root.map.get("warning_count"), "warning_count");
+  const truncated = expectBool(root.map.get("truncated"), "truncated");
+  const diagsVal = root.map.get("diagnostics")!;
+  if (diagsVal.t !== "arr") {
+    throw notSourceError("internal", {}, "diagnostics must be an array");
+  }
+
+  const idx = new Utf16Index(sourceBytes);
+  const pathCtx: DecodeContext = {
+    opts,
+    idx: null,
+    nodesRemaining: opts.limits.maxNodes,
+    ownedBytes: 0n,
+    forbidLocations: true,
+  };
+  const diagnostics: LintDiagnostic[] = [];
+  for (const d of diagsVal.items) {
+    if (d.t !== "obj") {
+      throw notSourceError("internal", {}, "LintDiagnostic must be an object");
+    }
+    expectExactKeys(d.map, [
+      "code",
+      "span",
+      "document_index",
+      "path",
+      "raw",
+      "yaml12_resolution",
+      "yaml11_note",
+      "message",
+    ]);
+    const codeStr = expectStr(d.map.get("code"), "code");
+    if (!VALID_LINT_CODES.has(codeStr)) {
+      throw notSourceError("internal", {}, `unknown LintCode: ${codeStr}`);
+    }
+    const span = decodeSpan(d.map.get("span")!, idx);
+    const documentIndex = expectInt(d.map.get("document_index"), "document_index");
+    const pathVal = d.map.get("path")!;
+    if (pathVal.t !== "arr") {
+      throw notSourceError("internal", {}, "diagnostic.path must be an array");
+    }
+    const path: PathSegment[] = [];
+    for (const seg of pathVal.items) {
+      if (seg.t !== "obj" || seg.map.size !== 1) {
+        throw notSourceError("internal", {}, "invalid diagnostic path segment");
+      }
+      const idxSeg = seg.map.get("index");
+      const keySeg = seg.map.get("key");
+      if (idxSeg) {
+        path.push({ index: expectInt(idxSeg, "path.index") });
+      } else if (keySeg) {
+        const keyNode = decodeNode(keySeg, pathCtx, 0, true);
+        path.push({ key: keyNode });
+      } else {
+        throw notSourceError("internal", {}, "unknown diagnostic path segment");
+      }
+    }
+    const raw = expectStr(d.map.get("raw"), "raw");
+    const yaml12Resolution = expectStr(d.map.get("yaml12_resolution"), "yaml12_resolution");
+    const yaml11Note = expectStr(d.map.get("yaml11_note"), "yaml11_note");
+    const message = expectStr(d.map.get("message"), "message");
+    diagnostics.push({
+      code: codeStr as LintCode,
+      span,
+      documentIndex,
+      path,
+      raw,
+      yaml12Resolution,
+      yaml11Note,
+      message,
+    });
+  }
+  return {
+    diagnostics,
+    warningCount,
+    truncated,
+  };
+}
+
+export function lintYaml11(input: string | Uint8Array, options?: OptionsInput): LintResult {
+  const opts = validateOptions(options);
+  const inputBytes = toInputBytes(input);
+  const { status, output } = runWasmLoad(inputBytes, opts, "lint");
+  if (status === 2) {
+    throw decodeFallbackStatus2(output, opts.limits.maxOutputBytes);
+  }
+  const text = decoder.decode(output);
+  const bridgeOpts = widenBridgeOptions(opts, output.byteLength);
+  if (status === 1) {
+    const decoded = decodeWire(text, bridgeOpts, inputBytes);
+    if (decoded.kind === "error") {
+      throw decoded.error;
+    }
+    throw notSourceError("internal", {}, "expected error envelope from lint_wire status 1");
+  }
+  return decodeLintEnvelope(text, bridgeOpts, inputBytes);
+}
+
+function isSafeMetaInt(n: unknown): n is number {
+  return (
+    typeof n === "number" &&
+    Number.isInteger(n) &&
+    n >= 0 &&
+    n <= MAX_SAFE_METADATA_INT
+  );
+}
+
+function validateLintSpanForEncode(span: unknown): Span {
+  if (!span || typeof span !== "object") {
+    throw invalidOptionsError("LintDiagnostic.span must be a Span object");
+  }
+  const s = span as Span;
+  if (!s.start || typeof s.start !== "object" || !s.end || typeof s.end !== "object") {
+    throw invalidOptionsError("LintDiagnostic.span must have start and end Locations");
+  }
+  const { start, end } = s;
+  if (
+    !isSafeMetaInt(start.byteOffset) ||
+    !isSafeMetaInt(start.line) ||
+    !isSafeMetaInt(start.column) ||
+    !isSafeMetaInt(end.byteOffset) ||
+    !isSafeMetaInt(end.line) ||
+    !isSafeMetaInt(end.column) ||
+    start.line < 1 ||
+    start.column < 1 ||
+    end.line < 1 ||
+    end.column < 1 ||
+    start.byteOffset > end.byteOffset ||
+    start.line > end.line ||
+    (start.line === end.line && start.column > end.column)
+  ) {
+    throw invalidOptionsError("LintDiagnostic.span has invalid coordinates");
+  }
+  return s;
+}
+
+export function encodeLint(result: LintResult, options?: OptionsInput): string {
+  const opts = validateOptions(options);
+  if (!result || typeof result !== "object") {
+    throw invalidOptionsError("encodeLint requires a LintResult object");
+  }
+  if (!Array.isArray(result.diagnostics)) {
+    throw invalidOptionsError("LintResult.diagnostics must be an array");
+  }
+  if (!isSafeMetaInt(result.warningCount)) {
+    throw invalidOptionsError("LintResult.warningCount must be a safe non-negative integer");
+  }
+  if (typeof result.truncated !== "boolean") {
+    throw invalidOptionsError("LintResult.truncated must be a boolean");
+  }
+  if (result.diagnostics.length > opts.limits.maxWarnings) {
+    throw invalidOptionsError("LintResult.diagnostics length exceeds max_warnings");
+  }
+  if (result.truncated) {
+    if (result.warningCount <= result.diagnostics.length) {
+      throw invalidOptionsError("truncated LintResult must have warningCount > diagnostics.length");
+    }
+  } else if (result.warningCount !== result.diagnostics.length) {
+    throw invalidOptionsError("non-truncated LintResult must have warningCount === diagnostics.length");
+  }
+
+  for (const d of result.diagnostics) {
+    if (!d || typeof d !== "object") {
+      throw invalidOptionsError("LintDiagnostic must be an object");
+    }
+    if (typeof d.code !== "string" || !VALID_LINT_CODES.has(d.code)) {
+      throw invalidOptionsError("invalid LintDiagnostic.code");
+    }
+    validateLintSpanForEncode(d.span);
+    if (!isSafeMetaInt(d.documentIndex)) {
+      throw invalidOptionsError("invalid LintDiagnostic.documentIndex");
+    }
+    if (!Array.isArray(d.path)) {
+      throw invalidOptionsError("LintDiagnostic.path must be an array");
+    }
+    for (const seg of d.path) {
+      if (!seg || typeof seg !== "object") {
+        throw invalidOptionsError("invalid LintDiagnostic.path segment");
+      }
+      if ("index" in seg) {
+        if (!isSafeMetaInt(seg.index)) {
+          throw invalidOptionsError("LintDiagnostic.path index out of range");
+        }
+      } else if (!("key" in seg) || !isNodeObject(seg.key)) {
+        throw invalidOptionsError("LintDiagnostic.path key must be a Node");
+      }
+    }
+    if (d.path.length > opts.limits.maxDepth) {
+      throw notSourceError(
+        "limit_exceeded",
+        { limit: "max_depth", configured: opts.limits.maxDepth },
+        `diagnostic path has ${d.path.length} segments, more than max_depth`,
+      );
+    }
+    for (const seg of d.path) {
+      if ("key" in seg) {
+        preflightKeyNode(seg.key, opts.limits);
+      }
+    }
+    validateUtf8Str(d.raw);
+    validateUtf8Str(d.yaml12Resolution);
+    validateUtf8Str(d.yaml11Note);
+    validateUtf8Str(d.message);
+  }
+
+  const w = new BoundedWriter(MAX_WASM_INPUT_CEILING);
+  const pathOpts: Options = {
+    mergeKeys: opts.mergeKeys,
+    unknownTags: opts.unknownTags,
+    limits: {
+      ...opts.limits,
+      maxDepth: 255,
+      maxNodes: MAX_SAFE_METADATA_INT,
+    },
+  };
+  const st: EncodeState = {
+    opts: pathOpts,
+    nodesRemaining: MAX_SAFE_METADATA_INT,
+    activeAncestors: new Set<object>(),
+  };
+  w.pushRaw('{"format":"yamlprims-lint","version":1,"warning_count":');
+  w.pushMetaInt(result.warningCount, "warningCount");
+  w.pushRaw(result.truncated ? ',"truncated":true,"diagnostics":[' : ',"truncated":false,"diagnostics":[');
+  for (let i = 0; i < result.diagnostics.length; i++) {
+    if (i > 0) w.pushRaw(",");
+    const d = result.diagnostics[i]!;
+    w.pushRaw('{"code":');
+    w.pushString(d.code);
+    w.pushRaw(',"span":');
+    w.pushSpan(d.span);
+    w.pushRaw(',"document_index":');
+    w.pushMetaInt(d.documentIndex, "documentIndex");
+    w.pushRaw(',"path":[');
+    for (let j = 0; j < d.path.length; j++) {
+      if (j > 0) w.pushRaw(",");
+      const p = d.path[j]!;
+      if ("index" in p) {
+        w.pushRaw('{"index":');
+        w.pushMetaInt(p.index, "path.index");
+        w.pushRaw("}");
+      } else {
+        w.pushRaw('{"key":');
+        writeNodeValue(w, p.key, false, st, 0);
+        w.pushRaw(',"span":null,"via":null,"tag_start":null}}');
+      }
+    }
+    w.pushRaw('],"raw":');
+    w.pushBoundedString(d.raw, MAX_FIELD_BYTES);
+    w.pushRaw(',"yaml12_resolution":');
+    w.pushBoundedString(d.yaml12Resolution, MAX_FIELD_BYTES);
+    w.pushRaw(',"yaml11_note":');
+    w.pushBoundedString(d.yaml11Note, MAX_FIELD_BYTES);
+    w.pushRaw(',"message":');
+    w.pushBoundedString(d.message, MAX_MESSAGE_BYTES);
+    w.pushRaw("}");
+  }
+  w.pushRaw("]}");
+  const wireBytes = encoder.encode(w.finish());
+
+  const { status, output } = runWasmLoad(wireBytes, opts, "encode-lint");
+  if (status === 2) {
+    throw decodeFallbackStatus2(output, opts.limits.maxOutputBytes);
+  }
+  const text = decoder.decode(output);
+  if (status === 1) {
+    const decoded = decodeWire(text, widenBridgeOptions(opts, output.byteLength));
+    if (decoded.kind === "error") {
+      throw decoded.error;
+    }
+    throw notSourceError("internal", {}, "expected error envelope from encode_lint_wire status 1");
   }
   return text;
 }

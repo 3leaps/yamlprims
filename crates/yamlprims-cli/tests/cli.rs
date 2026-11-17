@@ -350,3 +350,117 @@ fn emit_cli_supports_empty_multidoc_compat_quoting_and_from_wire() {
         b"{\"z\":1,\"on\":\"yes\",\"ctrl\":\"a\\rb\\u000bc\"}\n"
     );
 }
+
+#[test]
+fn check_lint_yaml11_text_and_json_modes() {
+    let clean = b"flag: true\nport: 8080\n";
+    let clean_text = run(&["check", "--lint-yaml11", "-"], Some(clean));
+    status(&clean_text, 0);
+    assert!(clean_text.stdout.is_empty());
+    assert!(clean_text.stderr.is_empty());
+
+    let clean_json = run(
+        &["check", "--lint-yaml11", "--format=json", "-"],
+        Some(clean),
+    );
+    status(&clean_json, 0);
+    assert!(clean_json.stderr.is_empty());
+    assert_eq!(
+        json(&clean_json),
+        serde_json::json!({
+            "format": "yamlprims-lint",
+            "version": 1,
+            "warning_count": 0,
+            "truncated": false,
+            "diagnostics": []
+        })
+    );
+
+    let hazards = b"base: &b\n  flag: yes\nchild:\n  <<: *b\n  mode: 0755\n  time: 1:30\n";
+    let text_out = run(&["check", "--lint-yaml11", "-"], Some(hazards));
+    status(&text_out, 1);
+    assert!(text_out.stdout.is_empty());
+    let stderr = String::from_utf8(text_out.stderr).unwrap();
+    assert!(
+        stderr.contains("-:2:9: warning[yaml11_boolean]:"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("-:4:3: warning[yaml11_merge_key]:"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("-:5:9: warning[yaml11_number]:"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("-:6:9: warning[yaml11_sexagesimal]:"),
+        "{stderr}"
+    );
+    // Alias *b must not duplicate the warning from &b:
+    assert_eq!(stderr.lines().count(), 4, "{stderr}");
+
+    let json_out = run(
+        &["check", "--lint-yaml11", "--format", "json", "-"],
+        Some(hazards),
+    );
+    status(&json_out, 1);
+    assert!(json_out.stderr.is_empty());
+    let val = json(&json_out);
+    assert_eq!(val["format"], "yamlprims-lint");
+    assert_eq!(val["version"], 1);
+    assert_eq!(val["warning_count"], 4);
+    assert_eq!(val["truncated"], false);
+    assert_eq!(val["diagnostics"].as_array().unwrap().len(), 4);
+
+    // OutputLimitExceeded on check --lint-yaml11 --format=json writes nothing to stdout and exits 1
+    let small_out = run(
+        &[
+            "check",
+            "--lint-yaml11",
+            "--format=json",
+            "--max-output-bytes=10",
+            "-",
+        ],
+        Some(hazards),
+    );
+    status(&small_out, 1);
+    assert!(small_out.stdout.is_empty());
+    assert!(String::from_utf8(small_out.stderr)
+        .unwrap()
+        .contains("output_limit_exceeded"));
+
+    // Unreadable file under check --lint-yaml11 --format=json exits 2
+    let files = Files::new();
+    let missing = files.0.join("missing.yaml");
+    let missing_json = run(
+        &[
+            OsStr::new("check"),
+            OsStr::new("--lint-yaml11"),
+            OsStr::new("--format=json"),
+            missing.as_os_str(),
+        ],
+        None,
+    );
+    status(&missing_json, 2);
+    assert!(missing_json.stdout.is_empty());
+
+    // Invalid flag combinations exit 2
+    for bad_args in [
+        vec!["check", "--format=json", "-"],
+        vec![
+            "check",
+            "--lint-yaml11",
+            "--format=json",
+            "a.yaml",
+            "b.yaml",
+        ],
+        vec!["check", "--lint-yaml11", "--max-output-bytes=64", "-"],
+        vec!["dump", "--lint-yaml11", "-"],
+        vec!["emit", "--lint-yaml11", "-"],
+    ] {
+        let out = run(&bad_args, None);
+        status(&out, 2);
+        assert!(out.stdout.is_empty());
+    }
+}

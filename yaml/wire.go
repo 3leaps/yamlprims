@@ -611,19 +611,23 @@ func notSourceLimit(limit LimitKind, configured int, msg string) *Error {
 }
 
 func preflightError(e *Error, l Limits) *Error {
-	if len(e.Path) > l.MaxDepth {
+	return preflightPath(e.Path, l)
+}
+
+func preflightPath(path []PathSegment, l Limits) *Error {
+	if len(path) > l.MaxDepth {
 		return notSourceLimit(
 			LimitMaxDepth,
 			l.MaxDepth,
-			fmt.Sprintf("error path has %d segments, more than max_depth", len(e.Path)),
+			fmt.Sprintf("error path has %d segments, more than max_depth", len(path)),
 		)
 	}
 	type stackItem struct {
 		val   *Value
 		depth int
 	}
-	for i := range e.Path {
-		seg := &e.Path[i]
+	for i := range path {
+		seg := &path[i]
 		if seg.Kind == PathSegmentIndex {
 			if seg.Index < 0 || uint64(seg.Index) > MaxWireInt {
 				return errInternal("path index out of wire range")
@@ -688,6 +692,39 @@ func preflightError(e *Error, l Limits) *Error {
 						stack = append(stack, stackItem{val: &v.m.entries[j].Value.value, depth: depth + 1})
 					}
 				}
+			}
+		}
+	}
+	return nil
+}
+
+func writePathSegments(o *outBuf, path []PathSegment) *Error {
+	for i := range path {
+		if i > 0 {
+			if err := o.push(","); err != nil {
+				return err
+			}
+		}
+		seg := &path[i]
+		if seg.Kind == PathSegmentIndex {
+			if err := o.push(`{"index":`); err != nil {
+				return err
+			}
+			if err := o.pushInt(seg.Index); err != nil {
+				return err
+			}
+			if err := o.push("}"); err != nil {
+				return err
+			}
+		} else {
+			if err := o.push(`{"key":`); err != nil {
+				return err
+			}
+			if err := writeWireValue(o, &seg.Key, false); err != nil {
+				return err
+			}
+			if err := o.push(`,"span":null,"via":null,"tag_start":null}}`); err != nil {
+				return err
 			}
 		}
 	}
@@ -869,34 +906,8 @@ func EncodeError(e *Error, opts Options) (string, *Error) {
 	if err := o.push(`],"path":[`); err != nil {
 		return "", err
 	}
-	for i := range e.Path {
-		if i > 0 {
-			if err := o.push(","); err != nil {
-				return "", err
-			}
-		}
-		seg := &e.Path[i]
-		if seg.Kind == PathSegmentIndex {
-			if err := o.push(`{"index":`); err != nil {
-				return "", err
-			}
-			if err := o.pushInt(seg.Index); err != nil {
-				return "", err
-			}
-			if err := o.push("}"); err != nil {
-				return "", err
-			}
-		} else {
-			if err := o.push(`{"key":`); err != nil {
-				return "", err
-			}
-			if err := writeWireValue(&o, &seg.Key, false); err != nil {
-				return "", err
-			}
-			if err := o.push(`,"span":null,"via":null,"tag_start":null}}`); err != nil {
-				return "", err
-			}
-		}
+	if err := writePathSegments(&o, e.Path); err != nil {
+		return "", err
 	}
 
 	if err := o.push(`],"message":`); err != nil {
