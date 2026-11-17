@@ -6,10 +6,11 @@
 //! `VERSION` with `#![forbid(unsafe_code)]`.
 
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyFloat, PyInt, PyList, PyString};
 use yamlprims::{
     decode_wire, emit_all_with, encode, encode_error, encode_plain, load_all_bytes, load_bytes,
     load_ijson_bytes, CompatQuoting, EmitLimits, EmitOptions, Error, ErrorKind, Limits, MergeKeys,
-    Options, Site, UnknownTags, WireEnvelope,
+    Node, NodeSpan, Options, RelatedRole, Site, UnknownTags, Value, Via, WireEnvelope,
 };
 
 fn build_options(merge_keys: &str, unknown_tags: &str, limits: &[usize]) -> Result<Options, Error> {
@@ -249,6 +250,296 @@ fn emit_wire(
     })
 }
 
+fn node_site(n: &Node) -> Site {
+    match n.span() {
+        NodeSpan::Source(s) => Site::Source(s.start),
+        NodeSpan::Synthetic => Site::NotSource { last_known: None },
+    }
+}
+
+fn attach_via(n: &Node, mut err: Error) -> Error {
+    match n.via() {
+        Some(Via::Alias { use_site }) => {
+            err.related.push(yamlprims::Related {
+                role: RelatedRole::AliasUse,
+                span: *use_site,
+            });
+            err
+        }
+        Some(Via::Merge { directive }) => {
+            err.related.push(yamlprims::Related {
+                role: RelatedRole::MergeDirective,
+                span: *directive,
+            });
+            err
+        }
+        None => err,
+    }
+}
+
+enum PyBuildFrame<'a> {
+    Eval(&'a Node),
+    SeqStep {
+        items: &'a [Node],
+        idx: usize,
+        list: Py<PyList>,
+    },
+    MapStep {
+        entries: Vec<(&'a Node, &'a Node)>,
+        idx: usize,
+        dict: Py<PyDict>,
+        pending_key: Option<&'a str>,
+    },
+}
+
+fn node_to_pyobject<'py>(py: Python<'py>, root: &Node) -> Result<Py<PyAny>, Error> {
+    let mut work: Vec<PyBuildFrame<'_>> = vec![PyBuildFrame::Eval(root)];
+    let mut results: Vec<Py<PyAny>> = Vec::new();
+
+    while let Some(frame) = work.pop() {
+        match frame {
+            PyBuildFrame::SeqStep { items, idx, list } => {
+                if idx > 0 {
+                    let elem = results.pop().ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Internal,
+                            Site::NotSource { last_known: None },
+                            "missing sequence element on Python conversion stack",
+                        )
+                    })?;
+                    list.bind(py).append(elem).map_err(|e| {
+                        Error::new(
+                            ErrorKind::Internal,
+                            Site::NotSource { last_known: None },
+                            format!("PyList::append failed: {e}"),
+                        )
+                    })?;
+                }
+                if idx >= items.len() {
+                    results.push(list.into_any());
+                } else {
+                    work.push(PyBuildFrame::SeqStep {
+                        items,
+                        idx: idx + 1,
+                        list,
+                    });
+                    work.push(PyBuildFrame::Eval(&items[idx]));
+                }
+            }
+            PyBuildFrame::MapStep {
+                entries,
+                idx,
+                dict,
+                pending_key,
+            } => {
+                if let Some(k_str) = pending_key {
+                    let val_obj = results.pop().ok_or_else(|| {
+                        Error::new(
+                            ErrorKind::Internal,
+                            Site::NotSource { last_known: None },
+                            "missing mapping value on Python conversion stack",
+                        )
+                    })?;
+                    dict.bind(py).set_item(k_str, val_obj).map_err(|e| {
+                        Error::new(
+                            ErrorKind::Internal,
+                            Site::NotSource { last_known: None },
+                            format!("PyDict::set_item failed: {e}"),
+                        )
+                    })?;
+                }
+                if idx >= entries.len() {
+                    results.push(dict.into_any());
+                } else {
+                    let (k_node, v_node) = entries[idx];
+                    let Value::String(k_str) = k_node.value() else {
+                        let found = k_node.value().kind_name().to_owned();
+                        let err = Error::new(
+                            ErrorKind::Type {
+                                expected: "plain mapping string key".to_owned(),
+                                found: found.clone(),
+                            },
+                            node_site(k_node),
+                            format!("expected plain mapping string key, found {found}"),
+                        );
+                        return Err(attach_via(k_node, err));
+                    };
+                    work.push(PyBuildFrame::MapStep {
+                        entries,
+                        idx: idx + 1,
+                        dict,
+                        pending_key: Some(k_str.as_str()),
+                    });
+                    work.push(PyBuildFrame::Eval(v_node));
+                }
+            }
+            PyBuildFrame::Eval(n) => match n.value() {
+                Value::Null => {
+                    results.push(py.None());
+                }
+                Value::Bool(b) => {
+                    results.push(
+                        PyInt::new(py, i64::from(*b))
+                            .call_method0("__bool__")
+                            .map_err(|e| {
+                                Error::new(
+                                    ErrorKind::Internal,
+                                    Site::NotSource { last_known: None },
+                                    format!("bool conversion failed: {e}"),
+                                )
+                            })?
+                            .unbind(),
+                    );
+                }
+                Value::Int(i) => {
+                    let py_int = if let Some(iv) = i.to_i128() {
+                        PyInt::new(py, iv).into_any().unbind()
+                    } else if let Some(uv) = i.to_u128() {
+                        PyInt::new(py, uv).into_any().unbind()
+                    } else {
+                        return Err(attach_via(
+                            n,
+                            Error::new(
+                                ErrorKind::IntegerOutOfRange,
+                                node_site(n),
+                                "integer outside 128-bit range",
+                            ),
+                        ));
+                    };
+                    results.push(py_int);
+                }
+                Value::Float(f) => {
+                    results.push(PyFloat::new(py, *f).into_any().unbind());
+                }
+                Value::String(s) => {
+                    results.push(PyString::new(py, s).into_any().unbind());
+                }
+                Value::Tagged(_) => {
+                    let err = Error::new(
+                        ErrorKind::UnknownTag,
+                        node_site(n),
+                        "tagged values are rejected in plain host conversion",
+                    );
+                    return Err(attach_via(n, err));
+                }
+                Value::Sequence(items) => {
+                    let list = PyList::empty(py).unbind();
+                    work.push(PyBuildFrame::SeqStep {
+                        items,
+                        idx: 0,
+                        list,
+                    });
+                }
+                Value::Mapping(m) => {
+                    let dict = PyDict::new(py).unbind();
+                    work.push(PyBuildFrame::MapStep {
+                        entries: m.iter().collect(),
+                        idx: 0,
+                        dict,
+                        pending_key: None,
+                    });
+                }
+                _ => {
+                    return Err(Error::new(
+                        ErrorKind::Internal,
+                        node_site(n),
+                        "unsupported Value variant",
+                    ));
+                }
+            },
+        }
+    }
+
+    results.pop().ok_or_else(|| {
+        Error::new(
+            ErrorKind::Internal,
+            Site::NotSource { last_known: None },
+            "empty Python conversion result stack",
+        )
+    })
+}
+
+#[pyfunction]
+fn safe_load_native(
+    py: Python<'_>,
+    input: &[u8],
+    single_doc: bool,
+    merge_keys: &str,
+    unknown_tags: &str,
+    limits: Vec<usize>,
+) -> (u32, Py<PyAny>, String) {
+    let opts = match build_options(merge_keys, unknown_tags, &limits) {
+        Ok(o) => o,
+        Err(e) => {
+            let (st, msg) = finish_error(&e, &Options::default());
+            return (st, py.None(), msg);
+        }
+    };
+    let mut err_opts = opts.clone();
+    err_opts.limits.max_output_bytes = err_opts
+        .limits
+        .max_output_bytes
+        .max(Limits::default().max_output_bytes);
+
+    let parse_res = py.detach(|| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if single_doc {
+                load_bytes(input, &opts).map(|doc| vec![doc])
+            } else {
+                load_all_bytes(input, &opts)
+            }
+        }))
+    });
+
+    let docs = match parse_res {
+        Ok(Ok(docs)) => docs,
+        Ok(Err(e)) => {
+            let (st, msg) = finish_error(&e, &err_opts);
+            return (st, py.None(), msg);
+        }
+        Err(_) => {
+            return (3, py.None(), "native panic in yamlprims".to_owned());
+        }
+    };
+
+    let conv_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> Result<Py<PyAny>, Error> {
+            if single_doc {
+                let doc = docs.into_iter().next().ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::Internal,
+                        Site::NotSource { last_known: None },
+                        "expected single document from load_bytes",
+                    )
+                })?;
+                node_to_pyobject(py, doc.root())
+            } else {
+                let list = PyList::empty(py);
+                for doc in &docs {
+                    let obj = node_to_pyobject(py, doc.root())?;
+                    list.append(obj).map_err(|e| {
+                        Error::new(
+                            ErrorKind::Internal,
+                            Site::NotSource { last_known: None },
+                            format!("PyList::append failed: {e}"),
+                        )
+                    })?;
+                }
+                Ok(list.into_any().unbind())
+            }
+        },
+    ));
+
+    match conv_res {
+        Ok(Ok(obj)) => (0, obj, String::new()),
+        Ok(Err(e)) => {
+            let (st, msg) = finish_error(&e, &err_opts);
+            (st, py.None(), msg)
+        }
+        Err(_) => (3, py.None(), "native panic in yamlprims".to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::run_with_panic_guard;
@@ -271,6 +562,7 @@ fn _yamlprims(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_plain, m)?)?;
     m.add_function(wrap_pyfunction!(load_ijson, m)?)?;
     m.add_function(wrap_pyfunction!(emit_wire, m)?)?;
+    m.add_function(wrap_pyfunction!(safe_load_native, m)?)?;
     m.add("DEFAULT_MAX_INPUT_BYTES", def.max_input_bytes)?;
     m.add("DEFAULT_MAX_DEPTH", def.max_depth)?;
     m.add("DEFAULT_MAX_NODES", def.max_nodes)?;

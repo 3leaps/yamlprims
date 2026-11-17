@@ -19,14 +19,17 @@ mod ser;
 mod value;
 mod wire;
 
-pub use emit::{emit, emit_all, emit_all_with, emit_with, CompatQuoting, EmitLimits, EmitOptions};
+pub use emit::{
+    emit, emit_all, emit_all_with, emit_all_writer, emit_all_writer_with, emit_with, emit_writer,
+    emit_writer_with, CompatQuoting, EmitLimits, EmitOptions,
+};
 pub use error::{
     Error, ErrorDetail, ErrorKind, LimitKind, PathSegment, Related, RelatedRole, Site, SyntaxKind,
 };
 pub use ijson::{encode_ijson, load_ijson, load_ijson_bytes, load_ijson_with};
 pub use options::{Limits, MergeKeys, Options, UnknownTags};
 pub use protocol::{Spanned, TaggedValue};
-pub use ser::{to_node, to_string, to_string_with};
+pub use ser::{to_node, to_string, to_string_with, to_writer, to_writer_with};
 pub use value::{
     key_eq, Document, InsertError, Integer, Location, Mapping, Node, NodeSpan, Span, Tag, Tagged,
     Value, Via,
@@ -54,6 +57,17 @@ pub fn load_bytes(input: &[u8], opts: &Options) -> Result<Document, Error> {
     one(build::Loader::new(s, bom, opts).load_all(true)?)
 }
 
+/// Load exactly one document from a byte reader with default options.
+pub fn load_reader<R: std::io::Read>(reader: R) -> Result<Document, Error> {
+    load_reader_with(reader, &Options::default())
+}
+
+/// Load exactly one document from a byte reader under `opts` (spec-v1.6 §10.1).
+pub fn load_reader_with<R: std::io::Read>(reader: R, opts: &Options) -> Result<Document, Error> {
+    let buf = load::read_bounded(reader, opts)?;
+    load_bytes(&buf, opts)
+}
+
 fn one(mut docs: Vec<Document>) -> Result<Document, Error> {
     docs.pop()
         .ok_or_else(|| Error::not_source(ErrorKind::Internal, None, "no document"))
@@ -76,6 +90,20 @@ pub fn load_all_bytes(input: &[u8], opts: &Options) -> Result<Vec<Document>, Err
     build::Loader::new(s, bom, opts).load_all(false)
 }
 
+/// Load every document from a byte reader with default options.
+pub fn load_all_reader<R: std::io::Read>(reader: R) -> Result<Vec<Document>, Error> {
+    load_all_reader_with(reader, &Options::default())
+}
+
+/// Load every document from a byte reader under `opts` (spec-v1.6 §10.1).
+pub fn load_all_reader_with<R: std::io::Read>(
+    reader: R,
+    opts: &Options,
+) -> Result<Vec<Document>, Error> {
+    let buf = load::read_bounded(reader, opts)?;
+    load_all_bytes(&buf, opts)
+}
+
 /// Typed deserialization of one document with default options.
 pub fn from_str<T: DeserializeOwned>(input: &str) -> Result<T, Error> {
     from_str_with(input, &Options::default())
@@ -84,6 +112,31 @@ pub fn from_str<T: DeserializeOwned>(input: &str) -> Result<T, Error> {
 pub fn from_str_with<T: DeserializeOwned>(input: &str, opts: &Options) -> Result<T, Error> {
     let doc = load_with(input, opts)?;
     T::deserialize(de::NodeDe::root(&doc.root, opts))
+}
+
+/// Typed deserialization of one document from raw bytes with default options.
+pub fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Error> {
+    from_slice_with(input, &Options::default())
+}
+
+/// Typed deserialization of one document from raw bytes under `opts` (spec-v1.6 §8.1).
+pub fn from_slice_with<T: DeserializeOwned>(input: &[u8], opts: &Options) -> Result<T, Error> {
+    let doc = load_bytes(input, opts)?;
+    T::deserialize(de::NodeDe::root(&doc.root, opts))
+}
+
+/// Typed deserialization of one document from a byte reader with default options.
+pub fn from_reader<R: std::io::Read, T: DeserializeOwned>(reader: R) -> Result<T, Error> {
+    from_reader_with(reader, &Options::default())
+}
+
+/// Typed deserialization of one document from a byte reader under `opts` (spec-v1.6 §8.1).
+pub fn from_reader_with<R: std::io::Read, T: DeserializeOwned>(
+    reader: R,
+    opts: &Options,
+) -> Result<T, Error> {
+    let buf = load::read_bounded(reader, opts)?;
+    from_slice_with(&buf, opts)
 }
 
 /// Typed deserialization of any node, including hand-built trees.

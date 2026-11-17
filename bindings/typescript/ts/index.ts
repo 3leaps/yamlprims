@@ -5381,6 +5381,24 @@ export function dump(value: unknown, options?: EmitOptionsInput): string {
   return dumpAll([value], options);
 }
 
+export function parse(input: string | Uint8Array, options?: OptionsInput): unknown {
+  const doc = load(input, options);
+  return toPlain(doc, options);
+}
+
+export function parseAll(input: string | Uint8Array, options?: OptionsInput): unknown[] {
+  const docs = loadAll(input, options);
+  return docs.map((d) => toPlain(d, options));
+}
+
+export function stringify(value: unknown, options?: EmitOptionsInput): string {
+  return dump(value, options);
+}
+
+export function stringifyAll(documents: readonly unknown[], options?: EmitOptionsInput): string {
+  return dumpAll(documents, options);
+}
+
 // Internal-only hook for in-repo linear-memory and trap tests (not part of the
 // public TypeScript declarations or supported package surface).
 Object.defineProperty(load, Symbol.for("yamlprims.internal.wasmTestHarness"), {

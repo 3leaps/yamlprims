@@ -2,11 +2,30 @@ package yaml
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"unicode/utf8"
 
 	"github.com/3leaps/yamlprims/yaml/internal/engine"
 )
+
+func readBounded(r io.Reader, opts Options) ([]byte, *Error) {
+	if err := opts.Validate(); err != nil {
+		return nil, err
+	}
+	if r == nil {
+		return nil, newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, "nil io.Reader")
+	}
+	capBytes := int64(opts.Limits.MaxInputBytes) + 1
+	if capBytes <= 0 {
+		capBytes = math.MaxInt64
+	}
+	buf, ioErr := io.ReadAll(io.LimitReader(r, capBytes))
+	if ioErr != nil {
+		return nil, newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, "io read error: "+ioErr.Error())
+	}
+	return buf, nil
+}
 
 // Load parses and resolves a single YAML 1.2 Core Schema document from input
 // using DefaultOptions().
@@ -34,6 +53,27 @@ func LoadBytes(input []byte, opts Options) (Document, *Error) {
 	return docs[0], nil
 }
 
+// LoadBytesWith is an alias for LoadBytes.
+func LoadBytesWith(input []byte, opts Options) (Document, *Error) {
+	return LoadBytes(input, opts)
+}
+
+// LoadReader parses and resolves a single YAML 1.2 Core Schema document from r
+// using DefaultOptions() (spec-v1.6 §10.1, §11.2).
+func LoadReader(r io.Reader) (Document, *Error) {
+	return LoadReaderWith(r, DefaultOptions())
+}
+
+// LoadReaderWith parses and resolves a single YAML 1.2 Core Schema document from
+// r using opts, reading at most MaxInputBytes+1 bytes (spec-v1.6 §10.1, §11.2).
+func LoadReaderWith(r io.Reader, opts Options) (Document, *Error) {
+	buf, err := readBounded(r, opts)
+	if err != nil {
+		return Document{}, err
+	}
+	return LoadBytes(buf, opts)
+}
+
 // LoadAll parses and resolves all YAML 1.2 Core Schema documents in input
 // using DefaultOptions().
 func LoadAll(input string) ([]Document, *Error) {
@@ -50,6 +90,27 @@ func LoadAllWith(input string, opts Options) ([]Document, *Error) {
 // raw bytes using opts.
 func LoadAllBytes(input []byte, opts Options) ([]Document, *Error) {
 	return loadDocuments(input, opts, false)
+}
+
+// LoadAllBytesWith is an alias for LoadAllBytes.
+func LoadAllBytesWith(input []byte, opts Options) ([]Document, *Error) {
+	return LoadAllBytes(input, opts)
+}
+
+// LoadAllReader parses and resolves all YAML 1.2 Core Schema documents from r
+// using DefaultOptions() (spec-v1.6 §10.1, §11.2).
+func LoadAllReader(r io.Reader) ([]Document, *Error) {
+	return LoadAllReaderWith(r, DefaultOptions())
+}
+
+// LoadAllReaderWith parses and resolves all YAML 1.2 Core Schema documents from
+// r using opts, reading at most MaxInputBytes+1 bytes (spec-v1.6 §10.1, §11.2).
+func LoadAllReaderWith(r io.Reader, opts Options) ([]Document, *Error) {
+	buf, err := readBounded(r, opts)
+	if err != nil {
+		return nil, err
+	}
+	return LoadAllBytes(buf, opts)
 }
 
 func loadDocuments(input []byte, opts Options, single bool) ([]Document, *Error) {

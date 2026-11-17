@@ -50,6 +50,10 @@ from yamlprims import (
     load_bytes,
     load_ijson,
     load_plain,
+    safe_dump,
+    safe_dump_all,
+    safe_load,
+    safe_load_all,
     to_plain,
     validate_emit_options,
 )
@@ -568,6 +572,183 @@ class TestApi(unittest.TestCase):
         with self.assertRaises(YamlprimsError) as cm_nl_handle:
             Tag.with_spelling("x:thing", "!e!\n", "thing")
         self.assertEqual(cm_nl_handle.exception.kind, "invalid_options")
+
+    def test_spec_v16_safe_load_and_safe_dump_ergonomics(self) -> None:
+        import io
+
+        # Single-pass native PyO3 safe_load / safe_load_all preserving 128-bit ints, -0.0, NaN, inf
+        doc_yaml = (
+            f"min_i128: {I128_MIN}\n"
+            f"max_u128: {U128_MAX}\n"
+            "neg_zero: -0.0\n"
+            "nan_val: .nan\n"
+            "pinf: .inf\n"
+            "items: [true, null, 'hello']\n"
+        )
+        obj = safe_load(doc_yaml)
+        self.assertEqual(obj["min_i128"], I128_MIN)
+        self.assertEqual(obj["max_u128"], U128_MAX)
+        self.assertTrue(math.copysign(1.0, obj["neg_zero"]) < 0)
+        self.assertTrue(math.isnan(obj["nan_val"]))
+        self.assertTrue(math.isinf(obj["pinf"]) and obj["pinf"] > 0)
+        self.assertEqual(obj["items"], [True, None, "hello"])
+
+        # Multi-doc safe_load_all from StringIO and BytesIO
+        multi_yaml = "a: 1\n---\nb: 2\n"
+        self.assertEqual(safe_load_all(io.StringIO(multi_yaml)), [{"a": 1}, {"b": 2}])
+        self.assertEqual(
+            safe_load_all(io.BytesIO(multi_yaml.encode("utf-8"))),
+            [{"a": 1}, {"b": 2}],
+        )
+
+        # Bounded binary stream reading: never requests more than max_input_bytes + 1
+        class BoundedBinaryStream:
+            def __init__(self, payload: bytes) -> None:
+                self.payload = payload
+                self.offset = 0
+                self.requests: list[int] = []
+
+            def read(self, n: int = -1) -> bytes:
+                self.requests.append(n)
+                chunk = self.payload[self.offset : self.offset + max(0, n)]
+                self.offset += len(chunk)
+                return chunk
+
+        bstream = BoundedBinaryStream(b"a: 1234567890\n")
+        with self.assertRaises(YamlprimsError) as cm_bin_cap:
+            safe_load(bstream, Options(limits=Limits(max_input_bytes=8, max_scalar_bytes=8, max_key_bytes=8, max_owned_bytes=8)))
+        self.assertEqual(cm_bin_cap.exception.kind, "limit_exceeded")
+        self.assertEqual(cm_bin_cap.exception.detail, {"limit": "max_input_bytes", "configured": 8})
+        self.assertEqual(cm_bin_cap.exception.location(), Location(0, 1, 1))
+        self.assertEqual(sum(bstream.requests), 9)  # max_input_bytes + 1
+
+        # Multibyte UTF-8 text stream measured in UTF-8 bytes, not character count
+        tstream = io.StringIO("a: 'ééé'\n")  # 'é' is 2 bytes in UTF-8 -> > 8 bytes
+        with self.assertRaises(YamlprimsError) as cm_txt_cap:
+            safe_load(tstream, Options(limits=Limits(max_input_bytes=8, max_scalar_bytes=8, max_key_bytes=8, max_owned_bytes=8)))
+        self.assertEqual(cm_txt_cap.exception.kind, "limit_exceeded")
+        self.assertEqual(cm_txt_cap.exception.detail["limit"], "max_input_bytes")
+        self.assertEqual(cm_txt_cap.exception.location(), Location(0, 1, 1))
+
+        # Non-conforming streams returning oversized bytearray, memoryview (including itemsize > 1),
+        # or str chunks are rejected BEFORE copying or encoding the oversized chunk.
+        import tracemalloc
+
+        big_ba = bytearray(4 * 1024 * 1024)
+        big_u32 = array.array("I", [0] * (1024 * 1024))  # 4 MiB with itemsize=4
+        big_str = "a" * (4 * 1024 * 1024)
+        tight_in_opts = Options(
+            limits=Limits(max_input_bytes=16, max_scalar_bytes=16, max_key_bytes=16, max_owned_bytes=16)
+        )
+
+        class ConstantChunkStream:
+            def __init__(self, chunk_val: object) -> None:
+                self.chunk_val = chunk_val
+
+            def read(self, n: int = -1) -> object:
+                return self.chunk_val
+
+        for fn in (safe_load, safe_load_all):
+            for oversized_chunk in (
+                big_ba,
+                memoryview(big_ba),
+                memoryview(big_u32),
+                big_str,
+            ):
+                tracemalloc.start()
+                try:
+                    with self.assertRaises(YamlprimsError) as cm_over:
+                        fn(ConstantChunkStream(oversized_chunk), tight_in_opts)
+                    peak = tracemalloc.get_traced_memory()[1]
+                finally:
+                    tracemalloc.stop()
+                self.assertEqual(cm_over.exception.kind, "limit_exceeded")
+                self.assertEqual(cm_over.exception.detail, {"limit": "max_input_bytes", "configured": 16})
+                self.assertEqual(cm_over.exception.location(), Location(0, 1, 1))
+                self.assertLess(peak, 64 * 1024)
+
+        # Surrogate precedence preserved on oversized text stream chunk without encoding buffer
+        surr_str = "a" * 1024 + "\ud800"
+        with self.assertRaises(YamlprimsError) as cm_surr_stream:
+            safe_load(ConstantChunkStream(surr_str), tight_in_opts)
+        self.assertEqual(cm_surr_stream.exception.kind, "invalid_utf8")
+
+        # Option validation runs BEFORE stream.read()
+        class ExplodingReadStream:
+            def __init__(self) -> None:
+                self.called = False
+
+            def read(self, n: int = -1) -> str:
+                self.called = True
+                raise RuntimeError("boom")
+
+        exp_stream = ExplodingReadStream()
+        with self.assertRaises(YamlprimsError) as cm_opt_first:
+            safe_load(exp_stream, merge_keys="not_a_mode")
+        self.assertEqual(cm_opt_first.exception.kind, "invalid_options")
+        self.assertFalse(exp_stream.called)
+
+        # Stream raising exception or returning None / mixed chunks fails closed with Internal
+        with self.assertRaises(YamlprimsError) as cm_read_exc:
+            safe_load(ExplodingReadStream())
+        self.assertEqual(cm_read_exc.exception.kind, "internal")
+
+        class NoneReadStream:
+            def read(self, n: int = -1) -> None:
+                return None
+
+        with self.assertRaises(YamlprimsError) as cm_read_none:
+            safe_load(NoneReadStream())
+        self.assertEqual(cm_read_none.exception.kind, "internal")
+
+        # Loss matrix in safe_load: Tagged -> unknown_tag (at node.span.start); non-string key -> type (expected="plain mapping string key")
+        with self.assertRaises(YamlprimsError) as cm_tag:
+            safe_load("a: !custom hello\n")
+        self.assertEqual(cm_tag.exception.kind, "unknown_tag")
+        self.assertEqual(cm_tag.exception.location(), Location(11, 1, 12))
+
+        with self.assertRaises(YamlprimsError) as cm_ns_key:
+            safe_load("1: one\n")
+        self.assertEqual(cm_ns_key.exception.kind, "type")
+        self.assertEqual(
+            cm_ns_key.exception.detail,
+            {"expected": "plain mapping string key", "found": "int"},
+        )
+        self.assertEqual(cm_ns_key.exception.location(), Location(0, 1, 1))
+
+        # safe_dump / safe_dump_all with stream=None and with short-writing stream
+        self.assertEqual(safe_dump({"flag": "yes"}), "flag: 'yes'\n")
+        self.assertEqual(safe_dump_all([{"a": 1}, {"b": 2}]), "a: 1\n---\nb: 2\n")
+
+        class ShortWriteStream:
+            def __init__(self) -> None:
+                self.chunks: list[str] = []
+                self.max_arg_len = 0
+
+            def write(self, s: str) -> int:
+                if len(self.chunks) > 0:
+                    self.max_arg_len = max(self.max_arg_len, len(s))
+                take = min(3, len(s))
+                self.chunks.append(s[:take])
+                return take
+
+        sw = ShortWriteStream()
+        big_val = {"k": "x" * 2500}
+        res = safe_dump(big_val, stream=sw)
+        self.assertIsNone(res)
+        self.assertEqual("".join(sw.chunks), dump(big_val))
+        self.assertLessEqual(sw.max_arg_len, 1024)
+
+        # Zero writes to stream when OutputLimitExceeded fires
+        sw_fail = ShortWriteStream()
+        with self.assertRaises(YamlprimsError) as cm_dump_fail:
+            safe_dump(
+                list(range(50)),
+                stream=sw_fail,
+                options=EmitOptions(limits=EmitLimits(max_output_bytes=32, max_scalar_bytes=32, max_key_bytes=32)),
+            )
+        self.assertEqual(cm_dump_fail.exception.kind, "output_limit_exceeded")
+        self.assertEqual(sw_fail.chunks, [])
 
 
 if __name__ == "__main__":
