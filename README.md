@@ -10,7 +10,8 @@ and remaining work.
 
 ## What we are building
 
-- **Memory-safe YAML reading and writing:** a safe alternative to `libyaml`-backed loaders and dumpers for YAML 1.2.2 Core data, in Rust, pure Go, TypeScript (WASM) and Python. Loading is bounded by validated resource limits; writing is deterministic 2-space block-first Core emission (`emit` / `emit_all` / `to_string` in Rust, `Emit` / `EmitAll` / `Marshal` in Go, `dump` / `dumpAll` in TypeScript, `dump` / `dump_all` in Python, `yamlprims emit` on the CLI) with `CompatQuoting::Yaml11Safe` by default, so strings such as `yes`, `on`, `010` or `1:30` are quoted and stay strings for YAML 1.1 readers. It is not a drop-in replacement for YAML 1.1 semantics (see below).
+- **Memory-safe YAML reading and writing:** a safe alternative to `libyaml`-backed loaders and dumpers for YAML 1.2.2 Core data, in Rust, pure Go, TypeScript (WASM) and Python. Loading is bounded by validated resource limits across strings, byte slices, and readers (`from_str`, `load_bytes`, and `v0.3.0+` `from_slice` / `from_reader` / `load_reader` in Rust; `Load`, `LoadBytes`, and `v0.3.0+` `LoadReader` / `Unmarshal` / `UnmarshalReader` in Go; `load` and `v0.3.0+` `parse` / `parseAll` in TypeScript; `load` and `v0.3.0+` `safe_load` / `safe_load_all` in Python); writing is deterministic 2-space block-first Core emission (`emit` / `emit_all` / `to_string` and `v0.3.0+` `emit_writer` / `emit_all_writer` / `to_writer` in Rust, `Emit` / `EmitAll` / `Marshal` and `v0.3.0+` `EmitWriter` / `EmitAllWriter` / `MarshalWriter` in Go, `dump` / `dumpAll` and `v0.3.0+` `stringify` / `stringifyAll` in TypeScript, `dump` / `dump_all` and `v0.3.0+` `safe_dump` / `safe_dump_all` in Python, `yamlprims emit` on the CLI) with `CompatQuoting::Yaml11Safe` by default, so strings such as `yes`, `on`, `010` or `1:30` are quoted and stay strings for YAML 1.1 readers. See the [libyaml migration guide](docs/migrating-from-libyaml.md) for side-by-side replacements and semantic differences.
+- **YAML 1.1 → YAML 1.2.2 Core migration lint (`v0.3.0+`):** `lint_yaml11` (Rust and Python), `LintYAML11` (Go), `lintYaml11` (TypeScript), `encode_lint` (`yamlprims-lint/1`), and `yamlprims check --lint-yaml11 [--format=text|json]` (CLI) inspect YAML streams for four closed classes of unquoted YAML 1.1 compatibility hazards (`yaml11_boolean`, `yaml11_number`, `yaml11_sexagesimal`, `yaml11_merge_key`) with exact source spans and structured paths.
 - **YAML to canonical JSON:** strict RFC 7493 I-JSON projection (`load_ijson` / `encode_ijson` in Rust, `LoadIJSON` / `EncodeIJSON` in Go, `loadIjson` in TypeScript, `load_ijson` in Python, `yamlprims dump --ijson` on the CLI) admits only single documents with string keys, finite numbers within the interoperable ranges and no Unicode noncharacters, so its output can be canonicalized with RFC 8785 JCS by [canonprims](https://github.com/3leaps/canonprims) (see [Reading, writing and canonical JSON](#reading-writing-and-canonical-json)).
 - **Strict YAML 1.2.2 Core Schema data layer:** Owned values with exact 128-bit integers (`i128::MIN..=u128::MAX`), IEEE 754 `f64` floats, arbitrary mapping keys (`Value::key_eq`), retained non-core tags (`UnknownTags::Preserve` by default or `UnknownTags::Reject`), and strict flow/block indentation ([ADR-0003](docs/decisions/ADR-0003-strict-indentation.md)). YAML 1.1 boolean words (`yes`, `no`, `on`, `off`, `y`, `n`) resolve as plain strings.
 - **Explicit duplicate-key, `NaN`-key and merge policies:** Duplicate mapping keys are always rejected (`ErrorKind::DuplicateKey` with `RelatedRole::FirstDefinition`), `NaN` keys are rejected (`ErrorKind::InvalidKey`), and `<<` merge directives default to `MergeKeys::Reject` with explicit opt-in `MergeKeys::Apply` or `MergeKeys::AsKey` ([ADR-0001](docs/decisions/ADR-0001-explicit-merge-policy.md)).
@@ -22,14 +23,13 @@ and remaining work.
   - **TypeScript ([`bindings/typescript/`](bindings/typescript/README.md), `@3leaps/yamlprims`):** Isolated `wasm32-unknown-unknown` WebAssembly module with zero WASM imports and pre-copy linear-memory bounds (no native Node-API addons).
   - **Python ([`bindings/python/`](bindings/python/README.md), `yamlprims`):** Standalone `PyO3/maturin` (`abi3-py310`, `#![forbid(unsafe_code)]` in crate, crossing CPython's C-extension ABI via `PyO3`) binding isolated from the root Cargo workspace.
 
-The Rust implementation uses `granit-parser` as its internal event source; the pure-Go twin implements its own standard-library scanner/parser and resolver against the applicable `yamlprims` specification semantics and [ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md). `yamlprims` owns the value, policy and error contract; it does not expose backend types or promise drop-in compatibility with YAML 1.1 or `unsafe-libyaml`-backed loaders. Current `v0.2.2` runtime scope covers M1/M2/M3 loading, validation, typed `serde::Deserialize` and `serde::Serialize`, canonical `yamlprims-value/1` wire encoding and symmetric `decode_wire`, plain JSON projection (`encode_plain` / `to_plain`), deterministic 2-space block-first Core YAML emission (`emit` / `Emit` / `dump` with `CompatQuoting::Yaml11Safe` default), strict RFC 7493 I-JSON projection (`encode_ijson` / `EncodeIJSON` / `loadIjson` / `load_ijson`), and checked caller-tree constructors (`spec-v1.5`, [ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)), while M4 additions (fused iterator, migration lint, Failsafe schema) remain consumer-gated. It performs no includes, environment interpolation or network access.
+The Rust implementation uses `granit-parser` as its internal event source; the pure-Go twin implements its own standard-library scanner/parser and resolver against the applicable `yamlprims` specification semantics and [ADR-0004](docs/decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md). `yamlprims` owns the value, policy and error contract; it does not expose backend types or promise drop-in compatibility with YAML 1.1 or `unsafe-libyaml`-backed loaders. Runtime scope covers M1–M3 plus the M4 migration lint (`v0.3.0+`): loading and bounded reader/writer ergonomics, validation, typed `serde::Deserialize` / `serde::Serialize` and Go `Unmarshal` / `Marshal`, canonical `yamlprims-value/1` wire encoding and symmetric `decode_wire`, plain JSON projection (`encode_plain` / `to_plain`, plus `v0.3.0+` `parse` / `safe_load`), deterministic 2-space block-first Core YAML emission (`emit` / `Emit` / `dump`, plus `v0.3.0+` `stringify` / `safe_dump` with `CompatQuoting::Yaml11Safe` default), strict RFC 7493 I-JSON projection (`encode_ijson` / `EncodeIJSON` / `loadIjson` / `load_ijson`), YAML 1.1 migration lint (`v0.3.0+` `lint_yaml11` / `LintYAML11` / `lintYaml11` and `yamlprims-lint/1`), and checked caller-tree constructors (`spec-v1.6`, [ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)), while incremental document iteration and the Failsafe schema remain consumer-gated. It performs no includes, environment interpolation or network access.
 
 ## Status and participation
 
-Current draft specification: [Revision 1.6](docs/spec/yamlprims-spec.md)
-(`SPEC_VERSION` `1.6`, specifying proposed `v0.3.0` reader/writer and host
-ergonomics, YAML 1.1 migration lint, and CLI contract freeze — not yet
-implemented). Latest tagged specification:
+Current specification: [Revision 1.6](docs/spec/yamlprims-spec.md)
+(`SPEC_VERSION` `1.6`, specifying reader/writer and host ergonomics, YAML 1.1
+migration lint, and the frozen CLI contract). Latest tagged specification:
 [**spec-v1.5**](https://github.com/3leaps/yamlprims/tree/spec-v1.5)
 ([ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
 Earlier specification tags (`spec-v1.0` through `spec-v1.5`) and their file digests remain immutable, including
@@ -70,15 +70,14 @@ $ yamlprims dump --ijson config.yaml | canonprims jcs
 {"a":[1,1e+21],"b":2,"on":"yes"}
 ```
 
-The same from Python (`pip install yamlprims`):
+The same from Python (`pip install yamlprims`; `safe_load` / `safe_dump` in `v0.3.0+`):
 
 ```python
-import json
 import yamlprims
 
-value = json.loads(yamlprims.load_plain("name: demo\nenabled: on\nports: [80, 443]\n"))
+value = yamlprims.safe_load("name: demo\nenabled: on\nports: [80, 443]\n")  # v0.3.0+
 # {'name': 'demo', 'enabled': 'on', 'ports': [80, 443]}
-print(yamlprims.dump(value), end="")
+print(yamlprims.safe_dump(value), end="")  # v0.3.0+ (or yamlprims.dump(value) in v0.2.0+)
 # name: demo
 # enabled: 'on'
 # ports:

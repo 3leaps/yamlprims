@@ -13,7 +13,9 @@ import {
   dumpAll,
   encode,
   encodeError,
+  encodeLint,
   encodePlain,
+  lintYaml11,
   loadAllBytes,
   loadBytes,
   loadIjson,
@@ -79,7 +81,7 @@ test("conformance/vectors/cases.jsonl wire, round-trip, and plain parity", () =>
       assert.equal(decoded.kind, "error", `${id}: expected error envelope`);
       const rt = encodeError(decoded.error, defOpts);
       assert.equal(rt, wire, `${id}: syntax_code round-trip mismatch`);
-      outLines.push(JSON.stringify({ id, emit: "", ijson: "", plain: "", wire }));
+      outLines.push(JSON.stringify({ id, emit: "", ijson: "", lint: "", plain: "", wire }));
       continue;
     }
 
@@ -185,7 +187,21 @@ test("conformance/vectors/cases.jsonl wire, round-trip, and plain parity", () =>
       ijson = encodeError(err, rtOpts);
     }
 
-    outLines.push(JSON.stringify({ id, emit, ijson, plain, wire }));
+    let lint = "";
+    try {
+      const lintRes = lintYaml11(inputBytes, opts);
+      try {
+        lint = encodeLint(lintRes, opts);
+      } catch (encErr) {
+        if (!(encErr instanceof YamlprimsError)) throw encErr;
+        lint = encodeError(encErr, rtOpts);
+      }
+    } catch (err) {
+      if (!(err instanceof YamlprimsError)) throw err;
+      lint = encodeError(err, rtOpts);
+    }
+
+    outLines.push(JSON.stringify({ id, emit, ijson, lint, plain, wire }));
   }
 
   if (process.env.YAMLPRIMS_RESULTS_OUT) {

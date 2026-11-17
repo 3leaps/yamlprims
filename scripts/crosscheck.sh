@@ -136,11 +136,13 @@ for r, g in zip(rust_lines, go_lines):
         mismatches.append(f"{rid} [emit]:\n  rust: {r['emit']!r}\n  go:   {g['emit']!r}")
     if r["ijson"] != g["ijson"]:
         mismatches.append(f"{rid} [ijson]:\n  rust: {r['ijson']}\n  go:   {g['ijson']}")
+    if r.get("lint", "") != g.get("lint", ""):
+        mismatches.append(f"{rid} [lint]:\n  rust: {r.get('lint', '')}\n  go:   {g.get('lint', '')}")
 
 if mismatches:
     for m in mismatches[:20]:
         print("FAIL:", m, file=sys.stderr)
     sys.exit(f"crosscheck FAILED: {len(mismatches)} mismatches out of {len(records)} checks")
 
-print(f"crosscheck PASS: {vector_count} local vectors + {corpus_count} structcorpus expectations ({len(records)} total) byte-identical across wire, DecodeWire round-trip, plain JSON, emit_all, and encode_ijson")
+print(f"crosscheck PASS: {vector_count} local vectors + {corpus_count} structcorpus expectations ({len(records)} total) byte-identical across wire, DecodeWire round-trip, plain JSON, emit_all, encode_ijson, and encode_lint")
 PY

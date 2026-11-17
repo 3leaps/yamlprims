@@ -1638,6 +1638,7 @@ func runCrosscheckJSONL() int {
 				"plain":     "",
 				"emit":      "",
 				"ijson":     "",
+				"lint":      "",
 			}))
 			continue
 		}
@@ -1859,6 +1860,29 @@ func runCrosscheckJSONL() int {
 			ijsonOut = ij
 		}
 
+		var lintOut string
+		lres, lintErr := yaml.LintYAML11Bytes(input, opts)
+		if lintErr != nil {
+			lw, e2 := yaml.EncodeError(lintErr, rtOpts)
+			if e2 != nil {
+				fmt.Fprintf(os.Stderr, "%s: LintYAML11Bytes EncodeError: %v\n", id, e2)
+				return 2
+			}
+			lintOut = lw
+		} else {
+			lw, encLintErr := yaml.EncodeLintWith(lres, opts)
+			if encLintErr != nil {
+				lw2, e2 := yaml.EncodeError(encLintErr, rtOpts)
+				if e2 != nil {
+					fmt.Fprintf(os.Stderr, "%s: EncodeLintWith EncodeError: %v\n", id, e2)
+					return 2
+				}
+				lintOut = lw2
+			} else {
+				lintOut = lw
+			}
+		}
+
 		fmt.Println(mustJSON(map[string]any{
 			"id":        id,
 			"wire":      wire,
@@ -1866,6 +1890,7 @@ func runCrosscheckJSONL() int {
 			"plain":     plain,
 			"emit":      emitOut,
 			"ijson":     ijsonOut,
+			"lint":      lintOut,
 		}))
 	}
 	return 0
