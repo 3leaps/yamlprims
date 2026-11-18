@@ -80,7 +80,7 @@ Key takeaways:
 
 In-process conformance qualification (`conformance/requalify.sh` and `make crosscheck` / `make ts-check` / `make python-check`) verifies:
 - **`structcorpus` `b52fcd090d6879a0bd58ec5a5496c6a4de90504e` (`conformance/pins/pin-b52fcd0.json`):** `61,366` corpus cases / `90,988` expectations across `20` profile rows (`spec-v1.0` through `spec-v1.5`), including `load -> emit_all_with -> load` semantic round-trip across every positive value expectation in both Rust and pure Go.
-- **In-repo 4-binding differential vectors (`conformance/vectors/cases.jsonl`):** `188` cases (`2,454` Rust/Go `crosscheck` assertions) byte-identical across Rust, pure Go, TypeScript WASM, and Python `PyO3` for `yamlprims-value/1`, `decode_wire`, plain JSON, `emit_all`, `encode_ijson`, and `yamlprims-lint/1` `encode_lint`.
+- **In-repo 4-binding differential vectors (`conformance/vectors/cases.jsonl`):** `188` cases byte-identical across Rust, pure Go, TypeScript WASM, and Python `PyO3` for `yamlprims-value/1`, `decode_wire`, plain JSON, `emit_all`, `encode_ijson`, and `yamlprims-lint/1` `encode_lint`.
 
 ---
 
