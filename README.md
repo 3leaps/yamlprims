@@ -5,7 +5,7 @@ starting with the contract.**
 
 The repository contains the [specification](docs/spec/yamlprims-spec.md),
 [build specification](docs/build-spec.md), [decision records](docs/decisions/README.md),
-the `Profile B` Rust (`crates/yamlprims`, `yamlprims` on crates.io) and pure-Go (`github.com/3leaps/yamlprims/yaml`) cores, isolated TypeScript WASM (`bindings/typescript/`, `@3leaps/yamlprims` on npm) and Python `PyO3/maturin` (`bindings/python/`, `yamlprims` on PyPI) bindings, and the [CLI](crates/yamlprims-cli/README.md). See [implementation status](docs/implementation.md) and the [v0.2.2 release notes](docs/releases/v0.2.2.md) for current coverage
+the `Profile B` Rust (`crates/yamlprims`, `yamlprims` on crates.io) and pure-Go (`github.com/3leaps/yamlprims/yaml`) cores, isolated TypeScript WASM (`bindings/typescript/`, `@3leaps/yamlprims` on npm) and Python `PyO3/maturin` (`bindings/python/`, `yamlprims` on PyPI) bindings, and the [CLI](crates/yamlprims-cli/README.md). See [implementation status](docs/implementation.md), the [v0.3.0 release notes](docs/releases/v0.3.0.md), and the [libyaml migration guide](docs/migrating-from-libyaml.md) for current coverage
 and remaining work.
 
 ## What we are building
@@ -30,7 +30,7 @@ The Rust implementation uses `granit-parser` as its internal event source; the p
 Current specification: [Revision 1.6](docs/spec/yamlprims-spec.md)
 (`SPEC_VERSION` `1.6`, specifying reader/writer and host ergonomics, YAML 1.1
 migration lint, and the frozen CLI contract). Latest tagged specification:
-[**spec-v1.5**](https://github.com/3leaps/yamlprims/tree/spec-v1.5)
+[**spec-v1.6**](https://github.com/3leaps/yamlprims/tree/spec-v1.6)
 ([ADR-0005](docs/decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
 Earlier specification tags (`spec-v1.0` through `spec-v1.5`) and their file digests remain immutable, including
 historical draft-status wording. A specification tag may include in-development

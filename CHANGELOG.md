@@ -8,6 +8,19 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
+### Added
+
+- Bounded byte-slice, reader, and writer entrypoints across Rust (`load_reader*`, `load_all_reader*`, `from_slice*`, `from_reader*`, `to_writer*`, `emit_writer*`, `emit_all_writer*`) and pure Go (`LoadBytesWith`, `LoadAllBytesWith`, `LoadReader*`, `LoadAllReader*`, `EmitWriter*`, `EmitAllWriter*`, `MarshalWriter*`, and typed `Unmarshal*` with `math/big.Int` support, default unknown-struct-field rejection, iterative finite pointer-chain unwrapping, and pointer-cycle rejection) (`spec-v1.6 §9`, `§10.2`, `§11.2`).
+- Single-pass native `PyO3` `safe_load`, `safe_load_all`, and buffered `safe_dump`, `safe_dump_all` in Python (`bindings/python`, enforcing pre-copy chunk byte caps on file-like streams and materializing plain Python values up to 128-bit integers without a JSON round-trip), plus `parse`, `parseAll`, `stringify`, and `stringifyAll` plain-value helpers in TypeScript (`bindings/typescript`) (`spec-v1.6 §11.2`, `§11.5`).
+- YAML 1.1 → YAML 1.2.2 Core migration lint (`spec-v1.6 §10.3`, `§11.7`) across Rust (`LintCode`, `LintDiagnostic`, `LintResult`, `lint_yaml11*`, `encode_lint`), pure Go (`LintCode`, `LintDiagnostic`, `LintResult`, `LintYAML11*`, `EncodeLint*`), TypeScript (`LintCode`, `lintYaml11`, `encodeLint`), Python (`LINT_CODES`, `lint_yaml11`, `encode_lint`), and the CLI (`yamlprims check --lint-yaml11 [--format=text|json]`), with `max_warnings` (`1,000`) pre-formatting retention admission, fixed-buffer streaming diagnostic formatting (`1,024` / `4,096` bytes), and zero-clone error-path transfer on budget abort.
+- 12 `spec-v1.6` YAML 1.1 migration lint conformance vectors in `conformance/vectors/cases.jsonl` (`188` total in-repo vectors verified byte-identically across Rust, Go, TypeScript, and Python), and the [libyaml migration guide](docs/migrating-from-libyaml.md).
+
+### Changed
+
+- Normatively froze the `yamlprims-cli` command-line contract (`spec-v1.6 §10.4`): `check`, `dump`, and `emit` with global `--merge=reject|apply|as_key`, emit-only `--compat-quoting=yaml11-safe|core-only`, `--max-output-bytes` on `dump`, `emit`, and `check --lint-yaml11 --format=json`, whole-payload buffered `stdout`, and exit codes `0`, `1`, `2`.
+
 ## [0.2.2] - 2026-11-13
 
 ### Added
@@ -81,7 +94,8 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 - Conformance qualification against `conformance/pins/pin-c8b7421.json` (`structcorpus` `c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99`, 19 profile rows across `spec-v1.0` through `spec-v1.4`, `61,360` corpus cases / `90,982` expectations) and 154 in-repo differential conformance vectors (`conformance/vectors/cases.jsonl`).
 - Dual-track signed release, packaging, and provenance verification workflows and scripts (`.github/workflows/release.yml`, `.github/workflows/crates-verify.yml`, `.github/workflows/registry-publish.yml`, `scripts/release-*.sh`, `scripts/release-*.py`, `scripts/check-packages.sh`, `scripts/deps-check.sh`, `scripts/doctor.py`) supporting OpenPGP + Minisign release signing, zero-compile `crates.io` publication, and OIDC Trusted Publishing with PyPI PEP 740 and npm Sigstore provenance verification.
 
-[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/3leaps/yamlprims/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/3leaps/yamlprims/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/3leaps/yamlprims/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/3leaps/yamlprims/compare/v0.1.1...v0.2.0
