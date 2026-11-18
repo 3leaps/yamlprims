@@ -13,6 +13,20 @@ root="$(cd "$(dirname "$0")/.." && pwd -P)"
 # Test imports must not leave bytecode in the source tree.
 export PYTHONDONTWRITEBYTECODE=1
 cd "$root"
+# The suites use synthetic fixtures only, so the operator's release
+# environment (signing identity, tag, commit, anchor, message directory) must
+# not reach them. Keep only the two tool paths documented above.
+for name in $(compgen -e -X '!YAMLPRIMS_*'); do
+	case "$name" in
+	YAMLPRIMS_YAML_BIN | YAMLPRIMS_DECERNOR_BIN) ;;
+	*) unset "$name" ;;
+	esac
+done
+leaked="$(compgen -e -X '!YAMLPRIMS_*' | grep -Evx 'YAMLPRIMS_(YAML|DECERNOR)_BIN' || true)"
+[[ -z "$leaked" ]] || {
+	echo "error: release environment still set for the tooling suites: $leaked" >&2
+	exit 1
+}
 # Every *.test.sh in scripts/ runs, and the set must equal
 # config/release/tooling-suites.txt: adding or deleting a suite is a reviewed
 # change to that list.
