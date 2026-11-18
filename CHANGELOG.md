@@ -8,7 +8,7 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-17
+## [0.3.0] - 2026-11-18
 
 ### Added
 
