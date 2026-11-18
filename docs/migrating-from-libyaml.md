@@ -10,8 +10,7 @@ replacing `libyaml`-lineage or YAML 1.1 libraries (`PyYAML`, `serde_yaml` /
 `unsafe-libyaml`, `gopkg.in/yaml.v2` & `yaml.v3`, `js-yaml`). It is **not** a
 C-ABI drop-in for `libyaml` and does not perform comment- or formatting-preserving
 concrete syntax tree (CST) editing (see
-[ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md) and
-[benchmarks.md](benchmarks.md)).
+[ADR-0005](decisions/ADR-0005-data-layer-emitter-and-ijson-projection.md)).
 
 ---
 
