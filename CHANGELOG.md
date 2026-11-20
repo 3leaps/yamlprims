@@ -8,6 +8,10 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+### Changed
+
+- The workflow digest and permission checkers run the published `yamlprims` v0.3.0 CLI: `config/yamlprims-cli.txt` pins the v0.3.0 release archives and binary digests, and the minimum version is now 0.3.0.
+
 ## [0.3.0] - 2026-11-18
 
 ### Added

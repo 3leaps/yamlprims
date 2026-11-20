@@ -239,7 +239,12 @@ def resolved_with(binary):
 
 
 expect("does not identify as yamlprims", resolved_with(stub("other", 'echo "other 1.0.0"')))
-expect("yamlprims >= 0.1.0 required (have 0.0.9)", resolved_with(stub("old", 'echo "yamlprims 0.0.9"')))
+minimum = ".".join(map(str, ym.read_config()[0]))
+expect(f"yamlprims >= {minimum} required (have 0.0.9)", resolved_with(stub("old", 'echo "yamlprims 0.0.9"')))
+# A release without the version flag probes as 0.1.0, below the committed minimum.
+if ym.read_config()[0] > ym.FIRST_RELEASE:
+    expect(f"yamlprims >= {minimum} required (have 0.1.0)", resolved_with(stub(
+        "noversion", 'echo "usage: yamlprims <command>" >&2; exit 2')))
 expect("does not produce the yamlprims plain JSON contract", resolved_with(stub(
     "drift", f'[[ "$1" == --version ]] && exec "{real}" "$@"\ncat >/dev/null\nprintf "{{\\"on\\":\\"push\\"}}\\n"')))
 expect("does not refuse a duplicate key", resolved_with(stub(
