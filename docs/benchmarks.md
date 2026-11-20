@@ -23,13 +23,13 @@ orders of magnitude, not small differences.
 
 | Item | Value |
 | --- | --- |
-| `docpresser` | `v0.2.1` (commit `a8dd276`), built from the signed tag; every run manifest records `docpresser_version` `0.2.1` |
+| `docpresser` | `v0.2.1` (commit `a8dd276`), built from the signed tag with Go `1.26.10`; every run manifest records `docpresser_version` `0.2.1` |
 | `yamlprims-rust` driver | `yamlprims` `=0.3.0` from crates.io, built with `--locked` from the committed `drivers/yamlprims-rust/Cargo.lock` |
 | `yamlprims-go` driver | `github.com/3leaps/yamlprims` `v0.3.0`, `canonprims` `v0.1.5` |
 | `go-yamlv3` baseline | `gopkg.in/yaml.v3` `v3.0.1` |
 | PyYAML baselines | PyYAML `6.0.3` on Python `3.14.6`: `SafeLoader` (`python-pyyaml-safe`) and `CSafeLoader` with libyaml `0.2.5` (`python-pyyaml-csafe`) |
 | `node-yaml` baseline | `js-yaml` `4.1.0` on Node.js `v22.23.4` |
-| Host | Apple M2 Max, macOS (`darwin/arm64`), 64 GiB; Rust `1.89.0`, Go `1.27.4` |
+| Host | Apple M2 Max, macOS (`darwin/arm64`), 64 GiB; drivers built with Rust `1.89.0` and Go `1.27.4` |
 | Packs | generated with `--seed 424242 --scale large` |
 
 Subject versions are the ones each driver reported in its handshake and are
@@ -39,8 +39,8 @@ recorded in each run's `run-manifest.json`.
 
 Pack `diabolical-alias-pyramid` (SHA-256 `a302670a66879c279d772b2d06a893fef67d5504dea701cb586d4412d1ff0745`), three cases, each with a 2,000 ms wall-clock timeout and a declared 64 MiB RSS budget:
 
-- `alias-pyramid` (734 bytes): 23 anchors, each a sequence of four aliases to the previous one, so full expansion is 4^22 leaves.
-- `anchor-churn` (286,000 bytes): 2,600 redefinitions of the anchor `&shared` and 10,400 `*shared` aliases.
+- `alias-pyramid` (734 bytes): one scalar anchor followed by 22 anchored sequences, each holding four aliases to the previous anchor, so the last value alone expands to 4^22 scalars.
+- `anchor-churn` (286,000 bytes): 2,600 definitions of the anchor `&shared` and 10,400 `*shared` aliases.
 - `deep-nesting` (322 bytes): 160 nested flow sequences.
 
 **Target run `v030-diabolical-containment`**: verdict `pass`. Both `yamlprims` drivers refused all three cases with `limit_exceeded` (6 of 6 `refused_bounded`). Observations SHA-256 `6e4fd894f49e1dbcb9f788f4e61b7fa6880e6ba41fe80e4fe36e37c06fc0390e`.
@@ -50,14 +50,15 @@ Pack `diabolical-alias-pyramid` (SHA-256 `a302670a66879c279d772b2d06a893fef67d55
 | Subject | `alias-pyramid` | `anchor-churn` | `deep-nesting` | Peak RSS |
 | --- | --- | --- | --- | ---: |
 | `yamlprims-rust` | refused, `limit_exceeded` (31 ms) | refused, `limit_exceeded` (63 ms) | refused, `limit_exceeded` (13 ms) | 27.0 MiB |
-| `yamlprims-go` | refused, `limit_exceeded` (79 ms) | refused, `limit_exceeded` (306 ms) | refused, `limit_exceeded` (19 ms) | 38.5 MiB |
-| `go-yamlv3` | refused (alias-ratio error, 27 ms) | **accepted** (392 ms) | **accepted** (21 ms) | 54.8 MiB |
+| `yamlprims-go` | refused, `limit_exceeded` (79 ms) | refused, `limit_exceeded` (305 ms) | refused, `limit_exceeded` (19 ms) | 38.5 MiB |
+| `go-yamlv3` | refused (`yaml_v3_error`, phase `limit`, 27 ms) | **accepted** (392 ms) | **accepted** (21 ms) | 54.8 MiB |
 | `python-pyyaml-safe` | **timeout** (killed at 2,007 ms) | refused (`ComposerError`, 125 ms) | **accepted** (122 ms) | **303.1 MiB** |
 | `python-pyyaml-csafe` | **timeout** (killed at 2,012 ms) | refused (`ComposerError`, 160 ms) | **accepted** (82 ms) | **243.2 MiB** |
 
-Both PyYAML loaders were still expanding the alias pyramid when the timeout
-killed them, by then well past the declared 64 MiB budget. `docpresser` records
-the overshoot; it does not prevent it.
+Both PyYAML drivers were still running on the alias pyramid when the timeout
+killed them, by then well past the declared 64 MiB budget. The evidence does not
+record whether the time went to loading or to the driver's conversion of the
+loaded value. `docpresser` records the overshoot; it does not prevent it.
 
 ## 2. YAML 1.1 → YAML 1.2.2 Core Migration Divergence
 
@@ -109,6 +110,7 @@ From a checkout of the signed `docpresser` `v0.2.1` tag, outside the
 
 ```sh
 git tag -v v0.2.1
+git checkout --detach v0.2.1
 make build
 make driver-yamlprims-rust
 (cd drivers/yamlprims-go && go build -o ../../bin/driver-yamlprims-go .)
