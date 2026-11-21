@@ -59,11 +59,15 @@ ceiling is available. The Go `Fuzz*` targets run their seed corpora under
 `fuzz-replay` prints the target and the failure kind only; full logs stay in a
 temporary directory. `fuzz-smoke` uses `YAMLPRIMS_FUZZ_OUT` (default: a new
 temporary directory), which must be outside the working tree. Each run takes
-an exclusive `flock` on that directory's lock file, and every process of the
-run inherits the locked descriptor. A second run is refused while any process
-of the first still holds it, even if the first run's wrapper was killed; the
-kernel releases the lock when the last holder exits, and the lock file is never
-removed. The run writes its
+an exclusive `flock` on that directory's lock file. The locked descriptor is
+passed to the campaign shell and is inherited by the processes it starts that
+keep inherited descriptors open (the libFuzzer targets and cargo). A second run
+is refused while any process that still holds the descriptor is alive, even if
+the first run's wrapper was killed; the kernel releases the lock when the last
+holder exits, and the lock file is never removed. A subprocess that closes
+inherited descriptors, such as the differential's drivers (started with Python's
+default `close_fds`), does not hold the lock, so if it outlives every holder it
+is no longer excluded. The run writes its
 logs, failing inputs, differential report and `campaign.json` record into its
 own new directory under `runs/`. Only the corpora under `corpus/` are shared
 between runs: seeds enter them by exclusive creation (a name already present

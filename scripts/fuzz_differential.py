@@ -374,11 +374,13 @@ def _open_lock(out):
 
 def hold_lock(out, cmd):
     """Run CMD while holding an exclusive, non-blocking flock on OUT's lock
-    file. The locked descriptor is inherited by CMD and everything it starts
-    (its number is in YAMLPRIMS_FUZZ_LOCK_FD). A flock belongs to the open
-    file description, so the lock stays held while any process of the
-    campaign still has it open, even if this wrapper is killed, and the
-    kernel releases it when the last one exits. The file is never removed.
+    file. The locked descriptor is passed to CMD (its number is in
+    YAMLPRIMS_FUZZ_LOCK_FD) and is inherited by subprocesses that keep
+    inherited descriptors open. A flock belongs to the open file description,
+    so the lock stays held while any process that still has it open is alive,
+    even if this wrapper is killed, and the kernel releases it when the last
+    holder exits. Subprocesses started with close_fds (e.g. run_batch's
+    drivers) do not hold it. The file is never removed.
     A child killed by signal N exits this wrapper with status 128+N."""
     import fcntl
     import signal
