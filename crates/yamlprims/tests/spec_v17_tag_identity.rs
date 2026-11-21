@@ -1,6 +1,6 @@
 //! Revision 1.7 resolved tag identity and `%TAG` separation (spec §4.4, §7.1, §11.1).
 //! Expected kinds and source coordinates are written from the specification text,
-//! not captured from the implementation, except the two cases labelled as pinned
+//! not captured from the implementation, except the cases individually labelled as pinned
 //! engine/profile compatibility expectations, whose codes come from the pinned
 //! engine and whose coordinates were still counted by hand.
 use yamlprims::{

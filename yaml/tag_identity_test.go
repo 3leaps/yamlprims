@@ -5,7 +5,7 @@ import "testing"
 // Revision 1.7 resolved tag identity and %TAG separation (spec §4.4, §7.1, §11.1).
 // Expected codes and coordinates are written from the specification text, not
 // captured from the implementation, and match the Rust core's expectations. The
-// two cases labelled as pinned engine/profile compatibility expectations take
+// cases individually labelled as pinned engine/profile compatibility expectations take
 // their codes from the pinned engine; their coordinates were counted by hand.
 
 type tagIdentityCase struct {
