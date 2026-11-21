@@ -325,7 +325,7 @@ affect resolution. A major version other than 1 is an
 - **Resolved tag identity (revision 1.7).** YAML 1.2.2 §6.9.1 requires every
   verbatim tag and every expanded shorthand tag to be a local tag or a valid
   URI, and §6.8.2.2 requires a global tag prefix to yield one. The scanner's
-  lexical grammar (`[86] ns-global-tag-prefix`, `[91] c-verbatim-tag`) accepts
+  lexical grammar (YAML 1.2.2 productions `[95] ns-global-tag-prefix` and `[98] c-verbatim-tag`) accepts
   any `ns-uri-char+` sequence, so loading checks the resolved identity instead:
   after the existing percent decoding (no second decoding, no normalization),
   every node tag other than the bare non-specific `!` token MUST resolve to a local tag
@@ -3016,6 +3016,7 @@ their pinned profiles remain unchanged.
 | E-1 | §3, §4.4, §7.1, §10.2, §11.1 | Refuse, during bounded source validation, a resolved node tag identity other than the bare non-specific `!` token (so including verbatim `!<!>`) that is neither a local tag (`!` plus at least one character) nor an identity starting with an RFC 3986 §3.1 scheme and `:` (YAML 1.2.2 §6.8.2.2, §6.9.1), as `Syntax(InvalidGlobalTagCharacter)` at `tag_start`, before construction and the `unknown_tags` policy; validate a `%TAG` prefix by its expansions on use; extend the documented meaning of `invalid_global_tag_character` accordingly without changing the 81-code vocabulary or wire version `1`. Revision 1.6 loaded such identities, which `emit*` and `decode_wire` refused. |
 | E-2 | §7.1 | Require a space or tab between a `%TAG` handle and its prefix (YAML 1.2.2 productions [88], [66]); a prefix that immediately follows the handle is `Syntax(ExpectedWhitespace)` at the first prefix character, including for an unused directive, checked where the parser processes the prologue directive in event order. |
 | E-3 | §4.4, §7.1 | Pin named tag handles to `!` + `[0-9A-Za-z-]+` + `!` (YAML 1.2.2 productions [38], [92]): a `%TAG` directive with any other named handle is `Syntax(ExpectedTagDirectiveBang)` at the directive start, used or not, and a tag using one is `Syntax(InvalidTagTerminator)` at `tag_start`. Underscores remain valid in primary local tags, suffixes and URIs. |
+| E-4 | §4.4 | Correct the YAML 1.2.2 production numbers cited for the global tag prefix and the verbatim tag to `[95] ns-global-tag-prefix` and `[98] c-verbatim-tag` (revision 1.6 cited `[86]` and `[91]`). |
 
 Wire grammar version 1 (`yamlprims-value/1`), the 81-code `SyntaxKind`
 vocabulary and the §6 subtree-weight formula are unchanged.
