@@ -214,3 +214,73 @@ func TestSpecV17ScannerFailureAtEndOfInputWithDirectiveText(t *testing.T) {
 		}
 	}
 }
+
+// Codes marked "pinned" are pinned engine/profile compatibility expectations,
+// not YAML 1.2.2 diagnostics or independent format evidence: the scanner failure
+// granit-parser 2.0.0 (crates.io, checksum
+// da55feca5d1625466bae068f9fd4b87892caeae70c3fe671ddb0f50d41aebf37) reports,
+// ErrorKind::UnexpectedCharacter -> SyntaxUnexpectedCharacter (Go
+// scanErrUnexpectedCharacter). Every coordinate was counted by hand.
+func TestSpecV17BomAndCommentPrologues(t *testing.T) {
+	const gap = "expected_whitespace"
+	const bang = "expected_tag_directive_bang"
+	const unexpected = "unexpected_character"
+	cases := []tagIdentityCase{
+		// "a\n" + "...\n" = 6 bytes, a 3-byte BOM: '%' at byte 9 (column 1),
+		// prefix after "%TAG !e!" at byte 17.
+		{"bom gap", "a\n...\n\ufeff%TAG !e!tag:x:\n--- x\n", false, 0, gap, 17, 3, 9},
+		{"bom underscore, used", "a\n...\n\ufeff%TAG !a_b! tag:x:\n--- !a_b!v x\n", false, 0, bang, 9, 3, 1},
+		{"bom underscore, unused", "a\n...\n\ufeff%TAG !a_b! tag:x:\n--- x\n", false, 0, bang, 9, 3, 1},
+		{"double bom gap", "a\n...\n\ufeff\ufeff%TAG !e!x:\n--- x\n", false, 0, gap, 20, 3, 9},
+		// pinned
+		{"malformed comment wins over gap", "%TAG !e!x: #\x01\n--- x\n", false, 0, unexpected, 12, 1, 13},
+		// pinned
+		{"malformed comment wins over underscore", "%TAG !a_b!x: #\x01\n--- x\n", false, 0, unexpected, 14, 1, 15},
+		{"gap before later malformed comment", "%TAG !e!x: # ok\n%TAG !f! y: #\x01\n--- x\n", false, 0, gap, 8, 1, 9},
+		// pinned
+		{"later directive malformed comment", "%TAG !e! x:\n%TAG !f!y: #\x01\n--- x\n", false, 0, unexpected, 24, 2, 13},
+		// pinned
+		{"comment ended by NUL wins over gap", "%TAG !e!x: #c\x00\n--- x\n", false, 0, unexpected, 13, 1, 14},
+	}
+	for _, reject := range []bool{false, true} {
+		for _, c := range cases {
+			opts := DefaultOptions()
+			if reject {
+				opts.UnknownTags = UnknownTagsReject
+			}
+			_, err := LoadAllWith(c.input, opts)
+			if err == nil {
+				t.Errorf("%s (reject=%v): loaded", c.name, reject)
+				continue
+			}
+			got := err.Detail.SyntaxKind.AsStr()
+			loc, ok := err.Location()
+			if got != c.code || !ok || loc.ByteOffset != c.byte || loc.Line != c.line || loc.Column != c.column {
+				t.Errorf("%s (reject=%v): %s %+v, want %s [%d,%d,%d]", c.name, reject, got, loc, c.code, c.byte, c.line, c.column)
+			}
+		}
+	}
+	input := "a\n...\n\ufeff%TAG !e! tag:x:\n--- !e!v x\n"
+	opts := DefaultOptions()
+	docs, err := LoadAllWith(input, opts)
+	if err != nil {
+		t.Fatalf("valid bom prologue: %v", err)
+	}
+	tg, ok := docs[1].Root().Value().AsTagged()
+	if !ok || tg.Tag().URI() != "tag:x:v" {
+		t.Fatalf("valid bom prologue: wrong root tag")
+	}
+	wire, _ := Encode(docs, opts)
+	env, decErr := DecodeWire(wire, opts)
+	if decErr != nil || !env.HasDocuments {
+		t.Fatalf("DecodeWire: %v", decErr)
+	}
+	if again, _ := Encode(env.Documents, opts); again != wire {
+		t.Errorf("wire round trip differs")
+	}
+	reject := DefaultOptions()
+	reject.UnknownTags = UnknownTagsReject
+	if _, err := LoadAllWith(input, reject); err == nil || err.Kind != ErrorKindUnknownTag {
+		t.Errorf("valid bom prologue under Reject: %v, want unknown_tag", err)
+	}
+}

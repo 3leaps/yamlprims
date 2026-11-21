@@ -293,11 +293,12 @@ impl<'a> Engine<'a> {
     /// a document prologue. The pinned engine accepts a named handle containing
     /// `_` and a prefix that immediately follows the handle. `from` is the end
     /// of the last yielded event (stream start or document end), and `until`
-    /// the position of the next event or engine error. Directives starting
-    /// before it were tokenized and are checked in source order, as the parser
-    /// processes them; a directive starting at it is the one the engine failed
-    /// on while scanning or processing it (including a duplicate handle), and
-    /// keeps that failure. Before it the engine has accepted only directive
+    /// the position of the next event or engine error. A directive whose line
+    /// (up to its break or NUL, trailing comment included) ends at or before it
+    /// was tokenized and is checked in source order, as the parser processes
+    /// it; a directive the error falls inside, or starts at, is the one the
+    /// engine failed on while scanning or processing it (including a duplicate
+    /// handle or a malformed trailing comment), and keeps that failure. Before it the engine has accepted only directive
     /// tokens, comments, blank lines and document end markers; a content line
     /// ends the prologue.
     fn prologue_directives(&self, from: usize, until: usize) -> Result<Option<Error>, Error> {
@@ -308,14 +309,31 @@ impl<'a> Engine<'a> {
             i = next_line(src, i);
         }
         while i < until {
-            match src[i] {
+            // A document prologue may start with byte order marks (YAML 1.2.2
+            // l-document-prefix); the engine skips them and does not count them
+            // as columns.
+            let mut c = i;
+            while src[c..].starts_with(BOM) {
+                c += BOM.len();
+            }
+            match src.get(c).copied().unwrap_or(b'\n') {
                 b'%' => {
-                    if let Some((kind, at)) = tag_directive_fault(src, i) {
+                    // The engine tokenized this directive only if it reached the
+                    // directive's end (its trailing comment included). A failure
+                    // inside the line is the engine's own scanner diagnostic.
+                    let mut end = c;
+                    while end < src.len() && !matches!(src[end], b'\n' | b'\r' | b'\0') {
+                        end += 1;
+                    }
+                    if end > until || !directive_completes(src, c, end) {
+                        return Ok(None);
+                    }
+                    if let Some((kind, at)) = tag_directive_fault(src, c) {
                         return Ok(Some(self.directive_error(kind, at)?));
                     }
                 }
                 b'#' | b'\n' | b'\r' | b' ' | b'\t' => {
-                    let mut j = i;
+                    let mut j = c;
                     while j < src.len() && matches!(src[j], b' ' | b'\t') {
                         j += 1;
                     }
@@ -323,7 +341,7 @@ impl<'a> Engine<'a> {
                         return Ok(None);
                     }
                 }
-                b'.' if src[i..].starts_with(b"...") => {}
+                b'.' if src[c..].starts_with(b"...") => {}
                 _ => return Ok(None),
             }
             i = next_line(src, i);
@@ -378,7 +396,8 @@ impl<'a> Engine<'a> {
                 _ => k += 1,
             }
         }
-        let column = before[line_start..].chars().count() + 1;
+        let line_text = &before[line_start..];
+        let column = line_text.trim_start_matches('\u{feff}').chars().count() + 1;
         let detail = match kind {
             SyntaxKind::ExpectedWhitespace => "expected whitespace",
             _ => EXPECTED_TAG_DIRECTIVE_BANG_DETAIL,
@@ -546,6 +565,8 @@ pub(crate) fn valid_resolved_tag_identity(uri: &str) -> bool {
     }
 }
 
+const BOM: &[u8] = "\u{feff}".as_bytes();
+
 const EXPECTED_TAG_DIRECTIVE_BANG_DETAIL: &str =
     "while parsing a tag directive, did not find expected '!'";
 const INVALID_TAG_TERMINATOR_DETAIL: &str =
@@ -586,6 +607,40 @@ fn scan_handle(src: &[u8], b: usize) -> Option<(usize, bool)> {
         i += 1;
     }
     Some((i, named && underscore))
+}
+
+/// Whether the engine finishes tokenizing the `%TAG` directive at `pct` whose
+/// line ends at `end` (a break, NUL or the end of input). A trailing comment
+/// runs to the next break and must then be followed by a printable character,
+/// so a comment ended by a NUL fails inside the directive's own scan; a NUL
+/// directly after the prefix (or its trailing blanks) ends the directive.
+fn directive_completes(src: &[u8], pct: usize, end: usize) -> bool {
+    if src.get(end) != Some(&b'\0') {
+        return true;
+    }
+    let is_blank = |b: u8| matches!(b, b' ' | b'\t');
+    let line = &src[pct..end];
+    if !line.starts_with(b"%TAG") {
+        return true;
+    }
+    let mut i = 4;
+    while i < line.len() && is_blank(line[i]) {
+        i += 1;
+    }
+    let Some((h, _)) = scan_handle(line, i) else {
+        return true;
+    };
+    i = h;
+    while i < line.len() && is_blank(line[i]) {
+        i += 1;
+    }
+    while i < line.len() && !is_blank(line[i]) {
+        i += 1;
+    }
+    while i < line.len() && is_blank(line[i]) {
+        i += 1;
+    }
+    line.get(i) != Some(&b'#')
 }
 
 /// For a directive at `pct` that the engine has tokenized, the revision 1.7

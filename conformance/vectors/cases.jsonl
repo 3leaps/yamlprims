@@ -268,3 +268,15 @@
 {"id": "tags.directive.gap-then-end-of-input-same-line", "input": "%TAG !e!x:", "single": true, "check_plain": true}
 {"id": "tags.directive.gap-then-nul-same-line", "input_hex": "2554414720216521783a002d2d2d20790a", "single": true, "check_plain": true}
 {"id": "tags.directive.terminator-error-wins-over-gap", "input": "%TAG !e!x: ]\n--- y\n", "single": true, "check_plain": true}
+{"id": "tags.directive.bom-prologue-gap", "input_hex": "610a2e2e2e0aefbbbf25544147202165217461673a783a0a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.bom-prologue-gap-reject", "input_hex": "610a2e2e2e0aefbbbf25544147202165217461673a783a0a2d2d2d20780a", "single": false, "unknown_tags": "reject", "check_plain": false}
+{"id": "tags.handle.bom-prologue-underscore-used", "input_hex": "610a2e2e2e0aefbbbf255441472021615f6221207461673a783a0a2d2d2d2021615f62217620780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.handle.bom-prologue-underscore-unused", "input_hex": "610a2e2e2e0aefbbbf255441472021615f6221207461673a783a0a2d2d2d20780a", "single": false, "unknown_tags": "reject", "check_plain": false}
+{"id": "tags.directive.bom-prologue-valid", "input_hex": "610a2e2e2e0aefbbbf2554414720216521207461673a783a0a2d2d2d202165217620780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.bom-prologue-valid-reject", "input_hex": "610a2e2e2e0aefbbbf2554414720216521207461673a783a0a2d2d2d202165217620780a", "single": false, "unknown_tags": "reject", "check_plain": false}
+{"id": "tags.directive.double-bom-prologue-gap", "input_hex": "610a2e2e2e0aefbbbfefbbbf2554414720216521783a0a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.malformed-comment-wins-over-gap", "input_hex": "2554414720216521783a2023010a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.handle.malformed-comment-wins-over-underscore", "input_hex": "255441472021615f6221783a2023010a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.gap-before-later-malformed-comment", "input_hex": "2554414720216521783a2023206f6b0a255441472021662120793a2023010a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.later-directive-malformed-comment", "input_hex": "255441472021652120783a0a2554414720216621793a2023010a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.comment-ended-by-nul-wins-over-gap", "input_hex": "2554414720216521783a202363000a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}

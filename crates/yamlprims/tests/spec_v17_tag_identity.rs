@@ -497,3 +497,104 @@ fn scanner_failure_at_end_of_input_with_directive_text_is_an_error() {
         );
     }
 }
+
+// Codes marked `pinned` below are pinned engine/profile compatibility
+// expectations, not YAML 1.2.2 diagnostics or independent format evidence: the
+// scanner failure is the one granit-parser 2.0.0 (crates.io, Cargo.lock checksum
+// da55feca5d1625466bae068f9fd4b87892caeae70c3fe671ddb0f50d41aebf37) reports, mapped
+// 1:1 by `engine::syntax_kind` (granit `ErrorKind::UnexpectedCharacter` ->
+// `SyntaxKind::UnexpectedCharacter`; Go `scanErrUnexpectedCharacter` ->
+// `SyntaxUnexpectedCharacter`). Every coordinate below was counted by hand.
+#[test]
+fn bom_and_comment_prologues() {
+    let unexpected = ErrorKind::Syntax(SyntaxKind::UnexpectedCharacter);
+    let cases: Vec<(&str, &str, ErrorKind, Site)> = vec![
+        // `a\n` + `...\n` = 6 bytes, a 3-byte BOM, so `%` is byte 9 (column 1:
+        // the BOM is not a column) and the prefix after `%TAG !e!` is byte 17.
+        (
+            "bom gap",
+            "a\n...\n\u{feff}%TAG !e!tag:x:\n--- x\n",
+            GAP,
+            at(17, 3, 9),
+        ),
+        (
+            "bom underscore, used",
+            "a\n...\n\u{feff}%TAG !a_b! tag:x:\n--- !a_b!v x\n",
+            BANG,
+            at(9, 3, 1),
+        ),
+        (
+            "bom underscore, unused",
+            "a\n...\n\u{feff}%TAG !a_b! tag:x:\n--- x\n",
+            BANG,
+            at(9, 3, 1),
+        ),
+        // Two BOMs: `%` at byte 12, prefix at 20, still column 9.
+        (
+            "double bom gap",
+            "a\n...\n\u{feff}\u{feff}%TAG !e!x:\n--- x\n",
+            GAP,
+            at(20, 3, 9),
+        ),
+        // pinned: `%TAG !e!x: #` is 12 bytes; U+0001 at byte 12, column 13.
+        (
+            "malformed comment wins over gap",
+            "%TAG !e!x: #\u{1}\n--- x\n",
+            unexpected.clone(),
+            at(12, 1, 13),
+        ),
+        // pinned: `%TAG !a_b!x: #` is 14 bytes; U+0001 at byte 14, column 15.
+        (
+            "malformed comment wins over underscore",
+            "%TAG !a_b!x: #\u{1}\n--- x\n",
+            unexpected.clone(),
+            at(14, 1, 15),
+        ),
+        // The first directive is complete, so its gap (byte 8) wins.
+        (
+            "gap before later malformed comment",
+            "%TAG !e!x: # ok\n%TAG !f! y: #\u{1}\n--- x\n",
+            GAP,
+            at(8, 1, 9),
+        ),
+        // pinned: line 1 is 12 bytes; `%TAG !f!y: #` is 12, so U+0001 is byte 24.
+        (
+            "later directive malformed comment",
+            "%TAG !e! x:\n%TAG !f!y: #\u{1}\n--- x\n",
+            unexpected.clone(),
+            at(24, 2, 13),
+        ),
+        // pinned: `%TAG !e!x: #c` is 13 bytes; the NUL at byte 13 ends the comment.
+        (
+            "comment ended by NUL wins over gap",
+            "%TAG !e!x: #c\0\n--- x\n",
+            unexpected,
+            at(13, 1, 14),
+        ),
+    ];
+    for reject in [false, true] {
+        for (name, input, kind, site) in &cases {
+            let err = load_all_with(input, &opts(reject, None)).expect_err(name);
+            assert_eq!(&err.kind, kind, "{name} (reject={reject})");
+            assert_eq!(&err.site, site, "{name} (reject={reject})");
+        }
+    }
+    // A valid BOM-prefixed prologue loads under both policies and closes
+    // through encode -> decode_wire -> encode.
+    let input = "a\n...\n\u{feff}%TAG !e! tag:x:\n--- !e!v x\n";
+    let o = Options::default();
+    let docs = load_all_with(input, &o).unwrap();
+    match docs[1].root().value() {
+        Value::Tagged(t) => assert_eq!(t.tag().uri(), "tag:x:v"),
+        other => panic!("expected Tagged, got {other:?}"),
+    }
+    let wire = encode(&docs, &o).unwrap();
+    let WireEnvelope::Documents(back) = decode_wire(&wire, &o).unwrap() else {
+        panic!("decode_wire returned an error envelope");
+    };
+    assert_eq!(encode(&back, &o).unwrap(), wire);
+    assert!(matches!(
+        load_all_with(input, &opts(true, None)).unwrap_err().kind,
+        ErrorKind::UnknownTag
+    ));
+}
