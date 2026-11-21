@@ -8,8 +8,9 @@ Usage:
   python3 -I scripts/fuzz_differential.py claim-out ROOT PATH
   python3 -I scripts/fuzz_differential.py check-tree OUT
   python3 -I scripts/fuzz_differential.py mkdir-under OUT REL...
-  python3 -I scripts/fuzz_differential.py lock-out OUT PID
-  python3 -I scripts/fuzz_differential.py unlock-out OUT PID
+  python3 -I scripts/fuzz_differential.py hold-lock OUT -- CMD...
+  python3 -I scripts/fuzz_differential.py lock-held OUT
+  python3 -I scripts/fuzz_differential.py import-new OUT REL SRC
 
 Output never contains input bytes. A failure prints an input SHA-256 and a
 fixed operation or failure kind; full details go to OUT.
@@ -357,43 +358,70 @@ def write_new(out, name, text):
 LOCK = ".yamlprims-fuzz-lock"
 
 
-def lock_out(out, pid):
-    """Take the output root's lock for process PID: an exclusively created
-    file holding the pid. A lock held by a live process is refused; one left
-    by a process that no longer exists is replaced."""
+def _open_lock(out):
+    """Open (creating if needed) the lock file under OUT without following
+    links, and refuse anything that is not a plain, singly linked file."""
+    check_tree(out)
     path = os.path.join(out, LOCK)
-    for _ in range(2):
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        except FileExistsError:
-            st = os.lstat(path)
-            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
-                refuse("lock file is not a regular file")
-            try:
-                holder = int(open(path, encoding="ascii").read().strip())
-            except ValueError:
-                refuse("unreadable lock file; remove it if no run is active")
-            try:
-                os.kill(holder, 0)
-            except ProcessLookupError:
-                os.unlink(path)  # stale: its process is gone
-                continue
-            except PermissionError:
-                pass
-            refuse(f"another run (pid {holder}) holds this output directory")
-        with os.fdopen(fd, "w", encoding="ascii") as f:
-            f.write(f"{pid}\n")
-        return
-    refuse("could not take the output directory lock")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        os.close(fd)
+        refuse("lock file is not a plain file")
+    return fd
 
 
-def unlock_out(out, pid):
-    path = os.path.join(out, LOCK)
+def hold_lock(out, cmd):
+    """Run CMD while holding an exclusive, non-blocking flock on OUT's lock
+    file for the whole run. The kernel releases the lock when this process
+    exits, however it exits; the file itself is never removed, so there is no
+    stale-lock cleanup and no window where two runs both own it."""
+    import fcntl
+    import signal
+
+    fd = _open_lock(out)
     try:
-        if open(path, encoding="ascii").read().strip() == str(pid):
-            os.unlink(path)
-    except FileNotFoundError:
-        pass
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        refuse("another run holds this output directory")
+    os.ftruncate(fd, 0)
+    os.write(fd, f"{os.getpid()}\n".encode())
+    child = subprocess.Popen(cmd)  # close_fds: the child does not inherit the lock
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda n, _f: child.send_signal(n))
+    sys.exit(child.wait())
+
+
+def lock_held(out):
+    """Exit 0 if some other process holds OUT's lock, 1 if it is free."""
+    import fcntl
+
+    fd = _open_lock(out)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit(0)
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    sys.exit(1)
+
+
+def import_new(out, rel, src):
+    """Copy each file in SRC into OUT/REL by exclusive creation. A destination
+    name that already exists is skipped, never opened, so an existing file or
+    link there is not written through."""
+    dest = mkdir_under(out, rel)
+    added = skipped = 0
+    for name in sorted(os.listdir(src)):
+        data = Path(src, name).read_bytes()
+        try:
+            fd = os.open(os.path.join(dest, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            skipped += 1
+            continue
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        added += 1
+    print(f"{added} added, {skipped} already present")
 
 
 if __name__ == "__main__":
@@ -403,10 +431,12 @@ if __name__ == "__main__":
         print(claim_out(sys.argv[2], sys.argv[3]))
     elif len(sys.argv) == 3 and sys.argv[1] == "check-tree":
         check_tree(sys.argv[2])
-    elif len(sys.argv) == 4 and sys.argv[1] == "lock-out":
-        lock_out(sys.argv[2], int(sys.argv[3]))
-    elif len(sys.argv) == 4 and sys.argv[1] == "unlock-out":
-        unlock_out(sys.argv[2], int(sys.argv[3]))
+    elif len(sys.argv) >= 5 and sys.argv[1] == "hold-lock" and sys.argv[3] == "--":
+        hold_lock(sys.argv[2], sys.argv[4:])
+    elif len(sys.argv) == 3 and sys.argv[1] == "lock-held":
+        lock_held(sys.argv[2])
+    elif len(sys.argv) == 5 and sys.argv[1] == "import-new":
+        import_new(sys.argv[2], sys.argv[3], sys.argv[4])
     elif len(sys.argv) >= 4 and sys.argv[1] == "mkdir-under":
         for rel in sys.argv[3:]:
             mkdir_under(sys.argv[2], rel)

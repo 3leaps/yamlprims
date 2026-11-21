@@ -45,14 +45,21 @@ out=$(python3 -I "$helper" claim-out "$root" "$out") || {
 }
 guard() { python3 -I "$helper" check-tree "$out" || { echo "fuzz-smoke: output directory changed under the run" >&2; exit 2; }; }
 under() { python3 -I "$helper" mkdir-under "$out" "$@" || exit 2; }
-# One campaign per output root at a time, and every run writes into its own
-# exclusively created directory under runs/. Only the corpora are shared.
-python3 -I "$helper" lock-out "$out" "$$" || exit 2
+# One campaign per output root at a time: the rest of this script runs as the
+# child of a process that holds an exclusive flock on the root's lock file for
+# its whole lifetime. The kernel releases the lock when that process exits;
+# the lock file is never removed. Every run writes into its own exclusively
+# created directory under runs/; only the corpora are shared.
+if [ "${YAMLPRIMS_FUZZ_LOCKED_OUT:-}" != "$out" ]; then
+  exec python3 -I "$helper" hold-lock "$out" -- \
+    env YAMLPRIMS_FUZZ_LOCKED_OUT="$out" YAMLPRIMS_FUZZ_OUT="$out" bash "$root/scripts/fuzz-smoke.sh"
+fi
+if python3 -I "$helper" lock-held "$out"; then :; else
+  echo "fuzz-smoke: the output directory lock is not held" >&2
+  exit 2
+fi
 seeds=""
-cleanup() {
-  python3 -I "$helper" unlock-out "$out" "$$" || true
-  if [ -n "$seeds" ]; then rm -rf "$seeds"; fi
-}
+cleanup() { if [ -n "$seeds" ]; then rm -rf "$seeds"; fi; }
 trap cleanup EXIT
 under runs
 run="$out/runs/$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
@@ -129,10 +136,14 @@ python3 -I fuzz/seeds.py "$seeds" >/dev/null
 
 for t in load decode_wire emit_round_trip lint_yaml11 encode; do
   log="$run/logs/$t.log"
-  under "corpus/$t"
   mkdir "$run/crashers/$t"
   guard
-  cp "$seeds/$t/"* "$out/corpus/$t/"
+  # Seeds enter the shared corpus by exclusive creation only; a name already
+  # there is skipped, never opened. libFuzzer itself adds a new unit as
+  # corpus/<target>/<SHA-1 of its contents> with fopen(path, "wb"), which
+  # follows links and truncates; the walk before and after each run, and the
+  # trusted-ancestor assumption in fuzz/README.md, cover that path.
+  python3 -I "$helper" import-new "$out" "corpus/$t" "$seeds/$t" >/dev/null || exit 2
   guard
   f=$(fresh "$log")
   dict=()

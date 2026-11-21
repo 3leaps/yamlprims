@@ -212,20 +212,72 @@ if ln "$tracked" "$o/settings.txt" 2>/dev/null; then
 else
   echo "note: hard-link control skipped (output root on another filesystem)" >&2
 fi
-# One campaign per output root: a second claim while the first holder is
-# alive is refused, by the helper and by fuzz-smoke; a stale lock is replaced.
+# One campaign per output root. The lock is an flock held for the holder's
+# lifetime: a second contender is refused while the first is alive, nothing
+# unlinks or replaces the lock file, and the kernel frees it when the holder
+# exits. The race the PID-file lock lost (read a stale PID, another run
+# replaces the lock, unlink it) cannot occur: there is no read-then-unlink.
 o=$(python3 -I "$helper" claim-out "$root" "$work/out-lock")
-sleep 60 &
+printf '999999\n' >"$o/.yamlprims-fuzz-lock" # a stale PID from a dead run
+inode() { python3 -I -c 'import os,sys; print(os.lstat(sys.argv[1]).st_ino)' "$1"; }
+lock_inode=$(inode "$o/.yamlprims-fuzz-lock")
+python3 -I "$helper" hold-lock "$o" -- sleep 60 &
 holder=$!
-if python3 -I "$helper" lock-out "$o" "$holder"; then ok; else bad "first lock refused"; fi
-if python3 -I "$helper" lock-out "$o" "$$" 2>/dev/null; then bad "second concurrent lock accepted"; else ok; fi
+for _ in $(seq 50); do python3 -I "$helper" lock-held "$o" && break; sleep 0.1; done
+if python3 -I "$helper" lock-held "$o"; then ok; else bad "holder did not take the lock over a stale PID"; fi
+if python3 -I "$helper" hold-lock "$o" -- true 2>/dev/null; then bad "second contender ran while the lock was held"; else ok; fi
 if YAMLPRIMS_FUZZ_OUT="$o" bash scripts/fuzz-smoke.sh >/dev/null 2>&1; then bad "smoke ran while another run held the root"; else ok; fi
 if [ ! -e "$o/runs" ]; then ok; else bad "refused smoke created a run directory"; fi
+if [ "$(inode "$o/.yamlprims-fuzz-lock")" = "$lock_inode" ]; then ok; else bad "lock file was replaced"; fi
 kill "$holder" 2>/dev/null || true
 wait "$holder" 2>/dev/null || true
-if python3 -I "$helper" lock-out "$o" "$$"; then ok; else bad "stale lock not replaced"; fi
-python3 -I "$helper" unlock-out "$o" "$$"
-if [ ! -e "$o/.yamlprims-fuzz-lock" ]; then ok; else bad "lock not released"; fi
+if python3 -I "$helper" lock-held "$o"; then bad "lock not released when its holder died"; else ok; fi
+if python3 -I "$helper" hold-lock "$o" -- true; then ok; else bad "free lock refused"; fi
+# Simultaneous starts: in every trial exactly one of two contenders runs.
+races_ok=1
+for trial in 1 2 3 4 5; do
+  rm -f "$work"/winner-*
+  for c in a b; do
+    # shellcheck disable=SC2016 # $1 expands in the inner shell
+    python3 -I "$helper" hold-lock "$o" -- sh -c 'touch "$1"; sleep 1' _ "$work/winner-$c" 2>/dev/null &
+  done
+  wait || true
+  n=$(find "$work" -maxdepth 1 -name 'winner-*' | wc -l | tr -d ' ')
+  [ "$n" = 1 ] || { races_ok=0; echo "race trial $trial: $n winners" >&2; }
+done
+if [ "$races_ok" = 1 ]; then ok; else bad "simultaneous contenders did not resolve to exactly one owner"; fi
+if [ "$(inode "$o/.yamlprims-fuzz-lock")" = "$lock_inode" ]; then ok; else bad "lock file was replaced during the races"; fi
+
+# Seeds enter the corpus by exclusive creation: an existing name is skipped,
+# never opened. Model a hard link created after the walk by disabling the walk.
+o=$(python3 -I "$helper" claim-out "$root" "$work/out-corpus")
+mkdir -p "$work/seed-src"
+printf 'new\n' >"$work/seed-src/seed-0000"
+printf 'new\n' >"$work/seed-src/seed-0001"
+mkdir -p "$o/corpus/load"
+sum_before=$(shasum -a 256 "$tracked")
+if ln "$tracked" "$o/corpus/load/seed-0000" 2>/dev/null; then
+  result=$(python3 -I - "$root/$helper" "$o" "$work/seed-src" <<'PY'
+import importlib.util, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("fd", sys.argv[1])
+fd = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fd)
+fd.check_tree = lambda out: None  # the link appeared after the walk
+fd.import_new(sys.argv[2], "corpus/load", sys.argv[3])
+PY
+)
+  if [ "$result" = "1 added, 1 already present" ]; then ok; else bad "import did not skip the existing name ($result)"; fi
+  if [ "$sum_before" = "$(shasum -a 256 "$tracked")" ]; then ok; else bad "corpus import wrote through a hard link"; fi
+  rm "$o/corpus/load/seed-0000"
+else
+  echo "note: corpus hard-link control skipped (output root on another filesystem)" >&2
+fi
+# With the walk in place the same link is refused outright.
+ln "$tracked" "$o/corpus/load/seed-0000" 2>/dev/null &&
+  if python3 -I "$helper" import-new "$o" corpus/load "$work/seed-src" >/dev/null 2>&1; then bad "import accepted a hard-linked corpus file"; else ok; fi
+rm -f "$o/corpus/load/seed-0000"
+
 if [ -z "$(find "$target_dir" -mindepth 1)" ]; then ok; else bad "files were written into the tree through a link"; fi
 rmdir "$target_dir" || bad "link target directory not empty"
 if [ "$before" = "$(tree_now)" ]; then ok; else bad "output-root controls changed the tree"; fi

@@ -58,11 +58,16 @@ ceiling is available. The Go `Fuzz*` targets run their seed corpora under
 
 `fuzz-replay` prints the target and the failure kind only; full logs stay in a
 temporary directory. `fuzz-smoke` uses `YAMLPRIMS_FUZZ_OUT` (default: a new
-temporary directory), which must be outside the working tree. Each run takes
-an exclusive lock on that directory (a second run is refused while the first
-is alive) and writes its logs, failing inputs, differential report and
-`campaign.json` record into its own new directory under `runs/`. Only the
-corpora under `corpus/` are shared between runs. It prints target names,
+temporary directory), which must be outside the working tree. Each run holds
+an exclusive `flock` on that directory's lock file for its whole lifetime, so
+a second run is refused while the first is alive; the kernel releases the lock
+when the run exits, and the lock file is never removed. The run writes its
+logs, failing inputs, differential report and `campaign.json` record into its
+own new directory under `runs/`. Only the corpora under `corpus/` are shared
+between runs: seeds enter them by exclusive creation (a name already present
+is skipped, never opened), and libFuzzer adds each new unit as
+`corpus/<target>/<SHA-1 of its contents>` using `fopen(path, "wb")`, which
+the harness does not change. It prints target names,
 execution counts, coverage and failure kinds, never an input or a dump of one,
 and fails if a run leaves files under `yaml/testdata/` or `fuzz/`.
 
