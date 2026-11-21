@@ -4,7 +4,9 @@ import "testing"
 
 // Revision 1.7 resolved tag identity and %TAG separation (spec §4.4, §7.1, §11.1).
 // Expected codes and coordinates are written from the specification text, not
-// captured from the implementation, and match the Rust core's expectations.
+// captured from the implementation, and match the Rust core's expectations. The
+// two cases labelled as pinned engine/profile compatibility expectations take
+// their codes from the pinned engine; their coordinates were counted by hand.
 
 type tagIdentityCase struct {
 	name     string
@@ -49,12 +51,22 @@ func TestSpecV17RefusedIdentitiesAndSeparation(t *testing.T) {
 		{"empty prefix unchanged", "%TAG !e!\n--- x\n", false, 0, tag, 0, 1, 1},
 		{"earlier tag identity wins", "!<abc> x\n...\n%TAG !e!x:\n--- y\n", false, 0, tag, 0, 1, 1},
 		{"earlier depth wins", "[[[1]]]\n...\n%TAG !e!x:\n--- y\n", false, 2, "max_depth", 2, 1, 3},
+		// Pinned engine/profile compatibility expectation, not a YAML 1.2.2
+		// diagnostic or independent format evidence: the code is granit-parser
+		// 2.0.0's (crates.io, checksum da55feca5d1625466bae068f9fd4b87892caeae70c3fe671ddb0f50d41aebf37),
+		// ErrorKind::ExpectedBlockSequenceEntry -> SyntaxKind ExpectedBlockSequenceEntry (Go scanErrExpectedBlockSequenceEntry -> SyntaxExpectedBlockSequenceEntry).
+		// The control detects that the earlier parser error wins; coordinate counted by hand: - a\n is bytes 0-3, so b is byte 4, line 2, column 1.
 		{"earlier parser error wins", "- a\nb: c\n...\n%TAG !e!x:\n--- y\n", false, 0, "expected_block_sequence_entry", 4, 2, 1},
 		{"gap before later tag identity", "%TAG !e!x:\n--- !<abc> y\n", false, 0, gap, 8, 1, 9},
 		{"gap before later depth", "%TAG !e!x:\n--- [[[1]]]\n", false, 2, gap, 8, 1, 9},
 		{"gap before later syntax", "%TAG !e!x:\n--- [\n", false, 0, gap, 8, 1, 9},
 		{"gap then end of input", "%TAG !e!x:", false, 0, gap, 8, 1, 9},
 		{"gap then NUL", "%TAG !e!x:\x00--- y\n", false, 0, gap, 8, 1, 9},
+		// Pinned engine/profile compatibility expectation, not a YAML 1.2.2
+		// diagnostic or independent format evidence: the code is granit-parser
+		// 2.0.0's (crates.io, checksum da55feca5d1625466bae068f9fd4b87892caeae70c3fe671ddb0f50d41aebf37),
+		// ErrorKind::InvalidDirectiveTerminator -> SyntaxKind InvalidDirectiveTerminator (Go scanErrInvalidDirectiveTerminator -> SyntaxInvalidDirectiveTerminator).
+		// The control detects that the scanner failure inside the same directive wins; coordinate counted by hand: the directive starts at byte 0, line 1, column 1.
 		{"terminator error wins over gap", "%TAG !e!x: ]\n--- y\n", false, 0, "invalid_directive_terminator", 0, 1, 1},
 		{"gap before later duplicate key", "%TAG !e!x:\n--- a: 1\na: 2\n", false, 0, gap, 8, 1, 9},
 		{"duplicate handle before gap", "%TAG !e! a:\n%TAG !e!b:\n--- x\n", false, 0, "duplicate_tag_directive", 12, 2, 1},

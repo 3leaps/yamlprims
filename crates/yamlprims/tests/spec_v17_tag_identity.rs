@@ -1,6 +1,8 @@
 //! Revision 1.7 resolved tag identity and `%TAG` separation (spec §4.4, §7.1, §11.1).
 //! Expected kinds and source coordinates are written from the specification text,
-//! not captured from the implementation.
+//! not captured from the implementation, except the two cases labelled as pinned
+//! engine/profile compatibility expectations, whose codes come from the pinned
+//! engine and whose coordinates were still counted by hand.
 use yamlprims::{
     decode_wire, emit_all, encode, encode_error, load_all_with, ErrorKind, LimitKind, Location,
     Options, Site, SyntaxKind, UnknownTags, Value, WireEnvelope,
@@ -226,6 +228,14 @@ fn refused_identities_and_separation_select_kind_and_site() {
             depth2(),
             at(2, 1, 3),
         ),
+        // Pinned engine/profile compatibility expectation, not a YAML 1.2.2
+        // diagnostic or independent format evidence. The syntax code is the one
+        // the pinned engine reports, granit-parser 2.0.0 (crates.io, Cargo.lock
+        // checksum da55feca5d1625466bae068f9fd4b87892caeae70c3fe671ddb0f50d41aebf37),
+        // mapped 1:1 by `engine::syntax_kind` (granit `ErrorKind::ExpectedBlockSequenceEntry` ->
+        // `SyntaxKind::ExpectedBlockSequenceEntry`; the Go twin's `scanErrExpectedBlockSequenceEntry` -> `SyntaxExpectedBlockSequenceEntry`).
+        // The control detects that the earlier parser error wins over the directive check; the
+        // source coordinate was counted by hand: `- a\n` is bytes 0-3, so `b` is byte 4, line 2, column 1.
         (
             "earlier parser error wins",
             "- a\nb: c\n...\n%TAG !e!x:\n--- y\n",
@@ -268,6 +278,14 @@ fn refused_identities_and_separation_select_kind_and_site() {
             GAP,
             at(8, 1, 9),
         ),
+        // Pinned engine/profile compatibility expectation, not a YAML 1.2.2
+        // diagnostic or independent format evidence. The syntax code is the one
+        // the pinned engine reports, granit-parser 2.0.0 (crates.io, Cargo.lock
+        // checksum da55feca5d1625466bae068f9fd4b87892caeae70c3fe671ddb0f50d41aebf37),
+        // mapped 1:1 by `engine::syntax_kind` (granit `ErrorKind::InvalidDirectiveTerminator` ->
+        // `SyntaxKind::InvalidDirectiveTerminator`; the Go twin's `scanErrInvalidDirectiveTerminator` -> `SyntaxInvalidDirectiveTerminator`).
+        // The control detects that the scanner failure inside the same directive wins over the directive check; the
+        // source coordinate was counted by hand: the directive starts at byte 0, line 1, column 1.
         (
             "terminator error wins over gap",
             "%TAG !e!x: ]\n--- y\n",
