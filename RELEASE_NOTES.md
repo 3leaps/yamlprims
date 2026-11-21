@@ -1,4 +1,20 @@
-# spec-v1.6 — unreleased draft specification
+# spec-v1.7 — unreleased draft specification
+
+Revision 1.7 tightens loading to the YAML 1.2.2 tag rules. Specification
+publication does not claim runtime implementation or qualification.
+
+- `1.7/E-1`: bounded source validation refuses a resolved node tag identity,
+  other than the non-specific `!`, that is neither a local tag nor an identity
+  starting with an RFC 3986 scheme and `:` (for example `!<$:?>` or a `%TAG`
+  expansion without a scheme), as `Syntax(InvalidGlobalTagCharacter)` at the
+  tag, before construction and the `unknown_tags` policy. The documented
+  meaning of `invalid_global_tag_character` is extended; the 81-code
+  vocabulary and wire version 1 are unchanged.
+- `1.7/E-2`: a `%TAG` prefix must be separated from its handle by a space or
+  tab; otherwise `Syntax(ExpectedWhitespace)` at the first prefix character,
+  whether or not the handle is used.
+
+## spec-v1.6 — tagged draft specification
 
 Revision 1.6 specifies proposed `v0.3.0` contracts for bounded stream and
 ecosystem-familiar ergonomics across all four `Profile B` bindings, the YAML 1.1
