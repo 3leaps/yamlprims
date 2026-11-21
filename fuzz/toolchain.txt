@@ -1,0 +1,4 @@
+# Nightly toolchain for the fuzz targets only. Nothing that ships is built with it.
+# scripts/fuzz-smoke.sh checks the commit hash of the toolchain it uses.
+channel nightly-2026-10-31
+commit-hash 92b5b8c87c61b20adc9001b41baf587634a74734
