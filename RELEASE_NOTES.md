@@ -4,15 +4,21 @@ Revision 1.7 tightens loading to the YAML 1.2.2 tag rules. Specification
 publication does not claim runtime implementation or qualification.
 
 - `1.7/E-1`: bounded source validation refuses a resolved node tag identity,
-  other than the non-specific `!`, that is neither a local tag nor an identity
-  starting with an RFC 3986 scheme and `:` (for example `!<$:?>` or a `%TAG`
+  other than the bare non-specific `!` token, that is neither a local tag nor
+  an identity starting with an RFC 3986 scheme and `:` (for example `!<$:?>`,
+  `!<!>` or a `%TAG`
   expansion without a scheme), as `Syntax(InvalidGlobalTagCharacter)` at the
   tag, before construction and the `unknown_tags` policy. The documented
   meaning of `invalid_global_tag_character` is extended; the 81-code
   vocabulary and wire version 1 are unchanged.
 - `1.7/E-2`: a `%TAG` prefix must be separated from its handle by a space or
   tab; otherwise `Syntax(ExpectedWhitespace)` at the first prefix character,
-  whether or not the handle is used.
+  whether or not the handle is used, reported where the parser processes the
+  directive in event order.
+- `1.7/E-3`: named tag handles are `!` + `[0-9A-Za-z-]+` + `!`; a `%TAG`
+  directive with any other named handle is `Syntax(ExpectedTagDirectiveBang)`
+  at the directive start, and a tag using one is
+  `Syntax(InvalidTagTerminator)` at the tag.
 
 ## spec-v1.6 — tagged draft specification
 
