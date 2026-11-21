@@ -324,9 +324,10 @@ affect resolution. A major version other than 1 is an
   children resolve normally. Nothing is decoded.
 - **Resolved tag identity (revision 1.7).** YAML 1.2.2 §6.9.1 requires every
   verbatim tag and every expanded shorthand tag to be a local tag or a valid
-  URI, and §6.8.2.2 requires a global tag prefix to yield one. The scanner's
-  lexical grammar (YAML 1.2.2 productions `[95] ns-global-tag-prefix` and `[98] c-verbatim-tag`) accepts
-  any `ns-uri-char+` sequence, so loading checks the resolved identity instead:
+  URI, and §6.8.2.2 requires a global tag prefix to yield one. The lexical
+  productions do not constrain a URI scheme: YAML 1.2.2 `[95]
+  ns-global-tag-prefix` is `ns-tag-char ns-uri-char*` and `[98]
+  c-verbatim-tag` wraps `ns-uri-char+`, so loading checks the resolved identity instead:
   after the existing percent decoding (no second decoding, no normalization),
   every node tag other than the bare non-specific `!` token MUST resolve to a local tag
   (`'!'` followed by at least one character) or to an identity that starts
