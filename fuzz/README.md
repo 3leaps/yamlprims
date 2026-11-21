@@ -67,10 +67,11 @@ and fails if a run leaves files under `yaml/testdata/` or `fuzz/`.
 
 `known-differences.jsonl` lists Rust/Go differences that are under review.
 The differential fails on any difference not listed. Each line is one JSON
-object, and every field is required:
+object; every field except `note` is required. This example passes the
+validator (`make test-fuzz-tooling` checks it):
 
 ```json
-{"id": "KD-001", "input_sha256": "<sha256 of the input bytes>", "operation": "wire", "options": "default", "revisions": ["<commit or version>"], "owner": "<maintainer>", "status": "spec review"}
+{"id": "KD-001", "input_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "operation": "wire", "options": "default", "revisions": ["v0.3.0"], "owner": "yamlprims maintainers", "status": "open"}
 ```
 
 - `options` is one of `default`, `ijson-default`, `merge-as-key` or

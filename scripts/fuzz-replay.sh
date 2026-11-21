@@ -10,13 +10,19 @@
 # Output names the target and the failure kind only (property, quality,
 # hang, memory or panic; quality is the implementation-quality check). A changed parser can fail
 # on a public seed, and test failure text may describe the input, so the full
-# logs stay in a temporary directory outside the working tree.
+# logs stay in a temporary directory outside the working tree (removed on a pass).
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
+# Every output and temporary location is checked by filesystem identity
+# before anything is created, defaults included.
+tmp_base=$(python3 -I "$root/scripts/fuzz_differential.py" resolve-out "$root" "${TMPDIR:-/tmp}") || {
+  echo "fuzz-replay: TMPDIR must be outside the working tree" >&2
+  exit 2
+}
 
-logs=$(mktemp -d "${TMPDIR:-/tmp}/yamlprims-fuzz-replay.XXXXXX")
+logs=$(mktemp -d "$tmp_base/yamlprims-fuzz-replay.XXXXXX")
 failures=0
 
 # Per failing Go target, the failure kinds (target kind), from the go test log.
@@ -71,4 +77,5 @@ if [ "$failures" -gt 0 ]; then
   echo "fuzz-replay: FAILED ($failures; logs in $logs)"
   exit 1
 fi
+rm -rf "$logs"
 echo "fuzz-replay: PASS"

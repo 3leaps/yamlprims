@@ -10,12 +10,25 @@ input) and crates/yamlprims/tests/fixtures/wire/*.json (decode_wire). Nothing
 generated here is committed; OUT_DIR must be outside the working tree.
 """
 import json
+import os
 import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
 out = Path(sys.argv[1]).resolve()
-if out == root or root in out.parents:
+
+
+def same(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+# Containment by filesystem identity, not path strings (case aliases, links).
+if any(same(a, root) for a in (out, *out.parents) if a.exists()) or (
+    out.exists() and any(same(a, out) for a in (root, *root.parents))
+):
     sys.exit("seeds.py: OUT_DIR must be outside the working tree")
 
 inputs = []

@@ -222,13 +222,36 @@ def main_run(known_path, rust_driver, go_driver, out, specs):
     print(f"fuzz-differential PASS: {len(records)} records ({len(records) // 2} inputs), no unlisted Rust/Go differences")
 
 
+def _ancestors(path):
+    """PATH and each of its parents, nearest first."""
+    while True:
+        yield path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return
+        path = parent
+
+
+def _same(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
 def resolve_out(root, path):
-    """Resolve PATH fully (symlinks, ".", "..", relative to the current
-    directory) and refuse it if it is inside ROOT or ROOT is inside it.
-    Nothing is created here."""
+    """Resolve PATH (symlinks, ".", "..", relative to the current directory)
+    and refuse it if it is inside ROOT or ROOT is inside it. Containment is
+    decided by filesystem identity (device and inode), not by comparing path
+    strings, so case aliases and other spellings of the same directory are
+    caught. Nothing is created here."""
     root_real = os.path.realpath(root)
     out_real = os.path.realpath(path)
-    if os.path.commonpath([root_real, out_real]) in (root_real, out_real):
+    # Out is ROOT or below it: some existing ancestor of out is ROOT.
+    if any(_same(a, root_real) for a in _ancestors(out_real) if os.path.exists(a)):
+        sys.exit("output directory must be outside the working tree")
+    # ROOT is below out: some ancestor of ROOT is out.
+    if os.path.exists(out_real) and any(_same(a, out_real) for a in _ancestors(root_real)):
         sys.exit("output directory must be outside the working tree")
     print(out_real)
 

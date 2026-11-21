@@ -21,6 +21,12 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
+# Every output and temporary location is checked by filesystem identity
+# before anything is created, defaults included.
+tmp_base=$(python3 -I "$root/scripts/fuzz_differential.py" resolve-out "$root" "${TMPDIR:-/tmp}") || {
+  echo "fuzz-smoke: TMPDIR must be outside the working tree" >&2
+  exit 2
+}
 
 rust_seconds=${YAMLPRIMS_FUZZ_RUST_SECONDS:-60}
 per_input_timeout=${YAMLPRIMS_FUZZ_TIMEOUT:-10}
@@ -35,7 +41,7 @@ if [ -n "${YAMLPRIMS_FUZZ_OUT:-}" ]; then
     exit 2
   }
 else
-  out=$(mktemp -d "${TMPDIR:-/tmp}/yamlprims-fuzz.XXXXXX")
+  out=$(mktemp -d "$tmp_base/yamlprims-fuzz.XXXXXX")
 fi
 mkdir -p "$out/logs" "$out/crashers"
 echo "fuzz-smoke: output in $out"

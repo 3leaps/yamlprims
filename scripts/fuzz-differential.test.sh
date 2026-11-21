@@ -67,6 +67,19 @@ if [ "$(suppressing open)" = 1 ]; then ok; else bad "open entry does not suppres
 if [ "$(suppressing accepted)" = 1 ]; then ok; else bad "accepted entry does not suppress"; fi
 if [ "$(suppressing closed)" = 0 ]; then ok; else bad "closed entry suppresses"; fi
 
+# The README example is a valid, suppressing entry.
+python3 -I - fuzz/README.md >"$work/readme-known.jsonl" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+section = text[text.index("## Known differences"):]
+print(re.search(r"```json\n(.*?)\n```", section, re.S).group(1))
+PY
+if [ "$(python3 -I "$helper" check-known "$work/readme-known.jsonl" 2>&1)" = "known-differences: 1 suppressing entries" ]; then
+  ok
+else
+  bad "README known-differences example does not pass the validator"
+fi
+
 # 2. Comparisons with stub drivers. Each stub answers every record with fixed
 # outputs: wire W, round trip R.
 stub() { # path wire roundtrip
@@ -120,6 +133,26 @@ refuses "ancestor" "$(dirname "$root")"
 ln -s "$root" "$work/link-to-tree"
 refuses "symlink into tree" "$work/link-to-tree/out"
 if python3 -I "$helper" resolve-out "$root" "$work/fine" >/dev/null; then ok; else bad "resolve-out refused a path outside"; fi
+# Case alias: on a case-insensitive filesystem an uppercased worktree name is
+# the same directory; identity, not spelling, decides.
+alias="$(dirname "$root")/$(basename "$root" | tr '[:lower:]' '[:upper:]')"
+if [ -d "$alias" ]; then refuses "case alias" "$alias/out"; else ok; fi
+# A TMPDIR inside the tree is refused before anything is created, by every script.
+# The directory exists, so only the check (not a failing mktemp) can refuse it.
+inside="$root/fuzz/tmp-inside"
+for script in fuzz-differential.sh fuzz-smoke.sh fuzz-replay.sh; do
+  mkdir -p "$inside"
+  before=$(git status --porcelain --untracked-files=all --ignored)
+  args=()
+  if [ "$script" = fuzz-differential.sh ]; then args=(--seeds); fi
+  if TMPDIR="$inside" YAMLPRIMS_FUZZ_OUT='' bash "scripts/$script" ${args[@]+"${args[@]}"} >/dev/null 2>&1; then
+    bad "$script accepted a TMPDIR inside the tree"
+  else
+    ok
+  fi
+  if [ "$before" = "$(git status --porcelain --untracked-files=all --ignored)" ]; then ok; else bad "$script changed the tree"; fi
+  rm -rf "$inside"
+done
 before=$(git status --porcelain --untracked-files=all --ignored)
 if YAMLPRIMS_FUZZ_OUT="$work/link-to-tree/x" bash scripts/fuzz-differential.sh raw:"$work/corpus" >/dev/null 2>&1; then
   bad "fuzz-differential accepted a symlinked output dir"

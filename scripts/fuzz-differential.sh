@@ -26,6 +26,12 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
+# Every output and temporary location is checked by filesystem identity
+# before anything is created, defaults included.
+tmp_base=$(python3 -I "$root/scripts/fuzz_differential.py" resolve-out "$root" "${TMPDIR:-/tmp}") || {
+  echo "fuzz-differential: TMPDIR must be outside the working tree" >&2
+  exit 2
+}
 [ "$#" -gt 0 ] || { echo "usage: $0 MODE:DIR [MODE:DIR ...] | --seeds" >&2; exit 2; }
 
 helper="$root/scripts/fuzz_differential.py"
@@ -36,10 +42,10 @@ if [ -n "${YAMLPRIMS_FUZZ_OUT:-}" ]; then
   }
   mkdir -p "$out"
 else
-  out=$(mktemp -d "${TMPDIR:-/tmp}/yamlprims-fuzz-diff.XXXXXX")
+  out=$(mktemp -d "$tmp_base/yamlprims-fuzz-diff.XXXXXX")
 fi
 
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/yamlprims-fuzz-diff-bin.XXXXXX")
+tmp=$(mktemp -d "$tmp_base/yamlprims-fuzz-diff-bin.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
 if [ "$1" = --seeds ]; then
