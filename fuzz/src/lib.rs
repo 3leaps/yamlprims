@@ -28,13 +28,18 @@ pub fn select_options(data: &[u8]) -> (Options, &[u8]) {
     (opts, rest)
 }
 
-/// In-memory loading has no I/O, and the specification reserves `Internal` for
-/// an engine that cannot supply a location (§7.2) or for I/O failures.
-pub fn assert_not_internal(what: &str, err: &Error) {
-    assert!(
-        !matches!(err.kind, ErrorKind::Internal),
-        "{what}: internal error: {err}"
-    );
+/// Prefix of every implementation-quality failure. Replay and the smoke
+/// wrapper report these with their own kind, apart from property failures.
+pub const QUALITY_PREFIX: &str = "implementation-quality:";
+
+/// Implementation-quality check, not a specification property: the
+/// specification allows `Internal` (for example when the engine cannot supply
+/// a byte offset, §7.2), so an `Internal` from an in-memory call is reported
+/// as a quality failure for review rather than as non-conformance.
+pub fn quality_not_internal(what: &str, err: &Error) {
+    if matches!(err.kind, ErrorKind::Internal) {
+        panic!("{QUALITY_PREFIX} internal error from {what}");
+    }
 }
 
 pub fn is_output_limit(err: &Error) -> bool {

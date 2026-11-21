@@ -5,16 +5,19 @@ package yaml
 // Native Go fuzz targets. Each target seeds from conformance/vectors/cases.jsonl
 // and checks only properties the specification states:
 //
-//   - FuzzLoad: every error kind is in the closed vocabulary (§7.1) and is not
-//     Internal (in-memory loading has no I/O, and §7.2 reserves Internal for an
-//     engine that cannot supply a location); single- and multi-document
-//     entrypoints agree (§5.5).
+//   - FuzzLoad: every error kind is in the closed vocabulary (§7.1); single-
+//     and multi-document entrypoints agree (§5.5).
 //   - FuzzDecodeWire: decode_wire then encode is byte-identical for envelopes
 //     produced by encode / encode_error (§11.1 "Round trip").
 //   - FuzzEmitRoundTrip: the §10.2 self-round-trip invariant.
 //   - FuzzLintYAML11: lint results satisfy the §11.7 encode_lint preflight and
 //     §7.2 coordinates.
 //   - FuzzEncode: wire and plain output is JSON, and wire output round-trips.
+//
+// Separately, an implementation-quality check (not a specification property)
+// reports an Internal error from an in-memory call with the failure text
+// "implementation-quality: internal": the specification allows Internal, for
+// example when the engine cannot supply a byte offset (§7.2).
 //
 // The seed corpora run as ordinary tests (make fuzz-replay).
 
@@ -187,11 +190,12 @@ func checkKind(t *testing.T, what string, e *Error) {
 	}
 }
 
-func checkNotInternal(t *testing.T, what string, e *Error) {
+// qualityNotInternal is the implementation-quality check described above.
+func qualityNotInternal(t *testing.T, what string, e *Error) {
 	t.Helper()
 	checkKind(t, what, e)
 	if e.Kind == ErrorKindInternal {
-		t.Fatalf("%s: internal error: %v", what, e)
+		t.Fatalf("implementation-quality: internal error from %s", what)
 	}
 }
 
@@ -271,10 +275,10 @@ func FuzzLoad(f *testing.F) {
 		docs, errAll := LoadAllBytesWith(input, opts)
 		one, errOne := LoadBytesWith(input, opts)
 		if errAll != nil {
-			checkNotInternal(t, "LoadAllBytesWith", errAll)
+			qualityNotInternal(t, "LoadAllBytesWith", errAll)
 		}
 		if errOne != nil {
-			checkNotInternal(t, "LoadBytesWith", errOne)
+			qualityNotInternal(t, "LoadBytesWith", errOne)
 		}
 		if errAll != nil {
 			return
@@ -383,7 +387,7 @@ func FuzzEmitRoundTrip(f *testing.F) {
 		}
 		emitted, err := EmitAll(docs)
 		if err != nil {
-			checkNotInternal(t, "EmitAll", err)
+			qualityNotInternal(t, "EmitAll", err)
 			return
 		}
 		// §10.2: accepted by default emit_all, reloads under default load_all.
@@ -413,7 +417,7 @@ func FuzzLintYAML11(f *testing.F) {
 		opts := DefaultOptions()
 		res, err := LintYAML11Bytes(data, opts)
 		if err != nil {
-			checkNotInternal(t, "LintYAML11Bytes", err)
+			qualityNotInternal(t, "LintYAML11Bytes", err)
 			return
 		}
 		if res.WarningCount < len(res.Diagnostics) {
@@ -475,7 +479,7 @@ func FuzzEncode(f *testing.F) {
 		for i := range docs {
 			plain, err := EncodePlain(docs[i].root, opts)
 			if err != nil {
-				checkNotInternal(t, "EncodePlain", err)
+				qualityNotInternal(t, "EncodePlain", err)
 				continue
 			}
 			if !json.Valid([]byte(plain)) {

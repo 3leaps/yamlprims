@@ -10,7 +10,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use yamlprims_fuzz::targets;
+use yamlprims_fuzz::{targets, QUALITY_PREFIX};
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -79,23 +79,34 @@ fn replay(target: &str, f: fn(&[u8]), mut seeds: Vec<(String, Vec<u8>)>) {
     // The panic hook is process-wide: one replay at a time.
     static HOOK: Mutex<()> = Mutex::new(());
     let _guard = HOOK.lock().unwrap_or_else(|e| e.into_inner());
-    let failed = std::thread::scope(|s| {
+    let (property, quality) = std::thread::scope(|s| {
         s.spawn(|| {
             let prev = std::panic::take_hook();
             std::panic::set_hook(Box::new(|_| {}));
-            let n = seeds
-                .iter()
-                .filter(|(_, data)| catch_unwind(AssertUnwindSafe(|| f(data))).is_err())
-                .count();
+            let (mut property, mut quality) = (0usize, 0usize);
+            for (_, data) in &seeds {
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| f(data))) {
+                    let text = payload
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| payload.downcast_ref::<&str>().copied())
+                        .unwrap_or("");
+                    if text.starts_with(QUALITY_PREFIX) {
+                        quality += 1;
+                    } else {
+                        property += 1;
+                    }
+                }
+            }
             std::panic::set_hook(prev);
-            n
+            (property, quality)
         })
         .join()
         .expect("replay thread")
     });
     assert!(
-        failed == 0,
-        "{target}: property failure on {failed} of {total} seeds"
+        property == 0 && quality == 0,
+        "{target}: {property} property and {quality} implementation-quality failures in {total} seeds"
     );
 }
 

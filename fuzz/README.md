@@ -6,13 +6,19 @@ published crates never depend on `libfuzzer-sys`.
 
 ## Targets
 
-| Rust (`fuzz/fuzz_targets/`) | Go (`yaml/fuzz_test.go`) | Checks |
+| Rust (`fuzz/fuzz_targets/`) | Go (`yaml/fuzz_test.go`) | Specification properties |
 | --- | --- | --- |
-| `load` | `FuzzLoad` | Error kinds are never `Internal`; single- and multi-document loading agree (spec §5.5). |
+| `load` | `FuzzLoad` | Error kinds are in the closed vocabulary (§7.1); single- and multi-document loading agree (§5.5). |
 | `decode_wire` | `FuzzDecodeWire` | An accepted envelope re-encodes, and that encoder output round-trips byte-identically (§11.1). |
 | `emit_round_trip` | `FuzzEmitRoundTrip` | Documents accepted by the default emitter reload to equal values and `%YAML` versions (§10.2). |
 | `lint_yaml11` | `FuzzLintYAML11` | Spans are 1-based and in bounds; `encode_lint` accepts the result (§7.2, §11.7). |
 | `encode` | `FuzzEncode` | Wire and plain output is JSON; wire output round-trips (§11.1). |
+
+Separately from those properties, an implementation-quality check reports an
+`Internal` error from an in-memory load, emit, lint or plain-encoding call as
+failure kind `quality`. The specification allows `Internal` (for example
+when the engine cannot supply a byte offset, §7.2), so this is a prompt for
+review, not a conformance failure.
 
 The `load`, `emit_round_trip` and `encode` targets use the first input byte to
 pick the options: default, I-JSON default, `MergeKeys::AsKey` or
@@ -69,13 +75,20 @@ object, and every field is required:
 
 - `options` is one of `default`, `ijson-default`, `merge-as-key` or
   `merge-apply`.
-- `operation` is one of `wire`, `plain`, `emit`, `ijson`, `lint`,
-  `rust-roundtrip`, `go-roundtrip`, `rust-driver-error` or `go-driver-error`.
-- `revisions` lists the revisions the difference was observed on.
+- `operation` is one of `wire`, `plain`, `emit`, `ijson`, `lint` (the twins'
+  outputs differ), `rust-roundtrip` or `go-roundtrip` (a twin's wire round
+  trip differs from its own wire), `rust-driver-error` or `go-driver-error`.
+- `revisions` is a non-empty list of commit ids or `vX.Y.Z` tags the
+  difference was observed on, and `owner` is a non-empty string.
+- `status` is `open`, `accepted` or `closed`. Only `open` and `accepted`
+  entries suppress a difference; `closed` entries are history.
 
 An entry matches one exact input, operation and option set, never a category.
 Twin agreement is not a correctness oracle on its own: the targets' property
-checks apply whether or not the twins agree.
+checks apply whether or not the twins agree. A corpus file that cannot be
+decoded is reported as `corpus-decode` with the file's digest.
+`scripts/fuzz-differential.test.sh` (`make test-fuzz-tooling`) holds the
+controls for these rules.
 
 ## Reporting a crash
 

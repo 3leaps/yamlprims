@@ -7,7 +7,7 @@
 # and failure kinds only. It never prints an input, a dump of one, or a path
 # inside the working tree. Logs, corpora, crash inputs and a campaign.json
 # record go to $YAMLPRIMS_FUZZ_OUT (default: a fresh temporary directory),
-# which must be outside the working tree. The script fails if a run leaves
+# which must resolve outside the working tree. The script fails if a run leaves
 # anything new under yaml/testdata/ or fuzz/.
 #
 # Settings (environment):
@@ -27,11 +27,16 @@ per_input_timeout=${YAMLPRIMS_FUZZ_TIMEOUT:-10}
 rss_mb=${YAMLPRIMS_FUZZ_RSS_MB:-2048}
 max_len=${YAMLPRIMS_FUZZ_MAX_LEN:-65536}
 
-out=${YAMLPRIMS_FUZZ_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/yamlprims-fuzz.XXXXXX")}
-case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
-case "$out/" in
-  "$PWD/"* | "$(pwd -P)/"*) echo "fuzz-smoke: YAMLPRIMS_FUZZ_OUT must be outside the working tree" >&2; exit 2 ;;
-esac
+# Resolve symlinks, "." and ".." before the containment check and before
+# anything is created.
+if [ -n "${YAMLPRIMS_FUZZ_OUT:-}" ]; then
+  out=$(python3 -I scripts/fuzz_differential.py resolve-out "$root" "$YAMLPRIMS_FUZZ_OUT") || {
+    echo "fuzz-smoke: YAMLPRIMS_FUZZ_OUT must be outside the working tree" >&2
+    exit 2
+  }
+else
+  out=$(mktemp -d "${TMPDIR:-/tmp}/yamlprims-fuzz.XXXXXX")
+fi
 mkdir -p "$out/logs" "$out/crashers"
 echo "fuzz-smoke: output in $out"
 
@@ -53,6 +58,7 @@ row() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >>"$runs"; }
 classify() { # log
   local log=$1
   if grep -q 'libFuzzer: timeout' "$log"; then echo timeout
+  elif grep -q 'implementation-quality:' "$log"; then echo quality
   elif grep -q 'out-of-memory\|malloc limit' "$log"; then echo memory-limit
   elif grep -q 'deadly signal\|panicked at' "$log"; then echo panic
   elif grep -q 'AddressSanitizer' "$log"; then echo sanitizer

@@ -10,7 +10,7 @@ use yamlprims::{
 };
 
 use crate::{
-    assert_json, assert_not_internal, assert_wire_round_trip, doc_eq, is_output_limit,
+    assert_json, assert_wire_round_trip, doc_eq, is_output_limit, quality_not_internal,
     select_options,
 };
 
@@ -21,10 +21,10 @@ pub fn fuzz_load(data: &[u8]) {
     let all = load_all_bytes(input, &opts);
     let one = load_bytes(input, &opts);
     if let Err(e) = &all {
-        assert_not_internal("load_all_bytes", e);
+        quality_not_internal("load_all_bytes", e);
     }
     if let Err(e) = &one {
-        assert_not_internal("load_bytes", e);
+        quality_not_internal("load_bytes", e);
     }
     let Ok(docs) = all else { return };
     match docs.len() {
@@ -86,7 +86,7 @@ pub fn fuzz_emit_round_trip(data: &[u8]) {
     let emitted = match emit_all(&docs) {
         Ok(s) => s,
         Err(e) => {
-            assert_not_internal("emit_all", &e);
+            quality_not_internal("emit_all", &e);
             return;
         }
     };
@@ -104,7 +104,7 @@ pub fn fuzz_lint_yaml11(data: &[u8]) {
     let res = match lint_yaml11_bytes(data, &opts) {
         Ok(r) => r,
         Err(e) => {
-            assert_not_internal("lint_yaml11_bytes", &e);
+            quality_not_internal("lint_yaml11_bytes", &e);
             return;
         }
     };
@@ -159,7 +159,7 @@ pub fn fuzz_encode(data: &[u8]) {
     for (i, doc) in docs.iter().enumerate() {
         match encode_plain(doc.root(), &opts) {
             Ok(plain) => assert_json(&format!("document {i} plain output"), &plain),
-            Err(e) => assert_not_internal("encode_plain", &e),
+            Err(e) => quality_not_internal("encode_plain", &e),
         }
     }
 }

@@ -46,7 +46,10 @@ shopt -s nullglob
 meta_manifests=(Cargo.toml bindings/*/Cargo.toml fuzz/Cargo.toml)
 shopt -u nullglob
 for manifest in ${meta_manifests[@]+"${meta_manifests[@]}"}; do
-  if ! metadata="$(cargo metadata --manifest-path "${manifest}" --locked --format-version 1 2>/dev/null)"; then
+  # The fuzz crate's libFuzzer runtime is behind a feature: check every feature.
+  features=()
+  [[ "${manifest}" == fuzz/Cargo.toml ]] && features=(--all-features)
+  if ! metadata="$(cargo metadata --manifest-path "${manifest}" --locked --format-version 1 ${features[@]+"${features[@]}"} 2>/dev/null)"; then
     echo "deps-check: cargo metadata failed; the dependency graph was not checked" >&2
     fail=1
   elif ! printf '%s' "$metadata" | python3 -I -c '
