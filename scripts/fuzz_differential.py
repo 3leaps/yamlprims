@@ -8,6 +8,8 @@ Usage:
   python3 -I scripts/fuzz_differential.py claim-out ROOT PATH
   python3 -I scripts/fuzz_differential.py check-tree OUT
   python3 -I scripts/fuzz_differential.py mkdir-under OUT REL...
+  python3 -I scripts/fuzz_differential.py lock-out OUT PID
+  python3 -I scripts/fuzz_differential.py unlock-out OUT PID
 
 Output never contains input bytes. A failure prints an input SHA-256 and a
 fixed operation or failure kind; full details go to OUT.
@@ -271,7 +273,8 @@ def refuse(msg):
 
 
 def check_tree(out):
-    """Refuse OUT unless it is a real directory with no symlink anywhere below it."""
+    """Refuse OUT unless it is a real directory with no symlink, and no
+    regular file with more than one link, anywhere below it."""
     try:
         st = os.lstat(out)
     except FileNotFoundError:
@@ -280,8 +283,13 @@ def check_tree(out):
         refuse("output path is not a directory")
     for dirpath, dirnames, filenames in os.walk(out, followlinks=False):
         for name in dirnames + filenames:
-            if stat.S_ISLNK(os.lstat(os.path.join(dirpath, name)).st_mode):
+            st = os.lstat(os.path.join(dirpath, name))
+            if stat.S_ISLNK(st.st_mode):
                 refuse("symlink under the output directory")
+            # A hard link shares its inode with a file elsewhere (possibly in
+            # the tree); writing to it would change that file.
+            if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+                refuse("hard-linked file under the output directory")
 
 
 def claim_out(root, path):
@@ -346,6 +354,48 @@ def write_new(out, name, text):
     refuse("too many existing report files")
 
 
+LOCK = ".yamlprims-fuzz-lock"
+
+
+def lock_out(out, pid):
+    """Take the output root's lock for process PID: an exclusively created
+    file holding the pid. A lock held by a live process is refused; one left
+    by a process that no longer exists is replaced."""
+    path = os.path.join(out, LOCK)
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            st = os.lstat(path)
+            if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+                refuse("lock file is not a regular file")
+            try:
+                holder = int(open(path, encoding="ascii").read().strip())
+            except ValueError:
+                refuse("unreadable lock file; remove it if no run is active")
+            try:
+                os.kill(holder, 0)
+            except ProcessLookupError:
+                os.unlink(path)  # stale: its process is gone
+                continue
+            except PermissionError:
+                pass
+            refuse(f"another run (pid {holder}) holds this output directory")
+        with os.fdopen(fd, "w", encoding="ascii") as f:
+            f.write(f"{pid}\n")
+        return
+    refuse("could not take the output directory lock")
+
+
+def unlock_out(out, pid):
+    path = os.path.join(out, LOCK)
+    try:
+        if open(path, encoding="ascii").read().strip() == str(pid):
+            os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 4 and sys.argv[1] == "resolve-out":
         resolve_out(sys.argv[2], sys.argv[3])
@@ -353,6 +403,10 @@ if __name__ == "__main__":
         print(claim_out(sys.argv[2], sys.argv[3]))
     elif len(sys.argv) == 3 and sys.argv[1] == "check-tree":
         check_tree(sys.argv[2])
+    elif len(sys.argv) == 4 and sys.argv[1] == "lock-out":
+        lock_out(sys.argv[2], int(sys.argv[3]))
+    elif len(sys.argv) == 4 and sys.argv[1] == "unlock-out":
+        unlock_out(sys.argv[2], int(sys.argv[3]))
     elif len(sys.argv) >= 4 and sys.argv[1] == "mkdir-under":
         for rel in sys.argv[3:]:
             mkdir_under(sys.argv[2], rel)

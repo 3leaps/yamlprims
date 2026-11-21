@@ -57,9 +57,12 @@ ceiling is available. The Go `Fuzz*` targets run their seed corpora under
 ## Output
 
 `fuzz-replay` prints the target and the failure kind only; full logs stay in a
-temporary directory. `fuzz-smoke` writes logs, corpora, failing inputs and a
-`campaign.json` record to `YAMLPRIMS_FUZZ_OUT` (default: a new temporary
-directory), which must be outside the working tree. It prints target names,
+temporary directory. `fuzz-smoke` uses `YAMLPRIMS_FUZZ_OUT` (default: a new
+temporary directory), which must be outside the working tree. Each run takes
+an exclusive lock on that directory (a second run is refused while the first
+is alive) and writes its logs, failing inputs, differential report and
+`campaign.json` record into its own new directory under `runs/`. Only the
+corpora under `corpus/` are shared between runs. It prints target names,
 execution counts, coverage and failure kinds, never an input or a dump of one,
 and fails if a run leaves files under `yaml/testdata/` or `fuzz/`.
 
@@ -72,10 +75,12 @@ Output roots are checked before anything is created:
   if it is empty, or if it carries the `.yamlprims-fuzz-out` marker an earlier
   run wrote (so a campaign can reuse its corpora). Anything else is refused,
   and its contents are left alone.
-- No symlink may appear anywhere below an output root. The scripts check
-  before every step that creates or writes files there. Files written from
-  Python (seeds, reports, `campaign.json`) are opened without following
-  links; seeds and reports also never overwrite.
+- No symlink, and no regular file with more than one hard link, may appear
+  anywhere below an output root. The scripts check before every step that
+  creates or writes files there.
+- Existing files are never written through. Seeds and reports are created
+  exclusively without following links; logs, settings and `campaign.json` are
+  written under a fresh name and renamed into place.
 
 These checks assume that the output directory's ancestors, and `TMPDIR`, are
 trusted and controlled by the user running the scripts. Someone who can

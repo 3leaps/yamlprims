@@ -198,6 +198,34 @@ reports() { find "$work/out-fresh" -maxdepth 1 -name 'differential-failures*.jso
 if [ -f "$work/out-fresh/.yamlprims-fuzz-out" ] && [ "$(reports)" = 1 ]; then ok; else bad "fresh output root not created and used"; fi
 run_out "$work/out-fresh" || true
 if [ "$(reports)" = 2 ]; then ok; else bad "marked output root not reused without overwriting"; fi
+# Hard link to a tracked file under a marked output root: refused, and the
+# tracked file is unchanged.
+o=$(python3 -I "$helper" claim-out "$root" "$work/out-hardlink")
+tracked="$root/fuzz/README.md"
+sum_before=$(shasum -a 256 "$tracked")
+if ln "$tracked" "$o/settings.txt" 2>/dev/null; then
+  ln "$tracked" "$o/differential-failures.jsonl"
+  if run_out "$o"; then bad "differential accepted a hard-linked file under the output root"; else ok; fi
+  if YAMLPRIMS_FUZZ_OUT="$o" bash scripts/fuzz-smoke.sh >/dev/null 2>&1; then bad "smoke accepted a hard-linked file under the output root"; else ok; fi
+  if python3 -I "$helper" check-tree "$o" 2>/dev/null; then bad "check-tree accepted a hard-linked file"; else ok; fi
+  if [ "$sum_before" = "$(shasum -a 256 "$tracked")" ]; then ok; else bad "tracked file changed through a hard link"; fi
+else
+  echo "note: hard-link control skipped (output root on another filesystem)" >&2
+fi
+# One campaign per output root: a second claim while the first holder is
+# alive is refused, by the helper and by fuzz-smoke; a stale lock is replaced.
+o=$(python3 -I "$helper" claim-out "$root" "$work/out-lock")
+sleep 60 &
+holder=$!
+if python3 -I "$helper" lock-out "$o" "$holder"; then ok; else bad "first lock refused"; fi
+if python3 -I "$helper" lock-out "$o" "$$" 2>/dev/null; then bad "second concurrent lock accepted"; else ok; fi
+if YAMLPRIMS_FUZZ_OUT="$o" bash scripts/fuzz-smoke.sh >/dev/null 2>&1; then bad "smoke ran while another run held the root"; else ok; fi
+if [ ! -e "$o/runs" ]; then ok; else bad "refused smoke created a run directory"; fi
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+if python3 -I "$helper" lock-out "$o" "$$"; then ok; else bad "stale lock not replaced"; fi
+python3 -I "$helper" unlock-out "$o" "$$"
+if [ ! -e "$o/.yamlprims-fuzz-lock" ]; then ok; else bad "lock not released"; fi
 if [ -z "$(find "$target_dir" -mindepth 1)" ]; then ok; else bad "files were written into the tree through a link"; fi
 rmdir "$target_dir" || bad "link target directory not empty"
 if [ "$before" = "$(tree_now)" ]; then ok; else bad "output-root controls changed the tree"; fi

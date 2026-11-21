@@ -64,9 +64,7 @@ doc = false
 bench = false
 required-features = ["libfuzzer"]
 
-# Its own workspace root, so it never joins the published workspace.
-[workspace]
-members = ["."]
-
+# Not a workspace member: the root manifest excludes fuzz/, so this crate is
+# resolved on its own with fuzz/Cargo.lock.
 [profile.release]
 debug = 1
