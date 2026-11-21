@@ -142,11 +142,11 @@ if python3 -I "$helper" resolve-out "$root" "$work/fine" >/dev/null; then ok; el
 # the same directory; identity, not spelling, decides.
 alias="$(dirname "$root")/$(basename "$root" | tr '[:lower:]' '[:upper:]')"
 if [ -d "$alias" ]; then refuses "case alias" "$alias/out"; else ok; fi
-# A TMPDIR inside the tree is refused before anything is created, by every script.
-# The directory exists, so only the check (not a failing mktemp) can refuse it.
-inside="$root/fuzz/tmp-inside"
+# A TMPDIR inside the tree is refused before anything is created, by every
+# script. Each fixture is a fresh directory this run creates, so only the
+# check (not a failing mktemp) can refuse it, and cleanup removes only it.
 for script in fuzz-differential.sh fuzz-smoke.sh fuzz-replay.sh; do
-  mkdir -p "$inside"
+  inside=$(mktemp -d "$root/fuzz/tmp-inside.XXXXXX")
   before=$(git status --porcelain --untracked-files=all --ignored)
   args=()
   if [ "$script" = fuzz-differential.sh ]; then args=(--seeds); fi
@@ -156,15 +156,51 @@ for script in fuzz-differential.sh fuzz-smoke.sh fuzz-replay.sh; do
     ok
   fi
   if [ "$before" = "$(git status --porcelain --untracked-files=all --ignored)" ]; then ok; else bad "$script changed the tree"; fi
-  rm -rf "$inside"
+  rmdir "$inside" || bad "$script left files in its refused TMPDIR"
 done
-before=$(git status --porcelain --untracked-files=all --ignored)
-if YAMLPRIMS_FUZZ_OUT="$work/link-to-tree/x" bash scripts/fuzz-differential.sh raw:"$work/corpus" >/dev/null 2>&1; then
-  bad "fuzz-differential accepted a symlinked output dir"
-else
-  ok
-fi
-if [ "$before" = "$(git status --porcelain --untracked-files=all --ignored)" ]; then ok; else bad "refused run changed the tree"; fi
+
+# 5. Output roots: created exclusively or reused only when marked, and no
+# symlink is followed anywhere below them.
+tree_now() { git status --porcelain --untracked-files=all --ignored; }
+target_dir=$(mktemp -d "$root/fuzz/link-target.XXXXXX")
+before=$(tree_now)
+stub "$work/go" X X
+run_out() { # out-dir -> exit status of fuzz-differential.sh with stub drivers
+  YAMLPRIMS_FUZZ_OUT="$1" YAMLPRIMS_FUZZ_RUST_DRIVER="$work/rust" YAMLPRIMS_FUZZ_GO_DRIVER="$work/go" \
+    bash scripts/fuzz-differential.sh "raw:$work/corpus-ok" >/dev/null 2>&1
+}
+mkdir "$work/corpus-ok"
+printf 'a: 1\n' >"$work/corpus-ok/input"
+
+# Child symlink into the tree, under a marked output root.
+o=$(python3 -I "$helper" claim-out "$root" "$work/out-child")
+ln -s "$target_dir" "$o/logs"
+if run_out "$o"; then bad "differential accepted an output root with a child symlink"; else ok; fi
+if YAMLPRIMS_FUZZ_OUT="$o" bash scripts/fuzz-smoke.sh >/dev/null 2>&1; then bad "smoke accepted an output root with a child symlink"; else ok; fi
+# Dangling child symlink where the report would be written.
+o=$(python3 -I "$helper" claim-out "$root" "$work/out-dangling")
+ln -s "$target_dir/report.jsonl" "$o/differential-failures.jsonl"
+if run_out "$o"; then bad "differential accepted a dangling child symlink"; else ok; fi
+if [ -e "$target_dir/report.jsonl" ]; then bad "report written through a dangling symlink"; else ok; fi
+# Seeds: an output directory holding a child symlink into the tree.
+mkdir "$work/seeds-child"
+ln -s "$target_dir" "$work/seeds-child/load"
+if python3 -I fuzz/seeds.py "$work/seeds-child" >/dev/null 2>&1; then bad "seeds.py adopted a directory with a child symlink"; else ok; fi
+# Non-empty, unmarked output root: refused, contents untouched.
+mkdir "$work/out-unmarked"
+printf 'keep\n' >"$work/out-unmarked/sentinel"
+if run_out "$work/out-unmarked"; then bad "differential adopted a non-empty unmarked directory"; else ok; fi
+if YAMLPRIMS_FUZZ_OUT="$work/out-unmarked" bash scripts/fuzz-smoke.sh >/dev/null 2>&1; then bad "smoke adopted a non-empty unmarked directory"; else ok; fi
+if [ "$(cat "$work/out-unmarked/sentinel")" = keep ] && [ "$(find "$work/out-unmarked" -mindepth 1 | wc -l | tr -d ' ')" = 1 ]; then ok; else bad "unmarked directory was changed"; fi
+# A fresh output root works, and a marked one can be reused.
+run_out "$work/out-fresh" || true
+reports() { find "$work/out-fresh" -maxdepth 1 -name 'differential-failures*.jsonl' | wc -l | tr -d ' '; }
+if [ -f "$work/out-fresh/.yamlprims-fuzz-out" ] && [ "$(reports)" = 1 ]; then ok; else bad "fresh output root not created and used"; fi
+run_out "$work/out-fresh" || true
+if [ "$(reports)" = 2 ]; then ok; else bad "marked output root not reused without overwriting"; fi
+if [ -z "$(find "$target_dir" -mindepth 1)" ]; then ok; else bad "files were written into the tree through a link"; fi
+rmdir "$target_dir" || bad "link target directory not empty"
+if [ "$before" = "$(tree_now)" ]; then ok; else bad "output-root controls changed the tree"; fi
 
 echo "fuzz-differential controls: $pass passed, $failed failed"
 [ "$failed" = 0 ]

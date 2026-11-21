@@ -5,6 +5,9 @@ Usage:
   python3 -I scripts/fuzz_differential.py run KNOWN RUST_DRIVER GO_DRIVER OUT MODE:DIR...
   python3 -I scripts/fuzz_differential.py check-known KNOWN
   python3 -I scripts/fuzz_differential.py resolve-out ROOT PATH
+  python3 -I scripts/fuzz_differential.py claim-out ROOT PATH
+  python3 -I scripts/fuzz_differential.py check-tree OUT
+  python3 -I scripts/fuzz_differential.py mkdir-under OUT REL...
 
 Output never contains input bytes. A failure prints an input SHA-256 and a
 fixed operation or failure kind; full details go to OUT.
@@ -13,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -214,8 +218,7 @@ def main_run(known_path, rust_driver, go_driver, out, specs):
             found.append((r["id"], op))
             details.append({"id": r["id"], "operation": op, "rust": r, "go": g})
     if found:
-        report = Path(out) / "differential-failures.jsonl"
-        report.write_text("".join(json.dumps(d) + "\n" for d in details), encoding="utf-8")
+        report = write_new(out, "differential-failures.jsonl", "".join(json.dumps(d) + "\n" for d in details))
         for rid, op in found[:20]:
             print(f"DIFF {op}: {rid}", file=sys.stderr)
         sys.exit(f"fuzz-differential FAILED: {len(found)} unlisted differences in {len(records)} records; details in {report}")
@@ -239,7 +242,7 @@ def _same(a, b):
         return False
 
 
-def resolve_out(root, path):
+def resolve_out(root, path, quiet=False):
     """Resolve PATH (symlinks, ".", "..", relative to the current directory)
     and refuse it if it is inside ROOT or ROOT is inside it. Containment is
     decided by filesystem identity (device and inode), not by comparing path
@@ -253,12 +256,106 @@ def resolve_out(root, path):
     # ROOT is below out: some ancestor of ROOT is out.
     if os.path.exists(out_real) and any(_same(a, out_real) for a in _ancestors(root_real)):
         sys.exit("output directory must be outside the working tree")
-    print(out_real)
+    if not quiet:
+        print(out_real)
+    return out_real
+
+
+# Marker written into every output root this harness creates. A pre-existing
+# output root is reused only if it carries the marker.
+MARKER = ".yamlprims-fuzz-out"
+
+
+def refuse(msg):
+    sys.exit(f"fuzz output: {msg}")
+
+
+def check_tree(out):
+    """Refuse OUT unless it is a real directory with no symlink anywhere below it."""
+    try:
+        st = os.lstat(out)
+    except FileNotFoundError:
+        refuse("output directory does not exist")
+    if not stat.S_ISDIR(st.st_mode):
+        refuse("output path is not a directory")
+    for dirpath, dirnames, filenames in os.walk(out, followlinks=False):
+        for name in dirnames + filenames:
+            if stat.S_ISLNK(os.lstat(os.path.join(dirpath, name)).st_mode):
+                refuse("symlink under the output directory")
+
+
+def claim_out(root, path):
+    """Create the output root exclusively, or reuse an empty directory or one
+    this harness marked. Containment is checked first, by identity."""
+    out = resolve_out(root, path, quiet=True)
+    try:
+        os.mkdir(out, 0o700)
+    except FileExistsError:
+        st = os.lstat(out)
+        if not stat.S_ISDIR(st.st_mode):
+            refuse("output path exists and is not a directory")
+        entries = os.listdir(out)
+        if entries:
+            try:
+                marked = stat.S_ISREG(os.lstat(os.path.join(out, MARKER)).st_mode)
+            except FileNotFoundError:
+                marked = False
+            if not marked:
+                refuse("output directory is not empty and was not created by this harness")
+    except FileNotFoundError:
+        refuse("the output directory's parent does not exist")
+    if not os.path.lexists(os.path.join(out, MARKER)):
+        fd = os.open(os.path.join(out, MARKER), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        os.close(fd)
+    check_tree(out)
+    return out
+
+
+def mkdir_under(out, rel):
+    """Create OUT/REL one component at a time, refusing symlinks and non-directories."""
+    check_tree(out)
+    cur = out
+    for part in Path(rel).parts:
+        if part in ("", ".", "..") or os.sep in part:
+            refuse("bad relative path")
+        cur = os.path.join(cur, part)
+        try:
+            st = os.lstat(cur)
+        except FileNotFoundError:
+            os.mkdir(cur, 0o700)
+            continue
+        if not stat.S_ISDIR(st.st_mode):
+            refuse("output component is a symlink or not a directory")
+    return cur
+
+
+def write_new(out, name, text):
+    """Write a new file directly under OUT without following links; never
+    overwrite. Returns the path written."""
+    check_tree(out)
+    base, ext = os.path.splitext(name)
+    for i in range(1000):
+        path = os.path.join(out, name if i == 0 else f"{base}-{i}{ext}")
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+    refuse("too many existing report files")
 
 
 if __name__ == "__main__":
     if len(sys.argv) == 4 and sys.argv[1] == "resolve-out":
         resolve_out(sys.argv[2], sys.argv[3])
+    elif len(sys.argv) == 4 and sys.argv[1] == "claim-out":
+        print(claim_out(sys.argv[2], sys.argv[3]))
+    elif len(sys.argv) == 3 and sys.argv[1] == "check-tree":
+        check_tree(sys.argv[2])
+    elif len(sys.argv) >= 4 and sys.argv[1] == "mkdir-under":
+        for rel in sys.argv[3:]:
+            mkdir_under(sys.argv[2], rel)
     elif len(sys.argv) == 3 and sys.argv[1] == "check-known":
         print(f"known-differences: {len(load_known(sys.argv[2]))} suppressing entries")
     elif len(sys.argv) >= 7 and sys.argv[1] == "run":

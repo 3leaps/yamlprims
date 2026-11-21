@@ -63,6 +63,25 @@ directory), which must be outside the working tree. It prints target names,
 execution counts, coverage and failure kinds, never an input or a dump of one,
 and fails if a run leaves files under `yaml/testdata/` or `fuzz/`.
 
+Output roots are checked before anything is created:
+
+- An output or temporary location (including `TMPDIR`) must not be the
+  working tree, inside it, or above it. This is decided by filesystem
+  identity, not by path spelling.
+- A script creates its output root itself. An existing directory is used only
+  if it is empty, or if it carries the `.yamlprims-fuzz-out` marker an earlier
+  run wrote (so a campaign can reuse its corpora). Anything else is refused,
+  and its contents are left alone.
+- No symlink may appear anywhere below an output root. The scripts check
+  before every step that creates or writes files there. Files written from
+  Python (seeds, reports, `campaign.json`) are opened without following
+  links; seeds and reports also never overwrite.
+
+These checks assume that the output directory's ancestors, and `TMPDIR`, are
+trusted and controlled by the user running the scripts. Someone who can
+replace a path component between the check and the write is not defended
+against.
+
 ## Known differences
 
 `known-differences.jsonl` lists Rust/Go differences that are under review.

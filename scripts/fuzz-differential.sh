@@ -35,15 +35,13 @@ tmp_base=$(python3 -I "$root/scripts/fuzz_differential.py" resolve-out "$root" "
 [ "$#" -gt 0 ] || { echo "usage: $0 MODE:DIR [MODE:DIR ...] | --seeds" >&2; exit 2; }
 
 helper="$root/scripts/fuzz_differential.py"
-if [ -n "${YAMLPRIMS_FUZZ_OUT:-}" ]; then
-  out=$(python3 -I "$helper" resolve-out "$root" "$YAMLPRIMS_FUZZ_OUT") || {
-    echo "fuzz-differential: YAMLPRIMS_FUZZ_OUT must be outside the working tree" >&2
-    exit 2
-  }
-  mkdir -p "$out"
-else
-  out=$(mktemp -d "$tmp_base/yamlprims-fuzz-diff.XXXXXX")
-fi
+# The output root is created exclusively (or is an empty directory, or one
+# this harness marked), with no symlink anywhere below it.
+out=${YAMLPRIMS_FUZZ_OUT:-$(mktemp -d "$tmp_base/yamlprims-fuzz-diff.XXXXXX")}
+out=$(python3 -I "$helper" claim-out "$root" "$out") || {
+  echo "fuzz-differential: YAMLPRIMS_FUZZ_OUT refused (see fuzz/README.md)" >&2
+  exit 2
+}
 
 tmp=$(mktemp -d "$tmp_base/yamlprims-fuzz-diff-bin.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT

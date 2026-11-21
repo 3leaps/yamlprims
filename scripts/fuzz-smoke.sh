@@ -33,21 +33,24 @@ per_input_timeout=${YAMLPRIMS_FUZZ_TIMEOUT:-10}
 rss_mb=${YAMLPRIMS_FUZZ_RSS_MB:-2048}
 max_len=${YAMLPRIMS_FUZZ_MAX_LEN:-65536}
 
-# Resolve symlinks, "." and ".." before the containment check and before
-# anything is created.
-if [ -n "${YAMLPRIMS_FUZZ_OUT:-}" ]; then
-  out=$(python3 -I scripts/fuzz_differential.py resolve-out "$root" "$YAMLPRIMS_FUZZ_OUT") || {
-    echo "fuzz-smoke: YAMLPRIMS_FUZZ_OUT must be outside the working tree" >&2
-    exit 2
-  }
-else
-  out=$(mktemp -d "$tmp_base/yamlprims-fuzz.XXXXXX")
-fi
-mkdir -p "$out/logs" "$out/crashers"
+# The output root is created exclusively (or is an empty directory, or one
+# this harness marked, so a campaign can reuse its corpora). Containment is
+# checked by identity, and no symlink may appear anywhere below it: guard
+# runs before every step that creates or writes files there.
+helper="$root/scripts/fuzz_differential.py"
+out=${YAMLPRIMS_FUZZ_OUT:-$(mktemp -d "$tmp_base/yamlprims-fuzz.XXXXXX")}
+out=$(python3 -I "$helper" claim-out "$root" "$out") || {
+  echo "fuzz-smoke: YAMLPRIMS_FUZZ_OUT refused (see fuzz/README.md)" >&2
+  exit 2
+}
+guard() { python3 -I "$helper" check-tree "$out" || { echo "fuzz-smoke: output directory changed under the run" >&2; exit 2; }; }
+under() { python3 -I "$helper" mkdir-under "$out" "$@" || exit 2; }
+under logs crashers
 echo "fuzz-smoke: output in $out"
 
 
 tree_state() { git status --porcelain=v1 --untracked-files=all --ignored -- yaml/testdata fuzz; }
+guard
 tree_state >"$out/tree-before.txt"
 
 failures=0
@@ -57,6 +60,7 @@ fail() { # target kind
 }
 # One row per run for the campaign record: target budget_s execs coverage outcome kind
 runs="$out/runs.tsv"
+guard
 : >"$runs"
 row() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$@" >>"$runs"; }
 
@@ -81,10 +85,12 @@ if [ "$have_hash" != "$pin_hash" ]; then
   exit 2
 fi
 host=$(rustc "+$toolchain" -vV | awk '$1 == "host:" {print $2}')
+guard
 printf '%s\n' "engine=libfuzzer per_input_timeout_s=$per_input_timeout memory_limit_mb=$rss_mb max_len=$max_len" \
   "toolchain=$toolchain toolchain_commit=$pin_hash" >"$out/settings.txt"
 
 export CARGO_TARGET_DIR="$root/target/fuzz"
+guard
 if ! RUSTFLAGS="-Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 \
 -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table \
 -Cllvm-args=-sanitizer-coverage-trace-compares --cfg fuzzing -Cllvm-args=-simplifycfg-branch-fold-threshold=0 \
@@ -94,12 +100,17 @@ if ! RUSTFLAGS="-Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 \
   echo "fuzz-smoke: fuzz build failed (log in $out/logs)" >&2
   exit 2
 fi
-python3 -I fuzz/seeds.py "$out/seeds" >/dev/null
+# Seeds go to a fresh directory of their own each run (a reused output root
+# keeps its corpora; seeds are regenerated).
+seeds=$(mktemp -d "$tmp_base/yamlprims-fuzz-seeds.XXXXXX")
+trap 'rm -rf "$seeds"' EXIT
+python3 -I fuzz/seeds.py "$seeds" >/dev/null
 
 for t in load decode_wire emit_round_trip lint_yaml11 encode; do
   log="$out/logs/$t.log"
-  mkdir -p "$out/corpus/$t" "$out/crashers/$t"
-  cp "$out/seeds/$t/"* "$out/corpus/$t/"
+  under "corpus/$t" "crashers/$t"
+  cp "$seeds/$t/"* "$out/corpus/$t/"
+  guard
   dict=()
   [ "$t" != decode_wire ] && dict=(-dict="$root/fuzz/yaml.dict")
   # libFuzzer runs from the output directory so nothing lands in the tree.
@@ -112,6 +123,7 @@ for t in load decode_wire emit_round_trip lint_yaml11 encode; do
     outcome=fail kind=$(classify "$log")
     fail "$t" "$kind"
   fi
+  guard
   execs=$(sed -n 's/^stat::number_of_executed_units: *//p' "$log" | tail -1)
   cov=$(grep -o 'cov: [0-9]*' "$log" | tail -1 | cut -d' ' -f2 || true)
   [ "$outcome" = pass ] && echo "ok   $t: ${execs:-?} execs in ${rust_seconds}s, cov ${cov:-?}"
@@ -119,6 +131,7 @@ for t in load decode_wire emit_round_trip lint_yaml11 encode; do
 done
 
 # Differential over the YAML corpora the run produced.
+guard
 if YAMLPRIMS_FUZZ_OUT="$out" bash scripts/fuzz-differential.sh "selector:$out/corpus/load" \
   "selector:$out/corpus/emit_round_trip" "selector:$out/corpus/encode" "raw:$out/corpus/lint_yaml11" \
   >"$out/logs/differential.log" 2>&1; then
@@ -126,20 +139,22 @@ if YAMLPRIMS_FUZZ_OUT="$out" bash scripts/fuzz-differential.sh "selector:$out/co
 else
   n=$(grep -c '^DIFF ' "$out/logs/differential.log" || true)
   if [ "${n:-0}" -gt 0 ]; then
-    fail differential "$n unlisted differences (listed by input SHA-256 in $out/logs)"
+    fail differential "$n unlisted differences (listed by input SHA-256 in $out)"
   else
     fail differential "error (log in $out/logs)"
   fi
 fi
 
+guard
 tree_state >"$out/tree-after.txt"
 if ! cmp -s "$out/tree-before.txt" "$out/tree-after.txt"; then
   fail tree "files were left under yaml/testdata/ or fuzz/"
 fi
 
+guard
 # Campaign record. Field names are generic so other subjects can use the same shape.
 python3 -I - "$out" "$runs" "$failures" <<'PY'
-import json, platform, subprocess, sys
+import json, os, platform, subprocess, sys
 out, runs, failures = sys.argv[1], sys.argv[2], int(sys.argv[3])
 def cmd(*a):
     try:
@@ -168,7 +183,8 @@ record = {
     "runs": rows,
     "failures": failures,
 }
-with open(f"{out}/campaign.json", "w", encoding="utf-8") as f:
+fd = os.open(f"{out}/campaign.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
     json.dump(record, f, indent=2)
 PY
 

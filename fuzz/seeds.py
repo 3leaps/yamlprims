@@ -7,7 +7,8 @@ Usage: python3 -I fuzz/seeds.py OUT_DIR
 Seeds come from conformance/vectors/cases.jsonl (load, emit_round_trip,
 encode: one file per input and options selector byte; lint_yaml11: the raw
 input) and crates/yamlprims/tests/fixtures/wire/*.json (decode_wire). Nothing
-generated here is committed; OUT_DIR must be outside the working tree.
+generated here is committed. OUT_DIR must be outside the working tree and
+must not exist (or be an empty directory); nothing existing is adopted.
 """
 import json
 import os
@@ -31,6 +32,14 @@ if any(same(a, root) for a in (out, *out.parents) if a.exists()) or (
 ):
     sys.exit("seeds.py: OUT_DIR must be outside the working tree")
 
+# OUT_DIR is created here, or must be an empty real directory: existing
+# content (including symlinks) is never adopted.
+try:
+    os.mkdir(out, 0o700)
+except FileExistsError:
+    if out.is_symlink() or not out.is_dir() or any(out.iterdir()):
+        sys.exit("seeds.py: OUT_DIR must not exist or must be an empty directory")
+
 inputs = []
 for line in (root / "conformance" / "vectors" / "cases.jsonl").read_text(encoding="utf-8").splitlines():
     if not line.strip():
@@ -46,9 +55,11 @@ if not inputs:
 
 def write(target, items):
     d = out / target
-    d.mkdir(parents=True, exist_ok=True)
+    os.mkdir(d, 0o700)  # fails if anything is already there
     for i, data in enumerate(items):
-        (d / f"seed-{i:04d}").write_bytes(data)
+        fd = os.open(d / f"seed-{i:04d}", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
     return len(items)
 
 
