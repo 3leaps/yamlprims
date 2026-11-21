@@ -20,6 +20,8 @@ type tagIdentityCase struct {
 func TestSpecV17RefusedIdentitiesAndSeparation(t *testing.T) {
 	const tag = "invalid_global_tag_character"
 	const gap = "expected_whitespace"
+	const bang = "expected_tag_directive_bang"
+	const term = "invalid_tag_terminator"
 	cases := []tagIdentityCase{
 		{"example 6.25", "!<$:?> value\n", false, 0, tag, 0, 1, 1},
 		{"digit scheme", "key: !<9ab:c> value\n", false, 0, tag, 5, 1, 6},
@@ -45,9 +47,28 @@ func TestSpecV17RefusedIdentitiesAndSeparation(t *testing.T) {
 		{"gap, second document", "a\n...\n%TAG !e!tag:a,1:\n--- b\n", false, 0, gap, 14, 3, 9},
 		{"handle error wins", "%TAG !e0 a:\n%TAG !f!b:\n--- x\n", false, 0, "expected_tag_directive_bang", 0, 1, 1},
 		{"empty prefix unchanged", "%TAG !e!\n--- x\n", false, 0, tag, 0, 1, 1},
-		{"gap precedes earlier tag identity", "!<abc> x\n...\n%TAG !e!x:\n--- y\n", false, 0, gap, 21, 3, 9},
-		{"gap precedes earlier depth", "[[[1]]]\n...\n%TAG !e!x:\n--- y\n", false, 2, gap, 20, 3, 9},
-		{"gap precedes earlier parser error", "- a\nb: c\n...\n%TAG !e!x:\n--- y\n", false, 0, gap, 21, 4, 9},
+		{"earlier tag identity wins", "!<abc> x\n...\n%TAG !e!x:\n--- y\n", false, 0, tag, 0, 1, 1},
+		{"earlier depth wins", "[[[1]]]\n...\n%TAG !e!x:\n--- y\n", false, 2, "max_depth", 2, 1, 3},
+		{"earlier parser error wins", "- a\nb: c\n...\n%TAG !e!x:\n--- y\n", false, 0, "expected_block_sequence_entry", 4, 2, 1},
+		{"gap before later tag identity", "%TAG !e!x:\n--- !<abc> y\n", false, 0, gap, 8, 1, 9},
+		{"gap before later depth", "%TAG !e!x:\n--- [[[1]]]\n", false, 2, gap, 8, 1, 9},
+		{"gap before later syntax", "%TAG !e!x:\n--- [\n", false, 0, gap, 8, 1, 9},
+		{"gap then end of input", "%TAG !e!x:", false, 0, gap, 8, 1, 9},
+		{"gap then NUL", "%TAG !e!x:\x00--- y\n", false, 0, gap, 8, 1, 9},
+		{"terminator error wins over gap", "%TAG !e!x: ]\n--- y\n", false, 0, "invalid_directive_terminator", 0, 1, 1},
+		{"gap before later duplicate key", "%TAG !e!x:\n--- a: 1\na: 2\n", false, 0, gap, 8, 1, 9},
+		{"duplicate handle before gap", "%TAG !e! a:\n%TAG !e!b:\n--- x\n", false, 0, "duplicate_tag_directive", 12, 2, 1},
+		{"prefix scan error wins over gap", "%TAG !e!%zz\n--- x\n", false, 0, "invalid_tag_escape", 0, 1, 1},
+		{"underscore handle, used", "%TAG !a_b! tag:example.com,2026:\n--- !a_b!y z\n", false, 0, bang, 0, 1, 1},
+		{"underscore handle, unused", "%TAG !a_b! tag:example.com,2026:\n--- z\n", false, 0, bang, 0, 1, 1},
+		{"underscore handle and gap", "%TAG !a_b!x:\n--- z\n", false, 0, bang, 0, 1, 1},
+		{"underscore handle use", "--- !a_b!y z\n", false, 0, term, 4, 1, 5},
+		{"underscore handle use in flow", "k: [ !a_b!y z ]\n", false, 0, term, 5, 1, 6},
+		{"verbatim bang", "!<!> x\n", false, 0, tag, 0, 1, 1},
+		{"verbatim bang in sequence", "- !<!> x\n", false, 0, tag, 2, 1, 3},
+		{"verbatim bang on collection", "!<!> [1]\n", false, 0, tag, 0, 1, 1},
+		{"verbatim bang, reject", "!<!> x\n", true, 0, tag, 0, 1, 1},
+		{"verbatim bang on collection, reject", "!<!> {a: 1}\n", true, 0, tag, 0, 1, 1},
 	}
 	for _, c := range cases {
 		opts := DefaultOptions()
@@ -107,6 +128,10 @@ func TestSpecV17AcceptedIdentitiesCloseThroughWireAndEmit(t *testing.T) {
 		{"!<%74ag:example.com,2026:x> v\n", "tag:example.com,2026:x"},
 		{"!local%21x v\n", "!local!x"},
 		{"!<tag:example.com,2026:s> [1]\n", "tag:example.com,2026:s"},
+		{"--- !a_b z\n", "!a_b"},
+		{"%TAG !e! tag:example.com,2026:\n--- !e!a_b z\n", "tag:example.com,2026:a_b"},
+		{"!<tag:example.com,2026:a_b> z\n", "tag:example.com,2026:a_b"},
+		{"%TAG !a-1! tag:example.com,2026:\n--- !a-1!y z\n", "tag:example.com,2026:y"},
 		{"%TAG !e! tag:example.com,2026:\n--- !e!a b\n", "tag:example.com,2026:a"},
 		{"%TAG !e!\ttag:example.com,2026:\n--- !e!a b\n", "tag:example.com,2026:a"},
 	}
@@ -151,7 +176,14 @@ func TestSpecV17AcceptedIdentitiesCloseThroughWireAndEmit(t *testing.T) {
 			t.Errorf("%q: reload uri %q, want %q", c.input, got, c.uri)
 		}
 	}
-	for _, input := range []string{"%TAG !n! 12\n--- v\n", "- !!str 1\n- ! 2\n- !!int 3\n"} {
+	reject := DefaultOptions()
+	reject.UnknownTags = UnknownTagsReject
+	for _, input := range []string{"%TAG !n! 12\n--- v\n", "- !!str 1\n- ! 2\n- !!int 3\n", "! [1]\n"} {
+		if input[0] == '!' {
+			if _, err := LoadAllWith(input, reject); err != nil {
+				t.Errorf("%q under Reject: %v", input, err)
+			}
+		}
 		docs, err := LoadAllWith(input, opts)
 		if err != nil {
 			t.Fatalf("%q: %v", input, err)

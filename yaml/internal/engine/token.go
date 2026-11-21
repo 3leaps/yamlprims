@@ -172,6 +172,11 @@ type queuedToken struct {
 	text2  string
 	params []string
 	style  ScalarStyle
+	// Revision 1.7 %TAG facts, checked when the parser processes the
+	// directive (spec §7.1): a named handle outside [0-9A-Za-z-]+, and the
+	// first prefix character when no space or tab separates it from the handle.
+	badNamedHandle bool
+	prefixGap      *Marker
 }
 
 type simpleKey struct {
@@ -330,9 +335,6 @@ type scanError struct {
 	expected    rune
 	openingLine int
 	openingCol  int
-	// tagDirectiveGap marks the revision 1.7 %TAG handle/prefix separation
-	// failure, reported by the directive pre-pass (spec §7.1).
-	tagDirectiveGap bool
 }
 
 func newScanError(mark Marker, kind scanErrKind) *scanError {

@@ -399,6 +399,12 @@ func (p *parser) parserProcessDirectives(
 			if _, exists := documentTagHandles[qt.text1]; exists {
 				return nil, newScanError(qt.span.start, scanErrDuplicateTagDirective)
 			}
+			if qt.badNamedHandle {
+				return nil, newScanError(qt.span.start, scanErrExpectedTagDirectiveBang)
+			}
+			if qt.prefixGap != nil {
+				return nil, newScanError(*qt.prefixGap, scanErrExpectedWhitespace)
+			}
 			documentTagHandles[qt.text1] = struct{}{}
 			tags[qt.text1] = qt.text2
 		case tokenReservedDirective:
@@ -1001,6 +1007,9 @@ func (p *parser) resolveTag(span rawSpan, handle, suffix string) (*Tag, *scanErr
 			OriginalHandle: originalHandle,
 		}, nil
 	}
+	if !validNamedHandleSpelling(handle) {
+		return nil, newScanError(span.start, scanErrInvalidTagTerminator)
+	}
 	if prefix, ok := p.tags[handle]; ok {
 		return &Tag{
 			Handle:         prefix,
@@ -1046,9 +1055,6 @@ func New(input string, bom int, opts Options) *Engine {
 // yielded event/error order before node construction without consuming the
 // primary event iterator.
 func (e *Engine) SyntaxPass() *Error {
-	if err := e.directivePrepass(); err != nil {
-		return err
-	}
 	p := newParser(e.input, e.nativeDepth)
 	depth := 0
 	for {
@@ -1089,32 +1095,26 @@ func (e *Engine) SyntaxPass() *Error {
 	}
 }
 
-// directivePrepass scans tokens, without parsing, up to the first scanner
-// failure. If that failure is a %TAG handle immediately followed by its
-// prefix, it is reported before event validation (spec §7.1); any other
-// scanner failure is left to the event pass, which reaches it in event order.
-func (e *Engine) directivePrepass() *Error {
-	if !strings.Contains(e.input, "%TAG") {
-		return nil
-	}
-	s := newScanner(e.input, e.nativeDepth)
-	for {
-		_, ok, sErr := s.nextQueuedToken()
-		if sErr != nil {
-			if sErr.tagDirectiveGap {
-				return e.scanErr(sErr)
-			}
-			return nil
-		}
-		if !ok {
-			return nil
-		}
-	}
-}
-
 // InvalidTagIdentityMessage is the diagnostic for a resolved tag identity that
 // is neither a local tag nor a global tag URI (spec §4.4, §7.1).
 const InvalidTagIdentityMessage = "syntax error: resolved tag is neither a local tag nor a global tag URI"
+
+// validNamedHandleSpelling reports whether a tag handle is primary "!",
+// secondary "!!", or a named handle "!" + [0-9A-Za-z-]+ + "!" (YAML 1.2.2
+// productions [38], [92]). The scanner's word class also admits '_', which
+// is not an ns-word-char.
+func validNamedHandleSpelling(handle string) bool {
+	if handle == "!" || handle == "!!" || len(handle) < 3 || handle[0] != '!' || handle[len(handle)-1] != '!' {
+		return true
+	}
+	for i := 1; i < len(handle)-1; i++ {
+		c := handle[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-') {
+			return false
+		}
+	}
+	return true
+}
 
 // ValidResolvedTagIdentity reports whether a resolved, percent-decoded tag
 // identity other than the non-specific "!" is a local tag ("!" plus at least
@@ -1144,15 +1144,21 @@ func ValidResolvedTagIdentity(uri string) bool {
 // checkTagIdentity applies the §7.1 resolved-tag identity check to a node
 // event's tag. The non-specific "!" keeps its own resolution path.
 func (e *Engine) checkTagIdentity(t *Tag, raw rawSpan) *Error {
-	if t == nil || (t.Handle == "" && t.Suffix == "!") {
-		return nil
-	}
-	if ValidResolvedTagIdentity(t.String()) {
+	if t == nil {
 		return nil
 	}
 	at := raw.start
 	if raw.tagStart != nil {
 		at = *raw.tagStart
+	}
+	if t.Handle == "" && t.Suffix == "!" {
+		// Only the bare "!" token is non-specific; a verbatim "!<!>" is a
+		// specific tag whose identity is "!" alone (YAML 1.2.2 Example 6.25).
+		if !strings.HasPrefix(e.input[at.byteOffset:], "!<") {
+			return nil
+		}
+	} else if ValidResolvedTagIdentity(t.String()) {
+		return nil
 	}
 	loc, err := e.loc(at)
 	if err != nil {

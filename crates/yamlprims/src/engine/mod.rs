@@ -6,7 +6,7 @@ use crate::error::{Error, ErrorKind, LimitKind, SyntaxKind};
 use crate::options::Options;
 use crate::resolve::TagClass;
 use crate::value::{Location, Span, Tag};
-use granit_parser::{Event as GEvent, Marker, Parser, ScanError, Scanner, Tag as GTag, TokenType};
+use granit_parser::{Event as GEvent, Marker, Parser, ScanError, Tag as GTag};
 use std::borrow::Cow;
 
 const YAML_NS: &str = "tag:yaml.org,2002:";
@@ -268,13 +268,20 @@ impl<'a> Engine<'a> {
         span: &granit_parser::Span,
     ) -> Result<(), Error> {
         let Some(t) = tag else { return Ok(()) };
-        if t.handle().is_empty() && t.suffix() == "!" {
-            return Ok(());
-        }
-        if valid_resolved_tag_identity(&t.to_string()) {
-            return Ok(());
-        }
         let at = span.tag_start().unwrap_or(span.start);
+        if t.handle().is_empty() && t.suffix() == "!" {
+            // Only the bare `!` token is non-specific; a verbatim `!<!>` is a
+            // specific tag whose identity is `!` alone (YAML 1.2.2 Example 6.25).
+            let verbatim = at
+                .byte_offset()
+                .and_then(|b| self.input.get(b..))
+                .is_some_and(|rest| rest.starts_with("!<"));
+            if !verbatim {
+                return Ok(());
+            }
+        } else if valid_resolved_tag_identity(&t.to_string()) {
+            return Ok(());
+        }
         Err(Error::at(
             ErrorKind::Syntax(SyntaxKind::InvalidGlobalTagCharacter),
             self.loc(&at)?,
@@ -282,53 +289,72 @@ impl<'a> Engine<'a> {
         ))
     }
 
-    /// `%TAG` handle/prefix separation (YAML 1.2.2 production [88], spec §7.1).
-    /// The pinned engine accepts a prefix that immediately follows the handle.
-    /// Scan tokens, without parsing, up to the first scanner failure: a `%TAG`
-    /// token whose prefix follows the handle with no space or tab, or a scanner
-    /// failure inside such a directive after its handle, is `ExpectedWhitespace`
-    /// at the first prefix character. Any other scanner failure is left to the
-    /// event pass. Name, handle and byte-budget failures precede the check.
-    fn directive_prepass(&self) -> Result<(), Error> {
-        if !self.input.contains("%TAG") {
-            return Ok(());
-        }
+    /// Revision 1.7 `%TAG` checks (spec §7.1), made where the parser processes
+    /// a document prologue. The pinned engine accepts a named handle containing
+    /// `_` and a prefix that immediately follows the handle. `from` is the end
+    /// of the last yielded event (stream start or document end), and `until`
+    /// the position of the next event or engine error. Directives starting
+    /// before it were tokenized and are checked in source order, as the parser
+    /// processes them; a directive starting at it is the one the engine failed
+    /// on while scanning or processing it (including a duplicate handle), and
+    /// keeps that failure. Before it the engine has accepted only directive
+    /// tokens, comments, blank lines and document end markers; a content line
+    /// ends the prologue.
+    fn prologue_directives(&self, from: usize, until: usize) -> Result<Option<Error>, Error> {
         let src = self.input.as_bytes();
-        let scanner = Scanner::with_options(
-            granit_parser::StrInput::new(self.input),
-            Self::engine_options(self.opts),
-        );
-        for tok in scanner {
-            match tok {
-                Ok(t) => {
-                    if let TokenType::TagDirective(..) = t.token_type() {
-                        let start = t
-                            .span()
-                            .start
-                            .byte_offset()
-                            .ok_or_else(|| internal("directive without byte offset"))?;
-                        if let Some(at) = tag_directive_gap(src, start) {
-                            return Err(self.separator_error(at)?);
-                        }
-                    }
-                }
-                Err(e) => {
-                    if let Some(b) = e.marker().byte_offset() {
-                        let line_start = b == 0 || matches!(src.get(b - 1), Some(b'\n' | b'\r'));
-                        if line_start {
-                            if let Some(at) = tag_directive_gap(src, b) {
-                                return Err(self.separator_error(at)?);
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-            }
+        let until = until.min(src.len());
+        let mut i = from.min(until);
+        if i > 0 && !matches!(src[i - 1], b'\n' | b'\r') {
+            i = next_line(src, i);
         }
-        Ok(())
+        while i < until {
+            match src[i] {
+                b'%' => {
+                    if let Some((kind, at)) = tag_directive_fault(src, i) {
+                        return Ok(Some(self.directive_error(kind, at)?));
+                    }
+                }
+                b'#' | b'\n' | b'\r' | b' ' | b'\t' => {
+                    let mut j = i;
+                    while j < src.len() && matches!(src[j], b' ' | b'\t') {
+                        j += 1;
+                    }
+                    if j < src.len() && !matches!(src[j], b'#' | b'\n' | b'\r') {
+                        return Ok(None);
+                    }
+                }
+                b'.' if src[i..].starts_with(b"...") => {}
+                _ => return Ok(None),
+            }
+            i = next_line(src, i);
+        }
+        Ok(None)
     }
 
-    fn separator_error(&self, at: usize) -> Result<Error, Error> {
+    /// A tag using a named handle outside `[0-9A-Za-z-]+` reaches the engine
+    /// as an undeclared handle (its directive is refused first); report it as
+    /// `InvalidTagTerminator` at the tag (spec §4.4, §7.1).
+    fn malformed_handle_use(&self, e: &ScanError) -> Option<Error> {
+        if !matches!(e.kind(), granit_parser::ErrorKind::UndeclaredTagHandle) {
+            return None;
+        }
+        let b = e.marker().byte_offset()?;
+        let src = self.input.as_bytes();
+        let (_, malformed) = scan_handle(src, b)?;
+        if !malformed {
+            return None;
+        }
+        let loc = self.loc(e.marker()).ok()?;
+        let mut err = Error::at(
+            ErrorKind::Syntax(SyntaxKind::InvalidTagTerminator),
+            loc,
+            format!("syntax error: {INVALID_TAG_TERMINATOR_DETAIL}"),
+        );
+        err.engine_detail = Some(INVALID_TAG_TERMINATOR_DETAIL.to_owned());
+        Some(err)
+    }
+
+    fn directive_error(&self, kind: SyntaxKind, at: usize) -> Result<Error, Error> {
         let before = self
             .input
             .get(..at)
@@ -353,28 +379,60 @@ impl<'a> Engine<'a> {
             }
         }
         let column = before[line_start..].chars().count() + 1;
+        let detail = match kind {
+            SyntaxKind::ExpectedWhitespace => "expected whitespace",
+            _ => EXPECTED_TAG_DIRECTIVE_BANG_DETAIL,
+        };
         let mut err = Error::at(
-            ErrorKind::Syntax(SyntaxKind::ExpectedWhitespace),
+            ErrorKind::Syntax(kind),
             Location {
                 byte_offset: at + self.bom,
                 line,
                 column,
             },
-            "syntax error: expected whitespace",
+            format!("syntax error: {detail}"),
         );
-        err.engine_detail = Some("expected whitespace".to_owned());
+        err.engine_detail = Some(detail.to_owned());
         Ok(err)
     }
 
     pub(crate) fn syntax_pass(&self) -> Result<(), Error> {
         #[cfg(test)]
         validation_tests::observe(|s| s.source_passes += 1);
-        self.directive_prepass()?;
         let mut depth = 0usize;
+        // End of the last stream-start or document-end event while the parser
+        // is in a document prologue; `None` inside a document.
+        let mut prologue: Option<usize> = None;
         for ev in Self::parser(self.input, self.opts) {
             #[cfg(test)]
             validation_tests::observe(|s| s.source_results += 1);
-            let (event, span) = ev.map_err(|e| self.scan_err(e))?;
+            let (event, span) = match ev {
+                Ok(ok) => ok,
+                Err(e) => {
+                    if let (Some(from), Some(b)) = (prologue, e.marker().byte_offset()) {
+                        if let Some(err) = self.prologue_directives(from, b)? {
+                            return Err(err);
+                        }
+                    }
+                    if let Some(err) = self.malformed_handle_use(&e) {
+                        return Err(err);
+                    }
+                    return Err(self.scan_err(e));
+                }
+            };
+            if let (GEvent::DocumentStart(true, _), Some(from)) = (&event, prologue) {
+                let at = span
+                    .start
+                    .byte_offset()
+                    .ok_or_else(|| internal("document start without byte offset"))?;
+                if let Some(err) = self.prologue_directives(from, at)? {
+                    return Err(err);
+                }
+            }
+            prologue = match &event {
+                GEvent::StreamStart | GEvent::DocumentEnd => span.end.byte_offset(),
+                _ => None,
+            };
             if let GEvent::Scalar(_, _, _, tag) = &event {
                 self.check_tag_identity(tag.as_deref(), &span)?;
             }
@@ -488,55 +546,76 @@ pub(crate) fn valid_resolved_tag_identity(uri: &str) -> bool {
     }
 }
 
-/// For a directive starting at `pct` (`%`), the byte offset of a `%TAG`
-/// prefix that immediately follows its handle, mirroring the engine scanner:
-/// directive name, blanks and handle are charged to the 1,024-byte directive
-/// budget first, and a malformed handle is the engine's own error.
-fn tag_directive_gap(src: &[u8], pct: usize) -> Option<usize> {
-    const BUDGET: usize = 1024;
+const EXPECTED_TAG_DIRECTIVE_BANG_DETAIL: &str =
+    "while parsing a tag directive, did not find expected '!'";
+const INVALID_TAG_TERMINATOR_DETAIL: &str =
+    "while scanning a tag, did not find expected whitespace or line break";
+
+/// Index just past the line break ending the line that holds `i` (or the end).
+fn next_line(src: &[u8], mut i: usize) -> usize {
+    while i < src.len() && !matches!(src[i], b'\n' | b'\r') {
+        i += 1;
+    }
+    if i < src.len() {
+        i += if src[i] == b'\r' && src.get(i + 1) == Some(&b'\n') {
+            2
+        } else {
+            1
+        };
+    }
+    i
+}
+
+/// A tag handle starting at `b`, scanned as the engine does: `!`, word
+/// characters (ASCII alphanumerics, `_`, `-`), then an optional `!`. Returns
+/// the end of the handle and whether it is a named handle `!word!` whose word
+/// uses a character outside `[0-9A-Za-z-]` (YAML 1.2.2 productions [38], [92]).
+/// `None` unless `b` holds `!`.
+fn scan_handle(src: &[u8], b: usize) -> Option<(usize, bool)> {
+    if src.get(b) != Some(&b'!') {
+        return None;
+    }
+    let mut i = b + 1;
+    let mut underscore = false;
+    while i < src.len() && (src[i].is_ascii_alphanumeric() || matches!(src[i], b'_' | b'-')) {
+        underscore |= src[i] == b'_';
+        i += 1;
+    }
+    let named = i > b + 1 && src.get(i) == Some(&b'!');
+    if src.get(i) == Some(&b'!') {
+        i += 1;
+    }
+    Some((i, named && underscore))
+}
+
+/// For a directive at `pct` that the engine has tokenized, the revision 1.7
+/// `%TAG` fault in processing order: a malformed named handle
+/// (`ExpectedTagDirectiveBang` at the directive start), then a prefix that
+/// immediately follows the handle (`ExpectedWhitespace` at that character).
+fn tag_directive_fault(src: &[u8], pct: usize) -> Option<(SyntaxKind, usize)> {
     let is_blank = |b: u8| matches!(b, b' ' | b'\t');
-    let is_break = |b: u8| matches!(b, b'\n' | b'\r' | b'\0');
+    let is_breakz = |b: u8| matches!(b, b'\n' | b'\r' | b'\0');
     if src.get(pct) != Some(&b'%') {
         return None;
     }
     let mut i = pct + 1;
     let name_start = i;
-    while i < src.len() && !is_blank(src[i]) && !is_break(src[i]) {
+    while i < src.len() && !is_blank(src[i]) && !is_breakz(src[i]) {
         i += 1;
     }
     if &src[name_start..i] != b"TAG" {
         return None;
     }
-    let mut budget = BUDGET - 3;
-    let mut blanks = 0usize;
     while i < src.len() && is_blank(src[i]) {
         i += 1;
-        blanks += 1;
     }
-    budget = budget.checked_sub(blanks)?;
-    if src.get(i) != Some(&b'!') {
-        return None;
+    let (end, malformed) = scan_handle(src, i)?;
+    if malformed {
+        return Some((SyntaxKind::ExpectedTagDirectiveBang, pct));
     }
-    budget = budget.checked_sub(1)?;
-    i += 1;
-    let mut word = false;
-    while i < src.len() && (src[i].is_ascii_alphanumeric() || matches!(src[i], b'_' | b'-')) {
-        budget = budget.checked_sub(1)?;
-        i += 1;
-        word = true;
-    }
-    if src.get(i) == Some(&b'!') {
-        budget.checked_sub(1)?;
-        i += 1;
-    } else if word {
-        return None;
-    }
-    // A blank, a break, NUL (the scanner's end marker) or the end of input
-    // keeps the existing prefix diagnostics.
-    match src.get(i) {
-        None => None,
-        Some(&b) if is_blank(b) || is_break(b) => None,
-        Some(_) => Some(i),
+    match src.get(end) {
+        Some(&b) if !is_blank(b) && !is_breakz(b) => Some((SyntaxKind::ExpectedWhitespace, end)),
+        _ => None,
     }
 }
 

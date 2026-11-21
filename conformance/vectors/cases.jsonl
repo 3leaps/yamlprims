@@ -234,6 +234,37 @@
 {"id": "tags.directive.scanner-error-at-end-after-break", "input": "%TAG !e! tag:a,1:\n--- {a: 1\n", "single": true, "check_plain": true}
 {"id": "tags.directive.scanner-error-at-end-in-quoted", "input": "a: '%TAG\n", "single": true, "check_plain": true}
 {"id": "tags.directive.scanner-error-at-end-after-directive-name", "input": "%TAG: [\n", "single": true, "check_plain": true}
-{"id": "tags.directive.precedes-earlier-tag-identity", "input": "!<abc> x\n...\n%TAG !e!x:\n--- y\n", "single": false, "check_plain": false}
-{"id": "tags.directive.precedes-earlier-depth", "input": "[[[1]]]\n...\n%TAG !e!x:\n--- y\n", "single": false, "limits": {"max_depth": 2}, "check_plain": false}
-{"id": "tags.directive.precedes-earlier-parser-error", "input": "- a\nb: c\n...\n%TAG !e!x:\n--- y\n", "single": false, "check_plain": false}
+{"id": "tags.directive.earlier-tag-identity-wins", "input": "!<abc> x\n...\n%TAG !e!x:\n--- y\n", "single": false, "check_plain": false}
+{"id": "tags.directive.earlier-depth-wins", "input": "[[[1]]]\n...\n%TAG !e!x:\n--- y\n", "single": false, "limits": {"max_depth": 2}, "check_plain": false}
+{"id": "tags.directive.earlier-parser-error-wins", "input": "- a\nb: c\n...\n%TAG !e!x:\n--- y\n", "single": false, "check_plain": false}
+{"id": "tags.directive.gap-before-later-tag-identity", "input": "%TAG !e!x:\n--- !<abc> y\n", "single": true, "check_plain": true}
+{"id": "tags.directive.gap-before-later-depth", "input": "%TAG !e!x:\n--- [[[1]]]\n", "single": true, "limits": {"max_depth": 2}, "check_plain": true}
+{"id": "tags.directive.gap-before-later-syntax", "input": "%TAG !e!x:\n--- [\n", "single": true, "check_plain": true}
+{"id": "tags.directive.gap-before-later-duplicate-key", "input": "%TAG !e!x:\n--- a: 1\na: 2\n", "single": true, "check_plain": true}
+{"id": "tags.directive.gap-in-second-document-after-valid-first", "input": "a: 1\n...\n%TAG !e!x:\n--- b\n", "single": false, "check_plain": false}
+{"id": "tags.directive.duplicate-handle-before-gap", "input": "%TAG !e! a:\n%TAG !e!b:\n--- x\n", "single": true, "check_plain": true}
+{"id": "tags.directive.prefix-scan-error-wins-over-gap", "input": "%TAG !e!%zz\n--- x\n", "single": true, "check_plain": true}
+{"id": "tags.directive.inside-document-unchanged", "input": "a\n%TAG !e!x:\n--- b\n", "single": false, "check_plain": false}
+{"id": "tags.handle.underscore-directive-used", "input": "%TAG !a_b! tag:example.com,2026:\n--- !a_b!y z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-directive-unused", "input": "%TAG !a_b! tag:example.com,2026:\n--- z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-and-gap", "input": "%TAG !a_b!x:\n--- z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-use-undeclared", "input": "--- !a_b!y z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-use-in-flow", "input": "k: [ !a_b!y z ]\n", "single": true, "check_plain": true}
+{"id": "tags.handle.hyphen-and-digits-valid", "input": "%TAG !a-1! tag:example.com,2026:\n--- !a-1!y z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-primary-local-valid", "input": "--- !a_b z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-suffix-valid", "input": "%TAG !e! tag:example.com,2026:\n--- !e!a_b z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-uri-valid", "input": "!<tag:example.com,2026:a_b> z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-prefix-valid", "input": "%TAG !e! tag:a_b.example,2026:\n--- !e!y z\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bang-scalar", "input": "!<!> x\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bang-in-sequence", "input": "- !<!> x\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bang-collection", "input": "!<!> [1]\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bang-reject", "input": "!<!> x\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.identity.verbatim-bang-collection-reject", "input": "!<!> {a: 1}\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.identity.bare-bang-scalar", "input": "! x\n", "single": true, "check_plain": true}
+{"id": "tags.identity.bare-bang-collection", "input": "! [1]\n", "single": true, "check_plain": true}
+{"id": "tags.identity.bare-bang-reject", "input": "! x\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.directive.after-sequence-entry-unchanged", "input": "- a\n%TAG !e!x:\n--- b\n", "single": false, "check_plain": false}
+{"id": "tags.directive.inside-sequence-prefix-error-unchanged", "input": "-\n%TAG !%\n", "single": false, "check_plain": false}
+{"id": "tags.directive.gap-then-end-of-input-same-line", "input": "%TAG !e!x:", "single": true, "check_plain": true}
+{"id": "tags.directive.gap-then-nul-same-line", "input_hex": "2554414720216521783a002d2d2d20790a", "single": true, "check_plain": true}
+{"id": "tags.directive.terminator-error-wins-over-gap", "input": "%TAG !e!x: ]\n--- y\n", "single": true, "check_plain": true}

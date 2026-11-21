@@ -27,6 +27,15 @@ fn at(byte_offset: usize, line: usize, column: usize) -> Site {
 
 const TAG: ErrorKind = ErrorKind::Syntax(SyntaxKind::InvalidGlobalTagCharacter);
 const GAP: ErrorKind = ErrorKind::Syntax(SyntaxKind::ExpectedWhitespace);
+const BANG: ErrorKind = ErrorKind::Syntax(SyntaxKind::ExpectedTagDirectiveBang);
+const TERM: ErrorKind = ErrorKind::Syntax(SyntaxKind::InvalidTagTerminator);
+
+fn depth2() -> ErrorKind {
+    ErrorKind::LimitExceeded {
+        limit: LimitKind::MaxDepth,
+        configured: 2,
+    }
+}
 
 #[test]
 fn refused_identities_and_separation_select_kind_and_site() {
@@ -204,25 +213,158 @@ fn refused_identities_and_separation_select_kind_and_site() {
             at(0, 1, 1),
         ),
         (
-            "gap precedes earlier tag identity",
+            "earlier tag identity wins",
             "!<abc> x\n...\n%TAG !e!x:\n--- y\n",
             opts(false, None),
-            GAP,
-            at(21, 3, 9),
+            TAG,
+            at(0, 1, 1),
         ),
         (
-            "gap precedes earlier depth",
+            "earlier depth wins",
             "[[[1]]]\n...\n%TAG !e!x:\n--- y\n",
             opts(false, Some(2)),
-            GAP,
-            at(20, 3, 9),
+            depth2(),
+            at(2, 1, 3),
         ),
         (
-            "gap precedes earlier parser error",
+            "earlier parser error wins",
             "- a\nb: c\n...\n%TAG !e!x:\n--- y\n",
             opts(false, None),
+            ErrorKind::Syntax(SyntaxKind::ExpectedBlockSequenceEntry),
+            at(4, 2, 1),
+        ),
+        (
+            "gap before later tag identity",
+            "%TAG !e!x:\n--- !<abc> y\n",
+            opts(false, None),
             GAP,
-            at(21, 4, 9),
+            at(8, 1, 9),
+        ),
+        (
+            "gap before later depth",
+            "%TAG !e!x:\n--- [[[1]]]\n",
+            opts(false, Some(2)),
+            GAP,
+            at(8, 1, 9),
+        ),
+        (
+            "gap before later syntax",
+            "%TAG !e!x:\n--- [\n",
+            opts(false, None),
+            GAP,
+            at(8, 1, 9),
+        ),
+        (
+            "gap then end of input",
+            "%TAG !e!x:",
+            opts(false, None),
+            GAP,
+            at(8, 1, 9),
+        ),
+        (
+            "gap then NUL",
+            "%TAG !e!x:\0--- y\n",
+            opts(false, None),
+            GAP,
+            at(8, 1, 9),
+        ),
+        (
+            "terminator error wins over gap",
+            "%TAG !e!x: ]\n--- y\n",
+            opts(false, None),
+            ErrorKind::Syntax(SyntaxKind::InvalidDirectiveTerminator),
+            at(0, 1, 1),
+        ),
+        (
+            "gap before later duplicate key",
+            "%TAG !e!x:\n--- a: 1\na: 2\n",
+            opts(false, None),
+            GAP,
+            at(8, 1, 9),
+        ),
+        (
+            "duplicate handle before gap",
+            "%TAG !e! a:\n%TAG !e!b:\n--- x\n",
+            opts(false, None),
+            ErrorKind::Syntax(SyntaxKind::DuplicateTagDirective),
+            at(12, 2, 1),
+        ),
+        (
+            "prefix scan error wins over gap",
+            "%TAG !e!%zz\n--- x\n",
+            opts(false, None),
+            ErrorKind::Syntax(SyntaxKind::InvalidTagEscape),
+            at(0, 1, 1),
+        ),
+        (
+            "underscore handle, used",
+            "%TAG !a_b! tag:example.com,2026:\n--- !a_b!y z\n",
+            opts(false, None),
+            BANG,
+            at(0, 1, 1),
+        ),
+        (
+            "underscore handle, unused",
+            "%TAG !a_b! tag:example.com,2026:\n--- z\n",
+            opts(false, None),
+            BANG,
+            at(0, 1, 1),
+        ),
+        (
+            "underscore handle and gap",
+            "%TAG !a_b!x:\n--- z\n",
+            opts(false, None),
+            BANG,
+            at(0, 1, 1),
+        ),
+        (
+            "underscore handle use",
+            "--- !a_b!y z\n",
+            opts(false, None),
+            TERM,
+            at(4, 1, 5),
+        ),
+        (
+            "underscore handle use in flow",
+            "k: [ !a_b!y z ]\n",
+            opts(false, None),
+            TERM,
+            at(5, 1, 6),
+        ),
+        (
+            "verbatim bang",
+            "!<!> x\n",
+            opts(false, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "verbatim bang in sequence",
+            "- !<!> x\n",
+            opts(false, None),
+            TAG,
+            at(2, 1, 3),
+        ),
+        (
+            "verbatim bang on collection",
+            "!<!> [1]\n",
+            opts(false, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "verbatim bang, reject",
+            "!<!> x\n",
+            opts(true, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "verbatim bang on collection, reject",
+            "!<!> {a: 1}\n",
+            opts(true, None),
+            TAG,
+            at(0, 1, 1),
         ),
     ];
     for (name, input, o, kind, site) in cases {
@@ -262,6 +404,19 @@ fn accepted_identities_close_through_wire_and_emit() {
         ("!<%74ag:example.com,2026:x> v\n", "tag:example.com,2026:x"),
         ("!local%21x v\n", "!local!x"),
         ("!<tag:example.com,2026:s> [1]\n", "tag:example.com,2026:s"),
+        ("--- !a_b z\n", "!a_b"),
+        (
+            "%TAG !e! tag:example.com,2026:\n--- !e!a_b z\n",
+            "tag:example.com,2026:a_b",
+        ),
+        (
+            "!<tag:example.com,2026:a_b> z\n",
+            "tag:example.com,2026:a_b",
+        ),
+        (
+            "%TAG !a-1! tag:example.com,2026:\n--- !a-1!y z\n",
+            "tag:example.com,2026:y",
+        ),
         (
             "%TAG !e! tag:example.com,2026:\n--- !e!a b\n",
             "tag:example.com,2026:a",
@@ -291,8 +446,20 @@ fn accepted_identities_close_through_wire_and_emit() {
         }
     }
     // An unused scheme-less prefix and the non-specific / Core tags load unchanged.
-    for input in ["%TAG !n! 12\n--- v\n", "- !!str 1\n- ! 2\n- !!int 3\n"] {
+    for input in [
+        "%TAG !n! 12\n--- v\n",
+        "- !!str 1\n- ! 2\n- !!int 3\n",
+        "! [1]\n",
+    ] {
         let docs = load_all_with(input, &o).unwrap();
+        let mut reject = Options::default();
+        reject.unknown_tags = UnknownTags::Reject;
+        if input.starts_with('!') {
+            assert!(
+                load_all_with(input, &reject).is_ok(),
+                "{input:?} under Reject"
+            );
+        }
         let wire = encode(&docs, &o).unwrap();
         assert!(matches!(
             decode_wire(&wire, &o).unwrap(),
