@@ -9,7 +9,12 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 helper=scripts/fuzz_differential.py
-work=$(mktemp -d "${TMPDIR:-/tmp}/yamlprims-fuzz-diff-test.XXXXXX")
+# Like the scripts under test, check TMPDIR by filesystem identity first.
+tmp_base=$(python3 -I "$helper" resolve-out "$root" "${TMPDIR:-/tmp}") || {
+  echo "fuzz-differential.test: TMPDIR must be outside the working tree" >&2
+  exit 2
+}
+work=$(mktemp -d "$tmp_base/yamlprims-fuzz-diff-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 pass=0
 failed=0
