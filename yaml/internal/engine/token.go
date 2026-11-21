@@ -330,6 +330,9 @@ type scanError struct {
 	expected    rune
 	openingLine int
 	openingCol  int
+	// tagDirectiveGap marks the revision 1.7 %TAG handle/prefix separation
+	// failure, reported by the directive pre-pass (spec §7.1).
+	tagDirectiveGap bool
 }
 
 func newScanError(mark Marker, kind scanErrKind) *scanError {

@@ -876,6 +876,16 @@ func (s *scanner) scanTagDirectiveValue(startMark *Marker, budget *int) (queuedT
 	if err := s.spendDirectiveBytes(budget, nBlanks, *startMark); err != nil {
 		return queuedToken{}, err
 	}
+	// YAML 1.2.2 production [88] requires s-separate-in-line between the
+	// handle and the prefix (spec §7.1): a prefix character immediately
+	// after the handle is ExpectedWhitespace at that character. A break or
+	// end of input here keeps the existing prefix diagnostics.
+	s.input.lookahead(1)
+	if nBlanks == 0 && !s.input.nextIsBlankOrBreakz() {
+		gap := s.scanErrorHere(scanErrExpectedWhitespace)
+		gap.tagDirectiveGap = true
+		return queuedToken{}, gap
+	}
 
 	prefix, err := s.scanTagPrefixDirective(startMark, budget)
 	if err != nil {

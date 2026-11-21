@@ -36,6 +36,8 @@ The library contract is still `spec-v1.6`; the in-tree specification text is the
 
 ### Changed
 
+- Loading refuses a resolved node tag that is neither a local tag nor a global tag URI with an RFC 3986 scheme (for example `!<$:?>`, or a `%TAG` expansion without a scheme), as `Syntax(InvalidGlobalTagCharacter)` at the tag, before construction and the `unknown_tags` policy. Such documents previously loaded but were refused by `emit*` and `decode_wire` (`spec-v1.7 §4.4`, `§7.1`).
+- A `%TAG` directive whose prefix immediately follows its handle is refused as `Syntax(ExpectedWhitespace)` at the first prefix character, whether or not the handle is used; a space or tab separator is required (`spec-v1.7 §7.1`).
 - The workflow digest and permission checkers run the published `yamlprims` v0.3.0 CLI: `config/yamlprims-cli.txt` pins the v0.3.0 release archives and binary digests, and the minimum version is now 0.3.0.
 
 ## [0.3.0] - 2026-11-18

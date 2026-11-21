@@ -6,7 +6,7 @@ use crate::error::{Error, ErrorKind, LimitKind, SyntaxKind};
 use crate::options::Options;
 use crate::resolve::TagClass;
 use crate::value::{Location, Span, Tag};
-use granit_parser::{Event as GEvent, Marker, Parser, ScanError, Tag as GTag};
+use granit_parser::{Event as GEvent, Marker, Parser, ScanError, Scanner, Tag as GTag, TokenType};
 use std::borrow::Cow;
 
 const YAML_NS: &str = "tag:yaml.org,2002:";
@@ -199,6 +199,12 @@ impl<'a> Engine<'a> {
         }
     }
     fn parser(input: &'a str, opts: &Options) -> Parser<'a, granit_parser::StrInput<'a>> {
+        let g = Self::engine_options(opts);
+        #[cfg(test)]
+        validation_tests::observe(|s| s.parsers += 1);
+        Parser::new_from_str_with_options(input, g)
+    }
+    fn engine_options(opts: &Options) -> granit_parser::Options {
         let mut g = granit_parser::Options::default();
         g.strict_indentation = opts.strict_indentation();
         // A pending simple key can hold back a start while the scanner reads
@@ -209,9 +215,7 @@ impl<'a> Engine<'a> {
         let native_depth = opts.limits.max_depth + g.simple_key_max_lookahead + 2;
         g.flow_nesting_limit = native_depth;
         g.block_nesting_limit = native_depth;
-        #[cfg(test)]
-        validation_tests::observe(|s| s.parsers += 1);
-        Parser::new_from_str_with_options(input, g)
+        g
     }
     fn loc(&self, m: &Marker) -> Result<Location, Error> {
         let b = m
@@ -254,16 +258,128 @@ impl<'a> Engine<'a> {
         err
     }
 
+    /// §7.1 resolved-tag identity check for a node event's tag. The
+    /// non-specific `!` keeps its own resolution path; every other resolved,
+    /// percent-decoded identity must be a local tag or start with an RFC 3986
+    /// scheme (YAML 1.2.2 §6.9.1).
+    fn check_tag_identity(
+        &self,
+        tag: Option<&GTag>,
+        span: &granit_parser::Span,
+    ) -> Result<(), Error> {
+        let Some(t) = tag else { return Ok(()) };
+        if t.handle().is_empty() && t.suffix() == "!" {
+            return Ok(());
+        }
+        if valid_resolved_tag_identity(&t.to_string()) {
+            return Ok(());
+        }
+        let at = span.tag_start().unwrap_or(span.start);
+        Err(Error::at(
+            ErrorKind::Syntax(SyntaxKind::InvalidGlobalTagCharacter),
+            self.loc(&at)?,
+            INVALID_TAG_IDENTITY_MESSAGE,
+        ))
+    }
+
+    /// `%TAG` handle/prefix separation (YAML 1.2.2 production [88], spec §7.1).
+    /// The pinned engine accepts a prefix that immediately follows the handle.
+    /// Scan tokens, without parsing, up to the first scanner failure: a `%TAG`
+    /// token whose prefix follows the handle with no space or tab, or a scanner
+    /// failure inside such a directive after its handle, is `ExpectedWhitespace`
+    /// at the first prefix character. Any other scanner failure is left to the
+    /// event pass. Name, handle and byte-budget failures precede the check.
+    fn directive_prepass(&self) -> Result<(), Error> {
+        if !self.input.contains("%TAG") {
+            return Ok(());
+        }
+        let src = self.input.as_bytes();
+        let scanner = Scanner::with_options(
+            granit_parser::StrInput::new(self.input),
+            Self::engine_options(self.opts),
+        );
+        for tok in scanner {
+            match tok {
+                Ok(t) => {
+                    if let TokenType::TagDirective(..) = t.token_type() {
+                        let start = t
+                            .span()
+                            .start
+                            .byte_offset()
+                            .ok_or_else(|| internal("directive without byte offset"))?;
+                        if let Some(at) = tag_directive_gap(src, start) {
+                            return Err(self.separator_error(at)?);
+                        }
+                    }
+                }
+                Err(e) => {
+                    if let Some(b) = e.marker().byte_offset() {
+                        let line_start = b == 0 || matches!(src.get(b - 1), Some(b'\n' | b'\r'));
+                        if line_start {
+                            if let Some(at) = tag_directive_gap(src, b) {
+                                return Err(self.separator_error(at)?);
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn separator_error(&self, at: usize) -> Result<Error, Error> {
+        let before = self
+            .input
+            .get(..at)
+            .ok_or_else(|| internal("directive offset off a character boundary"))?;
+        let bytes = before.as_bytes();
+        let mut line = 1usize;
+        let mut line_start = 0usize;
+        let mut k = 0usize;
+        while k < bytes.len() {
+            match bytes[k] {
+                b'\r' if bytes.get(k + 1) == Some(&b'\n') => {
+                    line += 1;
+                    k += 2;
+                    line_start = k;
+                }
+                b'\r' | b'\n' => {
+                    line += 1;
+                    k += 1;
+                    line_start = k;
+                }
+                _ => k += 1,
+            }
+        }
+        let column = before[line_start..].chars().count() + 1;
+        let mut err = Error::at(
+            ErrorKind::Syntax(SyntaxKind::ExpectedWhitespace),
+            Location {
+                byte_offset: at + self.bom,
+                line,
+                column,
+            },
+            "syntax error: expected whitespace",
+        );
+        err.engine_detail = Some("expected whitespace".to_owned());
+        Ok(err)
+    }
+
     pub(crate) fn syntax_pass(&self) -> Result<(), Error> {
         #[cfg(test)]
         validation_tests::observe(|s| s.source_passes += 1);
+        self.directive_prepass()?;
         let mut depth = 0usize;
         for ev in Self::parser(self.input, self.opts) {
             #[cfg(test)]
             validation_tests::observe(|s| s.source_results += 1);
             let (event, span) = ev.map_err(|e| self.scan_err(e))?;
+            if let GEvent::Scalar(_, _, _, tag) = &event {
+                self.check_tag_identity(tag.as_deref(), &span)?;
+            }
             match event {
-                GEvent::SequenceStart(..) | GEvent::MappingStart(..) => {
+                GEvent::SequenceStart(_, _, ref tag) | GEvent::MappingStart(_, _, ref tag) => {
                     let next = depth
                         .checked_add(1)
                         .ok_or_else(|| internal("source depth overflow"))?;
@@ -274,6 +390,7 @@ impl<'a> Engine<'a> {
                             self.loc(&span.start)?,
                         ));
                     }
+                    self.check_tag_identity(tag.as_deref(), &span)?;
                     depth = next;
                     #[cfg(test)]
                     validation_tests::observe(|s| s.highwater = s.highwater.max(depth));
@@ -345,6 +462,84 @@ impl<'a> Engine<'a> {
         ))
     }
 }
+/// Diagnostic for a resolved tag identity outside the local/global forms (§4.4, §7.1).
+pub(crate) const INVALID_TAG_IDENTITY_MESSAGE: &str =
+    "syntax error: resolved tag is neither a local tag nor a global tag URI";
+
+/// A resolved, percent-decoded identity other than the non-specific `!` is a local
+/// tag (`!` plus at least one character) or starts with an RFC 3986 §3.1 scheme and
+/// `:` (YAML 1.2.2 §6.9.1). Core Schema URIs satisfy the scheme rule.
+pub(crate) fn valid_resolved_tag_identity(uri: &str) -> bool {
+    if uri.starts_with('!') {
+        return uri.len() >= 2;
+    }
+    let Some(colon) = uri.find(':') else {
+        return false;
+    };
+    let scheme = &uri.as_bytes()[..colon];
+    match scheme.split_first() {
+        Some((first, rest)) => {
+            first.is_ascii_alphabetic()
+                && rest
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+        }
+        None => false,
+    }
+}
+
+/// For a directive starting at `pct` (`%`), the byte offset of a `%TAG`
+/// prefix that immediately follows its handle, mirroring the engine scanner:
+/// directive name, blanks and handle are charged to the 1,024-byte directive
+/// budget first, and a malformed handle is the engine's own error.
+fn tag_directive_gap(src: &[u8], pct: usize) -> Option<usize> {
+    const BUDGET: usize = 1024;
+    let is_blank = |b: u8| matches!(b, b' ' | b'\t');
+    let is_break = |b: u8| matches!(b, b'\n' | b'\r' | b'\0');
+    if src.get(pct) != Some(&b'%') {
+        return None;
+    }
+    let mut i = pct + 1;
+    let name_start = i;
+    while i < src.len() && !is_blank(src[i]) && !is_break(src[i]) {
+        i += 1;
+    }
+    if &src[name_start..i] != b"TAG" {
+        return None;
+    }
+    let mut budget = BUDGET - 3;
+    let mut blanks = 0usize;
+    while i < src.len() && is_blank(src[i]) {
+        i += 1;
+        blanks += 1;
+    }
+    budget = budget.checked_sub(blanks)?;
+    if src.get(i) != Some(&b'!') {
+        return None;
+    }
+    budget = budget.checked_sub(1)?;
+    i += 1;
+    let mut word = false;
+    while i < src.len() && (src[i].is_ascii_alphanumeric() || matches!(src[i], b'_' | b'-')) {
+        budget = budget.checked_sub(1)?;
+        i += 1;
+        word = true;
+    }
+    if src.get(i) == Some(&b'!') {
+        budget.checked_sub(1)?;
+        i += 1;
+    } else if word {
+        return None;
+    }
+    // A blank, a break, NUL (the scanner's end marker) or the end of input
+    // keeps the existing prefix diagnostics.
+    match src.get(i) {
+        None => None,
+        Some(&b) if is_blank(b) || is_break(b) => None,
+        Some(_) => Some(i),
+    }
+}
+
 fn scalar_style(style: granit_parser::ScalarStyle) -> ScalarStyle {
     use granit_parser::ScalarStyle as G;
     match style {

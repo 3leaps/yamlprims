@@ -1,0 +1,314 @@
+//! Revision 1.7 resolved tag identity and `%TAG` separation (spec §4.4, §7.1, §11.1).
+//! Expected kinds and source coordinates are written from the specification text,
+//! not captured from the implementation.
+use yamlprims::{
+    decode_wire, emit_all, encode, encode_error, load_all_with, ErrorKind, LimitKind, Location,
+    Options, Site, SyntaxKind, UnknownTags, Value, WireEnvelope,
+};
+
+fn opts(reject: bool, max_depth: Option<usize>) -> Options {
+    let mut o = Options::default();
+    if reject {
+        o.unknown_tags = UnknownTags::Reject;
+    }
+    if let Some(d) = max_depth {
+        o.limits.max_depth = d;
+    }
+    o
+}
+
+fn at(byte_offset: usize, line: usize, column: usize) -> Site {
+    Site::Source(Location {
+        byte_offset,
+        line,
+        column,
+    })
+}
+
+const TAG: ErrorKind = ErrorKind::Syntax(SyntaxKind::InvalidGlobalTagCharacter);
+const GAP: ErrorKind = ErrorKind::Syntax(SyntaxKind::ExpectedWhitespace);
+
+#[test]
+fn refused_identities_and_separation_select_kind_and_site() {
+    let depth = ErrorKind::LimitExceeded {
+        limit: LimitKind::MaxDepth,
+        configured: 2,
+    };
+    let cases: Vec<(&str, &str, Options, ErrorKind, Site)> = vec![
+        (
+            "example 6.25",
+            "!<$:?> value\n",
+            opts(false, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "digit scheme",
+            "key: !<9ab:c> value\n",
+            opts(false, None),
+            TAG,
+            at(5, 1, 6),
+        ),
+        (
+            "no colon",
+            "- !<abc> value\n",
+            opts(false, None),
+            TAG,
+            at(2, 1, 3),
+        ),
+        (
+            "bad scheme char",
+            "!<a*b:c> value\n",
+            opts(false, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "sequence",
+            "!<abc> [1, 2]\n",
+            opts(false, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "mapping",
+            "!<abc> {k: v}\n",
+            opts(false, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "expansion",
+            "%TAG !n! 12\n--- !n!3 v\n",
+            opts(false, None),
+            TAG,
+            at(16, 2, 5),
+        ),
+        (
+            "secondary redefined",
+            "%TAG !! 12\n--- !!3 v\n",
+            opts(false, None),
+            TAG,
+            at(15, 2, 5),
+        ),
+        (
+            "reject policy",
+            "!<abc> value\n",
+            opts(true, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "reject: valid unknown first, invalid later",
+            "a: !<tag:example.com,2026:t> x\nb: !<abc> y\n",
+            opts(true, None),
+            TAG,
+            at(34, 2, 4),
+        ),
+        (
+            "before later syntax",
+            "a: !<abc> 1\nb: [\n",
+            opts(false, None),
+            TAG,
+            at(3, 1, 4),
+        ),
+        (
+            "depth first",
+            "[[!<abc> [1]]]\n",
+            opts(false, Some(2)),
+            depth,
+            at(9, 1, 10),
+        ),
+        (
+            "bom and multibyte",
+            "\u{feff}\u{e9}: !<abc> x\n",
+            opts(false, None),
+            TAG,
+            at(7, 1, 4),
+        ),
+        (
+            "crlf",
+            "a: 1\r\nb: !<abc> x\r\n",
+            opts(false, None),
+            TAG,
+            at(9, 2, 4),
+        ),
+        (
+            "gap, used",
+            "%TAG !e!tag:example.com,2026:\n--- !e!a b\n",
+            opts(false, None),
+            GAP,
+            at(8, 1, 9),
+        ),
+        (
+            "gap, unused",
+            "%TAG !e!tag:example.com,2026:\n--- b\n",
+            opts(false, None),
+            GAP,
+            at(8, 1, 9),
+        ),
+        (
+            "gap, secondary handle",
+            "%TAG !!tag:example.com,2026:\n--- b\n",
+            opts(false, None),
+            GAP,
+            at(7, 1, 8),
+        ),
+        (
+            "gap, primary handle",
+            "%TAG !:x\n--- b\n",
+            opts(false, None),
+            GAP,
+            at(6, 1, 7),
+        ),
+        (
+            "gap, second directive, crlf",
+            "%TAG !e! tag:a,1:\r\n%TAG !f!tag:b,1:\r\n--- x\r\n",
+            opts(false, None),
+            GAP,
+            at(27, 2, 9),
+        ),
+        (
+            "gap, bom",
+            "\u{feff}%TAG !e!tag:example.com,2026:\n--- b\n",
+            opts(false, None),
+            GAP,
+            at(11, 1, 9),
+        ),
+        (
+            "gap before later syntax",
+            "%TAG !e!tag:a,1:\n--- [\n",
+            opts(false, None),
+            GAP,
+            at(8, 1, 9),
+        ),
+        (
+            "gap, second document",
+            "a\n...\n%TAG !e!tag:a,1:\n--- b\n",
+            opts(false, None),
+            GAP,
+            at(14, 3, 9),
+        ),
+        (
+            "handle error wins",
+            "%TAG !e0 a:\n%TAG !f!b:\n--- x\n",
+            opts(false, None),
+            ErrorKind::Syntax(SyntaxKind::ExpectedTagDirectiveBang),
+            at(0, 1, 1),
+        ),
+        (
+            "empty prefix unchanged",
+            "%TAG !e!\n--- x\n",
+            opts(false, None),
+            TAG,
+            at(0, 1, 1),
+        ),
+        (
+            "gap precedes earlier tag identity",
+            "!<abc> x\n...\n%TAG !e!x:\n--- y\n",
+            opts(false, None),
+            GAP,
+            at(21, 3, 9),
+        ),
+        (
+            "gap precedes earlier depth",
+            "[[[1]]]\n...\n%TAG !e!x:\n--- y\n",
+            opts(false, Some(2)),
+            GAP,
+            at(20, 3, 9),
+        ),
+        (
+            "gap precedes earlier parser error",
+            "- a\nb: c\n...\n%TAG !e!x:\n--- y\n",
+            opts(false, None),
+            GAP,
+            at(21, 4, 9),
+        ),
+    ];
+    for (name, input, o, kind, site) in cases {
+        let err = load_all_with(input, &o).expect_err(name);
+        assert_eq!(err.kind, kind, "{name}");
+        assert_eq!(err.site, site, "{name}");
+    }
+}
+
+#[test]
+fn refused_identity_wire_bytes() {
+    let err = load_all_with("!<$:?> value\n", &Options::default()).unwrap_err();
+    assert_eq!(
+        encode_error(&err, &Options::default()).unwrap(),
+        r#"{"format":"yamlprims-value","version":1,"error":{"kind":"syntax","detail":{"syntax_kind":"invalid_global_tag_character"},"site":{"source":[0,1,1]},"related":[],"path":[],"message":"syntax error: resolved tag is neither a local tag nor a global tag URI"}}"#
+    );
+    let err = load_all_with("%TAG !!tag:a,1:\n--- b\n", &Options::default()).unwrap_err();
+    assert_eq!(
+        encode_error(&err, &Options::default()).unwrap(),
+        r#"{"format":"yamlprims-value","version":1,"error":{"kind":"syntax","detail":{"syntax_kind":"expected_whitespace"},"site":{"source":[7,1,8]},"related":[],"path":[],"message":"syntax error: expected whitespace"}}"#
+    );
+}
+
+#[test]
+fn accepted_identities_close_through_wire_and_emit() {
+    let cases: &[(&str, &str)] = &[
+        ("!<x:> value\n", "x:"),
+        (
+            "!<tag:example.com,2026:item> value\n",
+            "tag:example.com,2026:item",
+        ),
+        ("!local value\n", "!local"),
+        (
+            "%TAG !p! ta\n--- !p!g:example.com/x v\n",
+            "tag:example.com/x",
+        ),
+        ("!<%74ag:example.com,2026:x> v\n", "tag:example.com,2026:x"),
+        ("!local%21x v\n", "!local!x"),
+        ("!<tag:example.com,2026:s> [1]\n", "tag:example.com,2026:s"),
+        (
+            "%TAG !e! tag:example.com,2026:\n--- !e!a b\n",
+            "tag:example.com,2026:a",
+        ),
+        (
+            "%TAG !e!\ttag:example.com,2026:\n--- !e!a b\n",
+            "tag:example.com,2026:a",
+        ),
+    ];
+    let o = Options::default();
+    for (input, uri) in cases {
+        let docs = load_all_with(input, &o).unwrap_or_else(|e| panic!("{input:?}: {e:?}"));
+        match &docs[0].root().value() {
+            Value::Tagged(t) => assert_eq!(t.tag().uri(), *uri, "{input:?}"),
+            other => panic!("{input:?}: expected Tagged, got {other:?}"),
+        }
+        let wire = encode(&docs, &o).unwrap();
+        let WireEnvelope::Documents(back) = decode_wire(&wire, &o).unwrap() else {
+            panic!("{input:?}: decode_wire returned an error envelope");
+        };
+        assert_eq!(encode(&back, &o).unwrap(), wire, "{input:?}");
+        let emitted = emit_all(&docs).unwrap();
+        let reloaded = load_all_with(&emitted, &o).unwrap();
+        match reloaded[0].root().value() {
+            Value::Tagged(t) => assert_eq!(t.tag().uri(), *uri, "{input:?} reload"),
+            other => panic!("{input:?}: reload lost the tag: {other:?}"),
+        }
+    }
+    // An unused scheme-less prefix and the non-specific / Core tags load unchanged.
+    for input in ["%TAG !n! 12\n--- v\n", "- !!str 1\n- ! 2\n- !!int 3\n"] {
+        let docs = load_all_with(input, &o).unwrap();
+        let wire = encode(&docs, &o).unwrap();
+        assert!(matches!(
+            decode_wire(&wire, &o).unwrap(),
+            WireEnvelope::Documents(_)
+        ));
+    }
+}
+
+#[test]
+fn scanner_failure_at_end_of_input_with_directive_text_is_an_error() {
+    // A scanner failure reported at the end of input, after a line break, in
+    // input that contains `%TAG`, is returned as an error (never a panic).
+    for input in ["a: '%TAG\n", "%TAG: [\n"] {
+        assert!(
+            load_all_with(input, &Options::default()).is_err(),
+            "{input:?}"
+        );
+    }
+}
