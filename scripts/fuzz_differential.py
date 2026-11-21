@@ -10,6 +10,7 @@ Usage:
   python3 -I scripts/fuzz_differential.py mkdir-under OUT REL...
   python3 -I scripts/fuzz_differential.py hold-lock OUT -- CMD...
   python3 -I scripts/fuzz_differential.py lock-held OUT
+  python3 -I scripts/fuzz_differential.py lock-owned OUT FD
   python3 -I scripts/fuzz_differential.py import-new OUT REL SRC
 
 Output never contains input bytes. A failure prints an input SHA-256 and a
@@ -373,9 +374,12 @@ def _open_lock(out):
 
 def hold_lock(out, cmd):
     """Run CMD while holding an exclusive, non-blocking flock on OUT's lock
-    file for the whole run. The kernel releases the lock when this process
-    exits, however it exits; the file itself is never removed, so there is no
-    stale-lock cleanup and no window where two runs both own it."""
+    file. The locked descriptor is inherited by CMD and everything it starts
+    (its number is in YAMLPRIMS_FUZZ_LOCK_FD). A flock belongs to the open
+    file description, so the lock stays held while any process of the
+    campaign still has it open, even if this wrapper is killed, and the
+    kernel releases it when the last one exits. The file is never removed.
+    A child killed by signal N exits this wrapper with status 128+N."""
     import fcntl
     import signal
 
@@ -386,14 +390,36 @@ def hold_lock(out, cmd):
         refuse("another run holds this output directory")
     os.ftruncate(fd, 0)
     os.write(fd, f"{os.getpid()}\n".encode())
-    child = subprocess.Popen(cmd)  # close_fds: the child does not inherit the lock
+    os.set_inheritable(fd, True)
+    env = dict(os.environ, YAMLPRIMS_FUZZ_LOCK_FD=str(fd))
+    child = subprocess.Popen(cmd, pass_fds=(fd,), env=env)
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, lambda n, _f: child.send_signal(n))
-    sys.exit(child.wait())
+    rc = child.wait()
+    sys.exit(128 - rc if rc < 0 else rc)
+
+
+def lock_owned(out, fd):
+    """Exit 0 if descriptor FD is OUT's lock file and holds its flock (a
+    re-lock of the same open file description succeeds), 1 otherwise."""
+    import fcntl
+
+    try:
+        st = os.fstat(fd)
+        path_st = os.lstat(os.path.join(out, LOCK))
+    except OSError:
+        sys.exit(1)
+    if (st.st_dev, st.st_ino) != (path_st.st_dev, path_st.st_ino):
+        sys.exit(1)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        sys.exit(1)
+    sys.exit(0)
 
 
 def lock_held(out):
-    """Exit 0 if some other process holds OUT's lock, 1 if it is free."""
+    """Exit 0 if some process holds OUT's lock, 1 if it is free."""
     import fcntl
 
     fd = _open_lock(out)
@@ -433,6 +459,8 @@ if __name__ == "__main__":
         check_tree(sys.argv[2])
     elif len(sys.argv) >= 5 and sys.argv[1] == "hold-lock" and sys.argv[3] == "--":
         hold_lock(sys.argv[2], sys.argv[4:])
+    elif len(sys.argv) == 4 and sys.argv[1] == "lock-owned":
+        lock_owned(sys.argv[2], int(sys.argv[3]))
     elif len(sys.argv) == 3 and sys.argv[1] == "lock-held":
         lock_held(sys.argv[2])
     elif len(sys.argv) == 5 and sys.argv[1] == "import-new":

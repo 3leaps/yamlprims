@@ -46,16 +46,19 @@ out=$(python3 -I "$helper" claim-out "$root" "$out") || {
 guard() { python3 -I "$helper" check-tree "$out" || { echo "fuzz-smoke: output directory changed under the run" >&2; exit 2; }; }
 under() { python3 -I "$helper" mkdir-under "$out" "$@" || exit 2; }
 # One campaign per output root at a time: the rest of this script runs as the
-# child of a process that holds an exclusive flock on the root's lock file for
-# its whole lifetime. The kernel releases the lock when that process exits;
-# the lock file is never removed. Every run writes into its own exclusively
+# child of a process that takes an exclusive flock on the root's lock file and
+# passes the locked descriptor to this script and everything it starts. The
+# lock stays held while any process of the run has it open; the lock file is
+# never removed. Every run writes into its own exclusively
 # created directory under runs/; only the corpora are shared.
 if [ "${YAMLPRIMS_FUZZ_LOCKED_OUT:-}" != "$out" ]; then
   exec python3 -I "$helper" hold-lock "$out" -- \
     env YAMLPRIMS_FUZZ_LOCKED_OUT="$out" YAMLPRIMS_FUZZ_OUT="$out" bash "$root/scripts/fuzz-smoke.sh"
 fi
-if python3 -I "$helper" lock-held "$out"; then :; else
-  echo "fuzz-smoke: the output directory lock is not held" >&2
+# This process inherited the locked descriptor; confirm it is the root's lock
+# file and holds the lock.
+if python3 -I "$helper" lock-owned "$out" "${YAMLPRIMS_FUZZ_LOCK_FD:-none}" 2>/dev/null; then :; else
+  echo "fuzz-smoke: the output directory lock is not held by this run" >&2
   exit 2
 fi
 seeds=""
@@ -103,6 +106,8 @@ classify() { # log
 pin_channel=$(awk '$1 == "channel" {print $2}' fuzz/toolchain.txt)
 pin_hash=$(awk '$1 == "commit-hash" {print $2}' fuzz/toolchain.txt)
 toolchain=${YAMLPRIMS_FUZZ_TOOLCHAIN:-$pin_channel}
+# Never let rustup download a missing toolchain as a side effect.
+export RUSTUP_AUTO_INSTALL=0
 have_hash=$(rustc "+$toolchain" -vV 2>/dev/null | awk '$1 == "commit-hash:" {print $2}')
 if [ "$have_hash" != "$pin_hash" ]; then
   echo "fuzz-smoke: toolchain $toolchain is not the pinned nightly ($pin_channel, $pin_hash)" >&2

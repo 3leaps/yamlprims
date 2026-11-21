@@ -58,10 +58,12 @@ ceiling is available. The Go `Fuzz*` targets run their seed corpora under
 
 `fuzz-replay` prints the target and the failure kind only; full logs stay in a
 temporary directory. `fuzz-smoke` uses `YAMLPRIMS_FUZZ_OUT` (default: a new
-temporary directory), which must be outside the working tree. Each run holds
-an exclusive `flock` on that directory's lock file for its whole lifetime, so
-a second run is refused while the first is alive; the kernel releases the lock
-when the run exits, and the lock file is never removed. The run writes its
+temporary directory), which must be outside the working tree. Each run takes
+an exclusive `flock` on that directory's lock file, and every process of the
+run inherits the locked descriptor. A second run is refused while any process
+of the first still holds it, even if the first run's wrapper was killed; the
+kernel releases the lock when the last holder exits, and the lock file is never
+removed. The run writes its
 logs, failing inputs, differential report and `campaign.json` record into its
 own new directory under `runs/`. Only the corpora under `corpus/` are shared
 between runs: seeds enter them by exclusive creation (a name already present
@@ -83,14 +85,25 @@ Output roots are checked before anything is created:
 - No symlink, and no regular file with more than one hard link, may appear
   anywhere below an output root. The scripts check before every step that
   creates or writes files there.
-- Existing files are never written through. Seeds and reports are created
-  exclusively without following links; logs, settings and `campaign.json` are
-  written under a fresh name and renamed into place.
+- The harness never writes through an existing file. Seeds and reports are
+  created exclusively without following links; logs, settings and
+  `campaign.json` are written under a fresh name and renamed into place.
+  libFuzzer's own corpus and crash-input writes are the exception: they are
+  covered only by the checks before and after each target run and by the
+  assumption below, not protected against a path being replaced while
+  libFuzzer runs.
 
 These checks assume that the output directory's ancestors, and `TMPDIR`, are
-trusted and controlled by the user running the scripts. Someone who can
-replace a path component between the check and the write is not defended
-against.
+trusted and controlled by the user running the scripts. Out of scope under
+that assumption:
+
+- someone replacing a path component between a check and the write;
+- someone replacing the lock file's directory entry from outside (for
+  example renaming another regular file over it), which would let a second
+  run lock a different file.
+
+The lock and these checks are supported on local filesystems only. `flock`
+behaviour on NFS or other network filesystems is not relied on or verified.
 
 ## Known differences
 

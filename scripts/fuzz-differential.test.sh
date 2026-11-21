@@ -248,6 +248,56 @@ done
 if [ "$races_ok" = 1 ]; then ok; else bad "simultaneous contenders did not resolve to exactly one owner"; fi
 if [ "$(inode "$o/.yamlprims-fuzz-lock")" = "$lock_inode" ]; then ok; else bad "lock file was replaced during the races"; fi
 
+# The locked descriptor is inherited by the whole campaign: the lock outlives
+# a killed wrapper or a killed shell while any worker still holds it, and is
+# free again once every holder has exited.
+wait_held() { for _ in $(seq 50); do python3 -I "$helper" lock-held "$o" && return 0; sleep 0.1; done; return 1; }
+wait_pidfile() { for _ in $(seq 50); do [ -s "$1" ] && return 0; sleep 0.1; done; return 1; }
+contender_refused() { if python3 -I "$helper" hold-lock "$o" -- true 2>/dev/null; then return 1; fi; }
+# (a) Wrapper killed with SIGKILL while its child is alive.
+rm -f "$work/child.pid"
+# shellcheck disable=SC2016 # $$ expands in the inner shell
+python3 -I "$helper" hold-lock "$o" -- sh -c 'echo $$ >"$1"; exec sleep 60' _ "$work/child.pid" &
+wrapper=$!
+wait_held && wait_pidfile "$work/child.pid"
+kill -KILL "$wrapper"
+wait "$wrapper" 2>/dev/null || true
+if contender_refused; then ok; else bad "lock lost when the wrapper was SIGKILLed with its child alive"; fi
+kill "$(cat "$work/child.pid")" 2>/dev/null || true
+for _ in $(seq 50); do python3 -I "$helper" lock-held "$o" || break; sleep 0.1; done
+if python3 -I "$helper" hold-lock "$o" -- true; then ok; else bad "lock not free after the last holder exited"; fi
+# (b) Shell child killed with SIGTERM while a background worker survives.
+rm -f "$work/worker.pid" "$work/shell.pid"
+# shellcheck disable=SC2016 # expands in the inner shell
+python3 -I "$helper" hold-lock "$o" -- sh -c 'echo $$ >"$1"; sleep 60 & echo $! >"$2"; wait' _ "$work/shell.pid" "$work/worker.pid" &
+wrapper=$!
+wait_held && wait_pidfile "$work/worker.pid" && wait_pidfile "$work/shell.pid"
+kill -TERM "$(cat "$work/shell.pid")"
+wait "$wrapper" 2>/dev/null || true
+if contender_refused; then ok; else bad "lock lost while a background worker still held it"; fi
+kill "$(cat "$work/worker.pid")" 2>/dev/null || true
+for _ in $(seq 50); do python3 -I "$helper" lock-held "$o" || break; sleep 0.1; done
+if python3 -I "$helper" hold-lock "$o" -- true; then ok; else bad "lock not free after the worker exited"; fi
+# The child can confirm it owns the lock through the inherited descriptor.
+# shellcheck disable=SC2016 # expands in the inner shell
+if python3 -I "$helper" hold-lock "$o" -- sh -c 'python3 -I "$1" lock-owned "$2" "$YAMLPRIMS_FUZZ_LOCK_FD"' _ "$root/$helper" "$o"; then ok; else bad "child could not confirm it owns the lock"; fi
+if python3 -I "$helper" lock-owned "$o" 0 2>/dev/null; then bad "an unrelated descriptor passed as the lock"; else ok; fi
+# Claiming to be the locked child without the inherited descriptor is refused
+# before the run starts.
+if YAMLPRIMS_FUZZ_LOCKED_OUT="$o" YAMLPRIMS_FUZZ_OUT="$o" bash scripts/fuzz-smoke.sh >/dev/null 2>&1; then
+  bad "smoke ran with a spoofed lock environment"
+else
+  ok
+fi
+if [ ! -e "$o/runs" ]; then ok; else bad "spoofed smoke created a run directory"; fi
+# Exit status: a child killed by signal N gives 128+N.
+for sig in INT TERM HUP; do
+  # shellcheck disable=SC2016 # expands in the inner shell
+  python3 -I "$helper" hold-lock "$o" -- sh -c 'kill -'"$sig"' $$' 2>/dev/null && status=0 || status=$?
+  want=$((128 + $(kill -l "$sig")))
+  if [ "$status" = "$want" ]; then ok; else bad "child killed by SIG$sig gave status $status, want $want"; fi
+done
+
 # Seeds enter the corpus by exclusive creation: an existing name is skipped,
 # never opened. Model a hard link created after the walk by disabling the walk.
 o=$(python3 -I "$helper" claim-out "$root" "$work/out-corpus")
