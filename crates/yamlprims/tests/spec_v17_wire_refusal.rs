@@ -22,7 +22,10 @@ fn malformed_wire_uses_the_common_message_and_keeps_the_reason() {
         let detail = e.engine_detail.as_deref().unwrap_or("");
         assert!(!detail.is_empty(), "{text}: reason must be kept");
         let wire = encode_error(&e, &d).unwrap();
-        assert!(!wire.contains(detail), "{text}: reason must not be serialized");
+        assert!(
+            !wire.contains(detail),
+            "{text}: reason must not be serialized"
+        );
     }
 }
 
