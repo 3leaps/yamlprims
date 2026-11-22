@@ -159,7 +159,7 @@ func copyExistingNodeForMarshal(root Node, opts EmitOptions, nodesUsed *int, sta
 					tag.suffix = tag.uri
 				}
 				if len(tag.uri) > opts.Limits.MaxTagBytes || !isValidNonCoreTagURI(tag.uri) || !isValidTagSpelling(tag.uri, tag.handle, tag.suffix) {
-					return Node{}, emitSimpleErr(ErrorKindInvalidOptions, "Tagged node contains invalid or oversized Tag.URI")
+					return Node{}, emitSimpleErr(ErrorKindInvalidOptions, "Tagged node contains invalid or oversized tag URI")
 				}
 				innerKind := t.value.value.kind
 				if tag.uri == "tag:yaml.org,2002:merge" {

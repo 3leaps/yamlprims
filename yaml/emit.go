@@ -323,7 +323,7 @@ func preflightEmitNode(root *Node, opts EmitOptions, nodesVisited *int, stack *[
 				return emitInvalidUtf8Err("Tag contains invalid UTF-8")
 			}
 			if len(t.tag.uri) > opts.Limits.MaxTagBytes || !isValidNonCoreTagURI(t.tag.uri) {
-				return emitSimpleErr(ErrorKindInvalidOptions, "Tagged node contains invalid or oversized Tag.URI")
+				return emitSimpleErr(ErrorKindInvalidOptions, "Tagged node contains invalid or oversized tag URI")
 			}
 			innerKind := t.value.value.kind
 			if t.tag.uri == "tag:yaml.org,2002:merge" {

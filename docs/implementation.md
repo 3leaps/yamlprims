@@ -122,7 +122,7 @@ and Go drivers); it does not close the broader M1 release gates below.
   bounded `Debug`, symmetric `decode_wire`, Core YAML emission, strict RFC 7493
   I-JSON projection, reader/writer ergonomics, and YAML 1.1 migration lint
   `yamlprims-lint/1`), which are currently verified in-tree across all four
-  bindings and `conformance/vectors/cases.jsonl` (`194` vectors).
+  bindings and `conformance/vectors/cases.jsonl` (`197` vectors).
 - Every open M1 item in [the design review](design-review.md): external corpus
   qualification of error precedence, construction-time error bounds,
   anchor-cache accounting, checked construction, wire decoding, metadata ranges,
@@ -153,7 +153,7 @@ byte-for-byte wire, `DecodeWire` round-trip, plain-JSON, `emit_all`,
 `encode_ijson`, and `encode_lint` (`yamlprims-lint/1`) parity with the Rust core
 via `make crosscheck`. The isolated language bindings (`bindings/typescript/`
 zero-import WASM module and `bindings/python/` `PyO3/maturin` `abi3-py310` wheel)
-are verified in-tree against `conformance/vectors/cases.jsonl` (`194` vectors)
+are verified in-tree against `conformance/vectors/cases.jsonl` (`197` vectors)
 and `structcorpus --crosscheck-jsonl` via `make ts-check` and `make python-check`,
 and ship as signed release assets for npm (`@3leaps/yamlprims`) and PyPI
 (`yamlprims`) ([build specification](build-spec.md),
