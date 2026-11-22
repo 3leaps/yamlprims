@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 import {
   YamlprimsError,
+  dumpAll,
   createDocument,
   createTag,
   createTaggedNode,
@@ -20,7 +21,7 @@ import {
 
 const casesPath = process.env.YAMLPRIMS_WIRE_DECODE_CASES_FILE;
 assert.ok(casesPath, "YAMLPRIMS_WIRE_DECODE_CASES_FILE is required");
-const EXPECTED_CASES = 35;
+const EXPECTED_CASES = 36;
 const REFUSAL = "invalid yamlprims wire payload";
 const enc = new TextEncoder();
 
@@ -211,4 +212,21 @@ test("out-of-range metadata refusals match the shared table", () => {
     assert.equal(refused.message, c.message, c.id);
     assert.deepEqual(refused.site, ns, c.id);
   }
+});
+
+test("decoded yaml_version keeps the emitter's own restriction", () => {
+  const text =
+    '{"format":"yamlprims-value","version":1,"documents":[{"yaml_version":[2,0],"explicit_start":true,' +
+    '"root":{"kind":"null","span":[0,1,1,0,1,1],"via":null,"tag_start":null}}]}';
+  const env = decodeWire(text);
+  assert.equal(env.kind, "documents");
+  assert.deepEqual(env.documents[0].yamlVersion, [2, 0]);
+  let err;
+  try {
+    dumpAll(env.documents);
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err instanceof YamlprimsError);
+  assert.equal(err.kind, "unsupported_yaml_version");
 });

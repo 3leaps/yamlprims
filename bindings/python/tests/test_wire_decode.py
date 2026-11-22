@@ -30,7 +30,7 @@ CASES_FILE = pathlib.Path(
         ROOT / "conformance/vectors/wire-decode-cases.jsonl",
     )
 )
-EXPECTED_CASES = 35
+EXPECTED_CASES = 36
 REFUSAL = "invalid yamlprims wire payload"
 
 
