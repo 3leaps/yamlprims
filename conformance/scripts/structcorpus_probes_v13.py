@@ -9,7 +9,8 @@ convention and the `yaml.anchors.*` node-span cases.
 Probes cover the r3 and explicit-limits profiles, `node_locations` (spans, paths, node
 kinds, convention and profile binding) and event-only cases. Each probe runs a small
 corpus built in a temporary directory from SOURCE_DIR's profiles, span conventions and
-fixtures. SOURCE_DIR is not modified. Prints one row per probe and exits 1 if any control
+fixtures (read through the format registry when SOURCE_DIR has one; the temporary corpus
+uses the legacy single-format layout). SOURCE_DIR is not modified. Prints one row per probe and exits 1 if any control
 does not behave as expected. scripts/structcorpus_gate_probes.py keeps the earlier
 controls.
 """
@@ -20,8 +21,62 @@ import sys
 import tempfile
 from pathlib import Path
 
+def structcorpus_layout(src):
+    """YAML inventory paths of a structcorpus source: (cases, profiles, span_conventions, registry).
+
+    With manifests/formats.json the registry must be formats/v1 with a yaml entry, and its
+    cases, profiles and span_conventions paths are used (relative, no empty, . or ..
+    segments, resolving inside src); any problem raises ValueError. Without the registry, the
+    legacy single-format paths. The same function is in every conformance script that reads
+    a source checkout; keep the copies identical.
+    """
+    reg = src / "manifests/formats.json"
+    if not reg.exists():
+        return src / "manifests/cases.jsonl", src / "manifests/profiles", src / "manifests/span-conventions", False
+    try:
+        doc = json.loads(reg.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ValueError(f"{reg}: {e}") from None
+    version = doc.get("schema_version") if isinstance(doc, dict) else None
+    if version != "formats/v1":
+        raise ValueError(f"{reg}: unsupported schema_version {json.dumps(version)}")
+    formats = doc.get("formats")
+    entry = formats.get("yaml") if isinstance(formats, dict) else None
+    if not isinstance(entry, dict):
+        raise ValueError(f"{reg}: no yaml format entry")
+    root = src.resolve()
+    out = []
+    for key in ("cases", "profiles", "span_conventions"):
+        rel = entry.get(key)
+        if not isinstance(rel, str):
+            raise ValueError(f"{reg}: yaml.{key} is missing or not a string")
+        if not rel or rel.startswith("/") or "\\" in rel or ":" in rel or any(p in ("", ".", "..") for p in rel.split("/")):
+            raise ValueError(f"{reg}: yaml.{key}: {rel!r} is not a normalized repository-relative path")
+        p = src / rel
+        if p.exists() and root not in p.resolve().parents:
+            raise ValueError(f"{reg}: yaml.{key}: {rel} resolves outside the source directory")
+        out.append(p)
+    return out[0], out[1], out[2], True
+
+
+def yaml_record(c, registry):
+    """True for a `"format": "yaml"` case record, False for another format. A record without
+    format is run from a legacy source and raises ValueError from a registry source."""
+    if "format" not in c:
+        if registry:
+            raise ValueError("no format")
+        return True
+    if not isinstance(c["format"], str):
+        raise ValueError(f"format {json.dumps(c['format'])} is not a string")
+    return c["format"] == "yaml"
+
+
 src, driver = map(Path, sys.argv[1:3])
-cases = {json.loads(l)["id"]: json.loads(l) for l in open(src / "manifests/cases.jsonl") if l.strip()}
+try:
+    CASES_FILE, PROFILES, SPANS, REGISTRY = structcorpus_layout(src)
+    cases = {c["id"]: c for c in (json.loads(l) for l in open(CASES_FILE) if l.strip()) if yaml_record(c, REGISTRY)}
+except ValueError as e:
+    sys.exit(f"structcorpus layout: {e}")
 results = []
 EXTRA = {}
 
@@ -30,8 +85,8 @@ def tiny(tmp, records, edit_file=None):
     s, h = tmp / "src", tmp / "hyd"
     (s / "manifests").mkdir(parents=True)
     h.mkdir()
-    for d in ("manifests/profiles", "manifests/span-conventions", "fixtures"):
-        shutil.copytree(src / d, s / d)
+    for a, d in ((PROFILES, "manifests/profiles"), (SPANS, "manifests/span-conventions"), (src / "fixtures", "fixtures")):
+        shutil.copytree(a, s / d)
     (h / "cases.jsonl").write_text("")
     (s / "manifests/cases.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
     for rel, data in EXTRA.items():

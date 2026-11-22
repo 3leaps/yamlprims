@@ -5,11 +5,19 @@ Usage:
 
 DRIVER is the built `structcorpus` example (yamlprims/examples/structcorpus.rs).
 Checks, in order; every failure is reported and the exit status is 1:
-- SOURCE_DIR is a clean checkout at the pinned commit, and the pinned files (case
-  manifest, every profile and span convention, every recipe) have their pinned sha256;
+- SOURCE_DIR's YAML inventory is located: with `manifests/formats.json` (a `formats/v1`
+  registry with a `yaml` entry) the YAML case shard, profile and span-convention directories
+  it names, otherwise the legacy `manifests/cases.jsonl`, `manifests/profiles` and
+  `manifests/span-conventions`; a malformed registry fails;
+- SOURCE_DIR is a clean checkout at the pinned commit, and the pinned files (the registry
+  when present, the YAML case manifest, every profile and span convention, every recipe)
+  have their pinned sha256;
 - structcorpus's own `tools/corpus.py verify` accepts HYDRATED_DIR, and the hydrated
   case inventory and hydration record have their pinned sha256;
-- the inventory: exactly the pinned number of cases, no duplicate ids, every input present
+- the inventory (records with `"format": "yaml"`; other formats in the hydrated manifest are
+  skipped and counted, a non-yaml record in the YAML source manifest fails, and a record
+  without `format` fails when the source has the registry): exactly the pinned number of
+  cases, no duplicate ids, every input present
   with the byte count and sha256 its record states; the review-status counts (all
   `provisional` at 0.1) match the pin, so a change in oracle status is visible;
 - the driver exits 0, prints `result PASS`, and its per-profile rows (status, pass, fail,
@@ -37,20 +45,78 @@ def git(src, *args):
     return subprocess.run(["git", "-C", str(src), *args], capture_output=True, text=True, check=True).stdout.strip()
 
 
-def pinned_files(src):
-    out = ["manifests/cases.jsonl"]
-    for d in ("manifests/profiles", "manifests/span-conventions", "recipes/yaml"):
-        out += sorted(p.relative_to(src).as_posix() for p in (src / d).glob("*.json"))
+def structcorpus_layout(src):
+    """YAML inventory paths of a structcorpus source: (cases, profiles, span_conventions, registry).
+
+    With manifests/formats.json the registry must be formats/v1 with a yaml entry, and its
+    cases, profiles and span_conventions paths are used (relative, no empty, . or ..
+    segments, resolving inside src); any problem raises ValueError. Without the registry, the
+    legacy single-format paths. The same function is in every conformance script that reads
+    a source checkout; keep the copies identical.
+    """
+    reg = src / "manifests/formats.json"
+    if not reg.exists():
+        return src / "manifests/cases.jsonl", src / "manifests/profiles", src / "manifests/span-conventions", False
+    try:
+        doc = json.loads(reg.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ValueError(f"{reg}: {e}") from None
+    version = doc.get("schema_version") if isinstance(doc, dict) else None
+    if version != "formats/v1":
+        raise ValueError(f"{reg}: unsupported schema_version {json.dumps(version)}")
+    formats = doc.get("formats")
+    entry = formats.get("yaml") if isinstance(formats, dict) else None
+    if not isinstance(entry, dict):
+        raise ValueError(f"{reg}: no yaml format entry")
+    root = src.resolve()
+    out = []
+    for key in ("cases", "profiles", "span_conventions"):
+        rel = entry.get(key)
+        if not isinstance(rel, str):
+            raise ValueError(f"{reg}: yaml.{key} is missing or not a string")
+        if not rel or rel.startswith("/") or "\\" in rel or ":" in rel or any(p in ("", ".", "..") for p in rel.split("/")):
+            raise ValueError(f"{reg}: yaml.{key}: {rel!r} is not a normalized repository-relative path")
+        p = src / rel
+        if p.exists() and root not in p.resolve().parents:
+            raise ValueError(f"{reg}: yaml.{key}: {rel} resolves outside the source directory")
+        out.append(p)
+    return out[0], out[1], out[2], True
+
+
+def yaml_record(c, registry):
+    """True for a `"format": "yaml"` case record, False for another format. A record without
+    format is run from a legacy source and raises ValueError from a registry source."""
+    if "format" not in c:
+        if registry:
+            raise ValueError("no format")
+        return True
+    if not isinstance(c["format"], str):
+        raise ValueError(f"format {json.dumps(c['format'])} is not a string")
+    return c["format"] == "yaml"
+
+
+def pinned_files(src, layout):
+    cases, profiles, spans, registry = layout
+    out = ["manifests/formats.json"] if registry else []
+    out.append(cases.relative_to(src).as_posix())
+    for d in (profiles, spans, src / "recipes/yaml"):
+        out += sorted(p.relative_to(src).as_posix() for p in d.glob("*.json"))
     return out
 
 
 def observe(hyd, src, driver):
     """Everything the pin fixes, measured from the inputs; plus problems found on the way."""
     problems = []
+    try:
+        layout = structcorpus_layout(src)
+    except ValueError as e:
+        print("FAIL", e)
+        sys.exit(1)
+    registry = layout[3]
     obs = {"corpus_commit": git(src, "rev-parse", "HEAD")}
     if git(src, "status", "--porcelain", "--untracked-files=no"):
         problems.append("source checkout has local changes")
-    obs["files"] = {f: sha256(src / f) for f in pinned_files(src)}
+    obs["files"] = {f: sha256(src / f) for f in pinned_files(src, layout)}
     v = subprocess.run([sys.executable, "-I", str(src / "tools/corpus.py"), "verify", "--root", str(hyd)], capture_output=True, text=True)
     if v.returncode != 0:
         problems.append(f"corpus.py verify failed: {(v.stdout + v.stderr).strip()[-300:]}")
@@ -58,11 +124,22 @@ def observe(hyd, src, driver):
 
     ids = collections.Counter()
     status = collections.Counter()
-    for manifest, base in ((hyd / "cases.jsonl", hyd), (src / "manifests/cases.jsonl", src)):
+    other = collections.Counter()
+    for manifest, shard in ((hyd / "cases.jsonl", False), (layout[0], True)):
         for n, line in enumerate(open(manifest, encoding="utf-8"), 1):
             if not line.strip():
                 continue
             c = json.loads(line)
+            try:
+                run = yaml_record(c, registry)
+            except ValueError as e:
+                problems.append(f"{manifest}:{n}: {e}")
+                continue
+            if not run:
+                if shard:
+                    problems.append(f"{manifest}:{n}: {c['format']} record in the YAML case manifest")
+                other[c["format"]] += 1
+                continue
             ids[c["id"]] += 1
             status[c.get("review", {}).get("status", "missing")] += 1
             inp = c["input"]
@@ -82,6 +159,7 @@ def observe(hyd, src, driver):
         problems.append(f"duplicate case ids: {dups[:5]}")
     obs["cases"] = sum(ids.values())
     obs["review_status"] = dict(sorted(status.items()))
+    obs["other_formats"] = dict(sorted(other.items()))
 
     r = subprocess.run([str(driver), str(hyd), str(src), "--details", "50"], capture_output=True, text=True)
     lines = r.stdout.splitlines()
@@ -124,6 +202,7 @@ def main():
         "corpus_commit": obs["corpus_commit"],
         "cases": obs["cases"],
         "review_status": obs["review_status"],
+        "other_formats_skipped": obs["other_formats"],
         "expectations_run": ran,
         "rows": obs["rows"],
         "problems": problems,

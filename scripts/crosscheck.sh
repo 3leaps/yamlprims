@@ -6,7 +6,8 @@
 #   1. yamlprims-value/1 wire output (Encode / EncodeError)
 #   2. spec-v1.4 §11.4 wire round-trip (Rust wire -> Go DecodeWire -> Go Encode)
 #   3. plain JSON output (EncodePlain)
-# across conformance/vectors/cases.jsonl and structcorpus (when present).
+# across conformance/vectors/cases.jsonl and structcorpus (when present; YAML records,
+# located through manifests/formats.json when the checkout has the format registry).
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -30,6 +31,57 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+def structcorpus_layout(src):
+    """YAML inventory paths of a structcorpus source: (cases, profiles, span_conventions, registry).
+
+    With manifests/formats.json the registry must be formats/v1 with a yaml entry, and its
+    cases, profiles and span_conventions paths are used (relative, no empty, . or ..
+    segments, resolving inside src); any problem raises ValueError. Without the registry, the
+    legacy single-format paths. The same function is in every conformance script that reads
+    a source checkout; keep the copies identical.
+    """
+    reg = src / "manifests/formats.json"
+    if not reg.exists():
+        return src / "manifests/cases.jsonl", src / "manifests/profiles", src / "manifests/span-conventions", False
+    try:
+        doc = json.loads(reg.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ValueError(f"{reg}: {e}") from None
+    version = doc.get("schema_version") if isinstance(doc, dict) else None
+    if version != "formats/v1":
+        raise ValueError(f"{reg}: unsupported schema_version {json.dumps(version)}")
+    formats = doc.get("formats")
+    entry = formats.get("yaml") if isinstance(formats, dict) else None
+    if not isinstance(entry, dict):
+        raise ValueError(f"{reg}: no yaml format entry")
+    root = src.resolve()
+    out = []
+    for key in ("cases", "profiles", "span_conventions"):
+        rel = entry.get(key)
+        if not isinstance(rel, str):
+            raise ValueError(f"{reg}: yaml.{key} is missing or not a string")
+        if not rel or rel.startswith("/") or "\\" in rel or ":" in rel or any(p in ("", ".", "..") for p in rel.split("/")):
+            raise ValueError(f"{reg}: yaml.{key}: {rel!r} is not a normalized repository-relative path")
+        p = src / rel
+        if p.exists() and root not in p.resolve().parents:
+            raise ValueError(f"{reg}: yaml.{key}: {rel} resolves outside the source directory")
+        out.append(p)
+    return out[0], out[1], out[2], True
+
+
+def yaml_record(c, registry):
+    """True for a `"format": "yaml"` case record, False for another format. A record without
+    format is run from a legacy source and raises ValueError from a registry source."""
+    if "format" not in c:
+        if registry:
+            raise ValueError("no format")
+        return True
+    if not isinstance(c["format"], str):
+        raise ValueError(f"format {json.dumps(c['format'])} is not a string")
+    return c["format"] == "yaml"
+
+
 root, tmp, rust_driver, go_driver, corpus_root = (Path(p) for p in sys.argv[1:])
 
 records = []
@@ -40,7 +92,12 @@ for line in vector_file.read_text(encoding="utf-8").split("\n"):
 vector_count = len(records)
 
 corpus_count = 0
-if (corpus_root / "manifests" / "cases.jsonl").is_file() and (corpus_root / "tools" / "corpus.py").is_file():
+has_manifest = (corpus_root / "manifests" / "formats.json").is_file() or (corpus_root / "manifests" / "cases.jsonl").is_file()
+if has_manifest and (corpus_root / "tools" / "corpus.py").is_file():
+    try:
+        cases_file, profiles_dir, _, registry = structcorpus_layout(corpus_root)
+    except ValueError as e:
+        sys.exit(f"crosscheck error: structcorpus layout: {e}")
     hyd_dir = tmp / "hydrated-smoke"
     subprocess.run(
         [sys.executable, "-I", str(corpus_root / "tools" / "corpus.py"), "hydrate", "--tier", "smoke", "--output", str(hyd_dir)],
@@ -48,15 +105,20 @@ if (corpus_root / "manifests" / "cases.jsonl").is_file() and (corpus_root / "too
         stdout=subprocess.DEVNULL,
     )
     profiles = {}
-    for pf in (corpus_root / "manifests" / "profiles").glob("*.json"):
+    for pf in profiles_dir.glob("*.json"):
         pdoc = json.loads(pf.read_text(encoding="utf-8"))
         profiles[(pdoc["id"], pdoc["revision"])] = pdoc
 
-    for manifest in (hyd_dir / "cases.jsonl", corpus_root / "manifests" / "cases.jsonl"):
-        for line in manifest.read_text(encoding="utf-8").split("\n"):
+    for manifest in (hyd_dir / "cases.jsonl", cases_file):
+        for n, line in enumerate(manifest.read_text(encoding="utf-8").split("\n"), 1):
             if not line.strip():
                 continue
             c = json.loads(line)
+            try:
+                if not yaml_record(c, registry):
+                    continue
+            except ValueError as e:
+                sys.exit(f"crosscheck error: {manifest}:{n}: {e}")
             cid = c["id"]
             inp = c["input"]
             if "path" in inp:
