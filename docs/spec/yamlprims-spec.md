@@ -1,10 +1,10 @@
 # yamlprims specification
 
-**Revision 1.6** · Status: Unreleased draft · License: CC0-1.0 (specification text)
+**Revision 1.7** · Status: Unreleased draft · License: CC0-1.0 (specification text)
 
-The tagged draft baseline is [revision 1.5](https://github.com/3leaps/yamlprims/blob/spec-v1.5/docs/spec/yamlprims-spec.md).
+The tagged draft baseline is [revision 1.6](https://github.com/3leaps/yamlprims/blob/spec-v1.6/docs/spec/yamlprims-spec.md).
 This draft contains the changes and decision status listed in §16. Existing
-profiles pinned to revisions 1.0 through 1.5 keep their original expectations;
+profiles pinned to revisions 1.0 through 1.6 keep their original expectations;
 they do not adopt this draft implicitly.
 
 **Specification release.** This is a proposed target contract, not a claim that
@@ -21,6 +21,11 @@ Revision 1.6 adds bounded reader/writer, byte-slice, and plain-host ergonomics
 across all four bindings (§8.1–8.2, §10.1–10.2, §11.2–11.3, §11.5), the YAML 1.1
 to YAML 1.2.2 Core migration lint and `yamlprims-lint/1` wire format (§10.3,
 §11.7), and the frozen `yamlprims-cli` command-line contract (§10.4).
+Revision 1.7 makes loading refuse a resolved tag identity that is neither a
+local tag nor a global tag URI (including verbatim `!<!>`), pins named tag
+handle spelling, and requires separation between a `%TAG` handle and its
+prefix, all during bounded source validation in event order (§3, §4.4, §7.1,
+§10.2, §11.1).
 
 This document is the normative contract for yamlprims: an owned YAML 1.2 data
 layer over a maintained, safe-Rust event parser. Its key words MUST, MUST NOT,
@@ -316,15 +321,43 @@ affect resolution. A major version other than 1 is an
   tags, verbatim `!<…>` tags, and `%TAG` expansions — produce
   `Tagged { tag, value }`. For a scalar, the inner value is **String(raw text)
   without resolution**: `!custom 42` holds String "42". For a collection, the
-  children resolve normally. Nothing is decoded. Note that while the scanner's
-  lexical grammar (`[86] ns-global-tag-prefix`, `[91] c-verbatim-tag`) accepts
-  any `ns-uri-char+` sequence when `unknown_tags = Preserve`, YAML 1.2.2 §6.8.2
-  and §6.9.1 require non-local tags to be global tag URIs (`scheme:…`);
-  `Tag::try_new` and `emit*` (§10.2) enforce that YAML 1.2.2 §6.8.2 / §6.9.1
-  URI rule so every loaded document whose retained tags are valid YAML 1.2.2
-  local (`!…`) or global (`scheme:…`) tags (within `EmitLimits`) is guaranteed
-  to succeed under `emit*`, while scheme-less non-local verbatim tags (such as
-  YAML 1.2.2 Example 6.25 `!<$:?>`) are rejected by `emit*` with `InvalidOptions`.
+  children resolve normally. Nothing is decoded.
+- **Resolved tag identity (revision 1.7).** YAML 1.2.2 §6.9.1 requires every
+  verbatim tag and every expanded shorthand tag to be a local tag or a valid
+  URI, and §6.8.2.2 requires a global tag prefix to yield one. The lexical
+  productions do not constrain a URI scheme: YAML 1.2.2 `[95]
+  ns-global-tag-prefix` is `ns-tag-char ns-uri-char*` and `[98]
+  c-verbatim-tag` wraps `ns-uri-char+`, so loading checks the resolved identity instead:
+  after the existing percent decoding (no second decoding, no normalization),
+  every node tag other than the bare non-specific `!` token MUST resolve to a local tag
+  (`'!'` followed by at least one character) or to an identity that starts
+  with an RFC 3986 §3.1 scheme (`[A-Za-z][A-Za-z0-9+.-]*`) followed by `':'`,
+  with zero or more further characters (an empty scheme-specific part such as
+  `x:` is valid). Core Schema tags and `!!merge` satisfy this rule and keep
+  their existing resolution paths. Any other identity — for example YAML 1.2.2
+  Example 6.25 `!<$:?>` and `!<!>`, a verbatim `!<0>`, or a `%TAG` prefix whose expansion
+  such as `00` + `0` lacks a scheme — is `Syntax(InvalidGlobalTagCharacter)`
+  at the tag's `tag_start`, raised during bounded source validation (§7.1),
+  before construction and before the `unknown_tags` policy. A `%TAG` prefix is
+  validated as a prefix, not as a complete URI: a prefix such as `ta` is valid
+  when its expansion (for example `ta` + `g:x`) is, and an unused prefix is
+  never checked against this rule. The non-specific exception covers only the
+  bare `!` token: a verbatim `!<!>`, whose identity is `!` alone, is this
+  syntax error under both `unknown_tags` policies and on scalar and collection
+  nodes, while a bare `!` keeps its §4.4 behavior. This replaces revision 1.6's loose loading
+  of scheme-less identities, which `emit*` and `decode_wire` already refused.
+  Because `Tag::try_new`, `emit*` (§10.2) and `decode_wire` (§11.1) apply the
+  same identity rule, a retained tag identity produced by `load*` is never
+  refused by them for its identity.
+- **Named tag handles (revision 1.7).** A named handle is `!`, one or more
+  characters of `[0-9A-Za-z-]` (YAML 1.2.2 productions [38] `ns-word-char`
+  and [92] `c-named-tag-handle`), and `!`. A `%TAG` directive whose named
+  handle contains any other character, such as `_`, is
+  `Syntax(ExpectedTagDirectiveBang)` at the directive's start, whether or not
+  the handle is used (§7.1). A tag that uses such a handle is
+  `Syntax(InvalidTagTerminator)` at its `tag_start`, never `UnknownTag` or a
+  retained spelling. Underscores stay valid in primary local tags such as
+  `!a_b` (not a named handle), in tag suffixes and in URIs.
 - `unknown_tags: Preserve (default) | Reject`. `Reject` raises `UnknownTag` at
   `tag_start` for any non-core, non-`!` tag.
 
@@ -901,6 +934,37 @@ preflights remain their own operations; this is not a global ordering of every
    yield an error before an earlier collection start becomes available; this
    is not a globally earliest-byte ordering. A source-depth safety stop MUST
    NOT be relabeled as malformed YAML.
+   Source validation also applies three revision 1.7 grammar rules, each at
+   its own position in yielded event/error order; none adds a separate pass
+   or reports a failure that event order has not reached. (a) At each valid
+   scalar, sequence-start or mapping-start event, the node's tag is checked
+   against §4.4 (resolved identity, including verbatim `!<!>`). For a
+   collection, the existing source-depth test at that event runs first and
+   the tag check second; neither descends or materializes, and a depth
+   rejection is never relabeled as syntax. A failure is
+   `Syntax(InvalidGlobalTagCharacter)` at the tag's `tag_start`. Under
+   `unknown_tags = Reject`, such an identity is this syntax error, while a
+   valid non-core tag is still `UnknownTag` during construction. (b) When a
+   tag uses a malformed named handle (§4.4), the failure is
+   `Syntax(InvalidTagTerminator)` at its `tag_start`, at the node event's
+   position and before the existing undeclared-handle failure. (c) A `%TAG`
+   directive of a document prologue is checked where the parser processes it,
+   before that document's start event and after every earlier event: after
+   the existing duplicate-handle check, a malformed named handle is
+   `Syntax(ExpectedTagDirectiveBang)` at the directive start, and then a
+   prefix that immediately follows the handle, with no space or tab between
+   them (YAML 1.2.2 productions [88] and [66]), is
+   `Syntax(ExpectedWhitespace)` at the first prefix character. Both apply
+   whether or not the handle is used. Directives are processed in source
+   order, so an earlier directive's failure wins. A failure while scanning
+   the directive itself (its name, handle grammar, byte budget, prefix or
+   terminator) keeps its existing scanner diagnostic, as does a directive
+   reached outside a prologue (`MissingDocumentEndBeforeDirective`). A
+   failure already reached in an earlier event, including tag identity and
+   source depth in an earlier document, wins over a later prologue, and
+   nothing after the first failure is reported. A space, tab, line break, NUL
+   or the end of input directly after the handle keeps the existing prefix
+   diagnostics.
 5. Only if source validation succeeds may resolution, structure, tag, document
    and materialization-budget failures determine the result. The first failing
    construction operation in event order wins, using the operation-specific admission order
@@ -1611,7 +1675,8 @@ with `Site::NotSource { last_known: None }`.
   (within `EmitLimits` and satisfying §3's `yaml_version`, `Tag`, and `Tagged`
   invariants — which includes every document produced by `load*` whose retained
   non-core tags are valid YAML 1.2.2 §6.8.2 / §6.9.1 local `!…` or global
-  `scheme:…` tags within `EmitLimits`), loading the emitted UTF-8 text under
+  `scheme:…` tags within `EmitLimits`; from revision 1.7, `load*` refuses any
+  other resolved tag identity during source validation (§4.4, §7.1)), loading the emitted UTF-8 text under
   `reload_opts` with `UnknownTags::Preserve`, `MergeKeys::Reject`, and
   `reload_opts.limits` satisfying
   `max_input_bytes >= emitted.len()`,
@@ -2076,7 +2141,11 @@ against the options supplied to this encoding call:
   [ADR-0004](../decisions/ADR-0004-profile-b-go-twin-and-wasm-pyo3-bindings.md)
   (and in `decode_wire`, an unknown `syntax_kind` code outside those 81 codes is
   rejected as a malformed wire error envelope). An unrepresentable kind/detail
-  pair in `encode_error` is rejected as `Internal`.
+  pair in `encode_error` is rejected as `Internal`. Revision 1.7 extends the
+  meaning of `invalid_global_tag_character` to include a resolved tag identity
+  that is neither a local tag nor a global tag URI (§4.4, §7.1), in addition
+  to a disallowed lexical character; the 81-code vocabulary and wire version
+  `1` are unchanged.
 
 Every such rejection has `Site::NotSource { last_known: None }`, returns no JSON
 and is not recursively encoded. Limit errors identify the violated limit and
@@ -2145,7 +2214,10 @@ any `NaN` bit pattern normalizes to `0x7ff8000000000000`. Adding a field or kind
 requires a new `version`. Encoding is fallible: exceeding `max_output_bytes` is
 `OutputLimitExceeded`, checked while writing.
 
-**Round trip.** For document envelopes produced by `encode(&docs, &enc_opts)`,
+**Round trip.** From revision 1.7, every tag identity retained by `load*`
+satisfies the identity rule that `decode_wire` applies (§4.4), so a document
+envelope encoded from loaded documents is not refused for a tag identity.
+For document envelopes produced by `encode(&docs, &enc_opts)`,
 `decode_wire` followed by `encode` is byte-identical (including `tag_start`,
 with NaN payloads canonicalized) whenever `dec_opts.limits.max_input_bytes`
 accommodates the wire JSON length and `dec_opts.limits` match or exceed the
@@ -2896,6 +2968,20 @@ golden subset. Oracle acceptance is separate from specification acceptance.
   end-of-flags handling, single non-empty document enforcement in `dump --plain`
   (exiting `1` on zero-document and multi-document streams), whole-payload
   buffered `stdout` writes, and exit codes `0` / `1` / `2`.
+- **Revision 1.7 tag identity, named handles and directive separation.**
+  Exercise both refused tag routes (a verbatim tag and a `%TAG` expansion
+  without a scheme), verbatim `!<!>` against bare `!` under both policies,
+  named-handle spelling in used and unused directives and at a use site
+  (with underscores kept in primary local tags, suffixes and URIs),
+  scalar and collection nodes, valid local, global, empty scheme-specific and
+  partial-prefix tags, percent-escaped identities, Core Schema and
+  non-specific tags, `unknown_tags` `Preserve` and `Reject`, precedence against
+  a preceding source-depth failure and later syntax, source byte/line/column
+  with a BOM, CRLF and multibyte text, a `%TAG` prefix that immediately follows
+  its handle (used and unused) against space and tab separation, event-order
+  interleaving of directive failures with earlier and later parser, tag and
+  depth failures, and `encode` → `decode_wire` → `encode` closure for every successful load, in
+  both cores and through the bindings.
 
 ## 14. Open questions
 
@@ -2914,17 +3000,32 @@ records in the yamlprims repository under `docs/decisions/` (`ADR-0001` through
 
 ## 16. Errata
 
-Tagged revisions 1.0 through 1.5 remain preserved at their `spec-v1.x` tags.
+Tagged revisions 1.0 through 1.6 remain preserved at their `spec-v1.x` tags.
 Erratum numbering belongs to this public specification and restarts per revision;
-cross-document references use revision-qualified identifiers such as `1.6/E-1`.
+cross-document references use revision-qualified identifiers such as `1.7/E-1`.
 Specification publication and decision acceptance do not establish implementation
 qualification.
 
-### Revision 1.6 — unreleased draft
+### Revision 1.7 — unreleased draft
 
 These proposed contract updates require maintainer acceptance and corresponding
-conformance qualification. Historical tags (`spec-v1.0` through `spec-v1.5`) and
+conformance qualification. Historical tags (`spec-v1.0` through `spec-v1.6`) and
 their pinned profiles remain unchanged.
+
+| ID | Sections | Change from revision 1.6 |
+| --- | --- | --- |
+| E-1 | §3, §4.4, §7.1, §10.2, §11.1 | Refuse, during bounded source validation, a resolved node tag identity other than the bare non-specific `!` token (so including verbatim `!<!>`) that is neither a local tag (`!` plus at least one character) nor an identity starting with an RFC 3986 §3.1 scheme and `:` (YAML 1.2.2 §6.8.2.2, §6.9.1), as `Syntax(InvalidGlobalTagCharacter)` at `tag_start`, before construction and the `unknown_tags` policy; validate a `%TAG` prefix by its expansions on use; extend the documented meaning of `invalid_global_tag_character` accordingly without changing the 81-code vocabulary or wire version `1`. Revision 1.6 loaded such identities, which `emit*` and `decode_wire` refused. |
+| E-2 | §7.1 | Require a space or tab between a `%TAG` handle and its prefix (YAML 1.2.2 productions [88], [66]); a prefix that immediately follows the handle is `Syntax(ExpectedWhitespace)` at the first prefix character, including for an unused directive, checked where the parser processes the prologue directive in event order. |
+| E-3 | §4.4, §7.1 | Pin named tag handles to `!` + `[0-9A-Za-z-]+` + `!` (YAML 1.2.2 productions [38], [92]): a `%TAG` directive with any other named handle is `Syntax(ExpectedTagDirectiveBang)` at the directive start, used or not, and a tag using one is `Syntax(InvalidTagTerminator)` at `tag_start`. Underscores remain valid in primary local tags, suffixes and URIs. |
+| E-4 | §4.4 | Correct the YAML 1.2.2 production numbers cited for the global tag prefix and the verbatim tag to `[95] ns-global-tag-prefix` and `[98] c-verbatim-tag` (revision 1.6 cited `[86]` and `[91]`). |
+
+Wire grammar version 1 (`yamlprims-value/1`), the 81-code `SyntaxKind`
+vocabulary and the §6 subtree-weight formula are unchanged.
+
+### Revision 1.6 — tagged draft specification
+
+The following updates were incorporated in revision 1.6. Its immutable tag
+(`spec-v1.6`) and pinned profiles remain unchanged.
 
 | ID | Sections | Change from revision 1.5 |
 | --- | --- | --- |
