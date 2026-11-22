@@ -1,6 +1,16 @@
 // Command structcorpus-driver is the Go consumer driver for structcorpus 0.1
 // (`yaml-value/1`, typed, and node-span expectations) and the `--stdin` wire/plain
 // harness used by `scripts/crosscheck.sh`.
+//
+// Source layout: when SOURCE_DIR/manifests/formats.json exists it must be a `formats/v1`
+// registry with a `yaml` entry, and the YAML case shard, profile directory and
+// span-convention directory are the entry's `cases`, `profiles` and `span_conventions`
+// (repository-relative paths; absolute paths, `.`/`..` segments and paths resolving outside
+// SOURCE_DIR are refused). Without the registry the legacy paths `manifests/cases.jsonl`,
+// `manifests/profiles/` and `manifests/span-conventions/` are read. Only case records with
+// `"format": "yaml"` are run, from the hydrated manifest and the source shard alike; records
+// of other formats are skipped and counted. A record without `format` is accepted from a
+// legacy source and is a problem with a registry source.
 package main
 
 import (
@@ -18,6 +28,119 @@ import (
 
 	"github.com/3leaps/yamlprims/yaml"
 )
+
+// sourceLayout is where a structcorpus source keeps the YAML cases, profiles and span
+// conventions.
+type sourceLayout struct {
+	cases           string
+	profiles        string
+	spanConventions string
+	// registry is true when the paths came from manifests/formats.json.
+	registry bool
+}
+
+const formatsRel = "manifests/formats.json"
+
+// resolveLayout resolves the YAML inventory paths of src: from the `formats/v1` registry
+// when manifests/formats.json exists (failing closed on any problem), else the legacy paths.
+func resolveLayout(src string) (sourceLayout, error) {
+	reg := filepath.Join(src, filepath.FromSlash(formatsRel))
+	if _, err := os.Lstat(reg); err != nil {
+		if !os.IsNotExist(err) {
+			return sourceLayout{}, fmt.Errorf("%s: %v", reg, err)
+		}
+		return sourceLayout{
+			cases:           filepath.Join(src, "manifests", "cases.jsonl"),
+			profiles:        filepath.Join(src, "manifests", "profiles"),
+			spanConventions: filepath.Join(src, "manifests", "span-conventions"),
+		}, nil
+	}
+	raw, err := os.ReadFile(reg)
+	if err != nil {
+		return sourceLayout{}, fmt.Errorf("%s: %v", reg, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return sourceLayout{}, fmt.Errorf("%s: %v", reg, err)
+	}
+	if v, ok := doc["schema_version"].(string); !ok || v != "formats/v1" {
+		return sourceLayout{}, fmt.Errorf("%s: unsupported schema_version %s", reg, mustJSON(doc["schema_version"]))
+	}
+	formats, _ := doc["formats"].(map[string]any)
+	entry, ok := formats["yaml"].(map[string]any)
+	if !ok {
+		return sourceLayout{}, fmt.Errorf("%s: no yaml format entry", reg)
+	}
+	path := func(key string) (string, error) {
+		rel, ok := entry[key].(string)
+		if !ok {
+			return "", fmt.Errorf("%s: yaml.%s is missing or not a string", reg, key)
+		}
+		full, err := registryPath(src, rel)
+		if err != nil {
+			return "", fmt.Errorf("%s: yaml.%s: %v", reg, key, err)
+		}
+		return full, nil
+	}
+	l := sourceLayout{registry: true}
+	if l.cases, err = path("cases"); err != nil {
+		return sourceLayout{}, err
+	}
+	if l.profiles, err = path("profiles"); err != nil {
+		return sourceLayout{}, err
+	}
+	if l.spanConventions, err = path("span_conventions"); err != nil {
+		return sourceLayout{}, err
+	}
+	return l, nil
+}
+
+// registryPath checks a registry path: relative, `/`-separated, no empty, `.` or `..`
+// segment, and (when it exists) resolving inside src.
+func registryPath(src, rel string) (string, error) {
+	bad := rel == "" || strings.HasPrefix(rel, "/") || strings.ContainsAny(rel, "\\:")
+	for _, part := range strings.Split(rel, "/") {
+		if part == "" || part == "." || part == ".." {
+			bad = true
+		}
+	}
+	if bad {
+		return "", fmt.Errorf("%q is not a normalized repository-relative path", rel)
+	}
+	full := filepath.Join(src, filepath.FromSlash(rel))
+	if _, err := os.Stat(full); err == nil {
+		root, err := filepath.EvalSymlinks(src)
+		if err != nil {
+			return "", err
+		}
+		real, err := filepath.EvalSymlinks(full)
+		if err != nil {
+			return "", err
+		}
+		if r, err := filepath.Rel(root, real); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("%s resolves outside the source directory", rel)
+		}
+	}
+	return full, nil
+}
+
+// yamlRecord reports whether a case record is run: true for "format": "yaml", false for
+// another format; a record without format is run from a legacy source and is an error from
+// a registry source.
+func yamlRecord(caseObj map[string]any, registry bool) (bool, error) {
+	v, present := caseObj["format"]
+	if !present {
+		if registry {
+			return false, fmt.Errorf("no format")
+		}
+		return true, nil
+	}
+	f, ok := v.(string)
+	if !ok {
+		return false, fmt.Errorf("format %s is not a string", mustJSON(v))
+	}
+	return f == "yaml", nil
+}
 
 type profileSpec struct {
 	id       string
@@ -165,13 +288,20 @@ func main() {
 	var conventionErr error
 	var withEvents, eventsOnly, eventLocations int
 
+	lay, err := resolveLayout(src)
+	if err != nil {
+		fmt.Printf("problem\t%v\n", err)
+		fmt.Printf("result\tFAIL\t1 problems\n")
+		os.Exit(1)
+	}
+	otherFormats := 0
 	var manifests []string
 	if caseFile != "" {
 		manifests = []string{caseFile}
 	} else {
 		manifests = []string{
 			filepath.Join(hyd, "cases.jsonl"),
-			filepath.Join(src, "manifests", "cases.jsonl"),
+			lay.cases,
 		}
 	}
 
@@ -198,6 +328,13 @@ func main() {
 		id, ok := asString(caseObj["id"])
 		if !ok {
 			problems = append(problems, fmt.Sprintf("case line %d: no id", n+1))
+			continue
+		}
+		if run, err := yamlRecord(caseObj, lay.registry); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", id, err))
+			continue
+		} else if !run {
+			otherFormats++
 			continue
 		}
 		cases++
@@ -245,7 +382,7 @@ func main() {
 				}
 				lim, seen := checkedProfiles[pr]
 				if !seen {
-					l, err := checkProfileFile(src, *p)
+					l, err := checkProfileFile(lay.profiles, *p)
 					if err != nil {
 						problems = append(problems, err.Error())
 						checkedProfiles[pr] = nil
@@ -323,7 +460,7 @@ func main() {
 					}
 					lim, seen := checkedProfiles[pr]
 					if !seen {
-						l, err := checkProfileFile(src, *p)
+						l, err := checkProfileFile(lay.profiles, *p)
 						if err != nil {
 							problems = append(problems, err.Error())
 							checkedProfiles[pr] = nil
@@ -391,7 +528,7 @@ func main() {
 				}
 				if !conventionChecked {
 					conventionChecked = true
-					conventionErr = checkNodeConvention(src)
+					conventionErr = checkNodeConvention(lay.spanConventions)
 				}
 				if conventionErr != nil {
 					problems = append(problems, fmt.Sprintf("%s: %v", id, conventionErr))
@@ -399,7 +536,7 @@ func main() {
 				}
 				lim, seen := checkedProfiles[pr]
 				if !seen {
-					l, err := checkProfileFile(src, *p)
+					l, err := checkProfileFile(lay.profiles, *p)
 					if err != nil {
 						problems = append(problems, err.Error())
 						checkedProfiles[pr] = nil
@@ -474,6 +611,9 @@ func main() {
 	}
 	fmt.Printf("not-compared\tevents\t%d cases\t%d with no other expectation\t%d with event locations\n",
 		withEvents, eventsOnly, eventLocations)
+	if otherFormats > 0 {
+		fmt.Printf("not-compared\tformats\t%d records of other formats\n", otherFormats)
+	}
 
 	limitFails := len(failures)
 	if limitFails > details {
@@ -709,8 +849,8 @@ func asUint64(v any) (uint64, bool) {
 	return 0, false
 }
 
-func checkProfileFile(src string, p profileSpec) (yaml.Limits, error) {
-	f := filepath.Join(src, "manifests", "profiles", fmt.Sprintf("%s.r%d.json", p.id, p.revision))
+func checkProfileFile(dir string, p profileSpec) (yaml.Limits, error) {
+	f := filepath.Join(dir, fmt.Sprintf("%s.r%d.json", p.id, p.revision))
 	raw, err := os.ReadFile(f)
 	if err != nil {
 		return yaml.Limits{}, fmt.Errorf("%s: %v", f, err)
@@ -794,8 +934,8 @@ func parseLimits(raw any) (yaml.Limits, error) {
 	return out, nil
 }
 
-func checkNodeConvention(src string) error {
-	f := filepath.Join(src, "manifests", "span-conventions", "yamlprims-node.r1.json")
+func checkNodeConvention(dir string) error {
+	f := filepath.Join(dir, "yamlprims-node.r1.json")
 	raw, err := os.ReadFile(f)
 	if err != nil {
 		return fmt.Errorf("%s: %v", f, err)
