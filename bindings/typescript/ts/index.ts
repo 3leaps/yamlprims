@@ -3148,8 +3148,10 @@ export function decodeWire(
         }
         const major = expectInt(yvVal.items[0], "yaml_version.major");
         const minor = expectInt(yvVal.items[1], "yaml_version.minor");
-        if (major !== 1 || minor > 999_999_999) {
-          throw wireRefusal("unsupported yaml_version in wire Document");
+        // The wire carries u32 metadata (§11.1); Document constructor and emit
+        // rules (major 1, minor <= 999,999,999) are not decoding rules.
+        if (major > 0xffffffff || minor > 0xffffffff) {
+          throw wireRefusal("yaml_version component out of u32 range");
         }
         yamlVersion = [major, minor];
       }

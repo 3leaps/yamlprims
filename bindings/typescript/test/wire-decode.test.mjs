@@ -20,7 +20,7 @@ import {
 
 const casesPath = process.env.YAMLPRIMS_WIRE_DECODE_CASES_FILE;
 assert.ok(casesPath, "YAMLPRIMS_WIRE_DECODE_CASES_FILE is required");
-const EXPECTED_CASES = 31;
+const EXPECTED_CASES = 35;
 const REFUSAL = "invalid yamlprims wire payload";
 const enc = new TextEncoder();
 
