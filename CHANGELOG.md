@@ -8,6 +8,10 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+### Fixed
+
+- Pure Go: loading a block scalar whose content is indented 14 or more columns no longer fails to terminate when the input ends inside that indentation. Six conformance vectors cover the indentation boundary and chomping (`194` in-repo vectors).
+
 ### Changed
 
 - The workflow digest and permission checkers run the published `yamlprims` v0.3.0 CLI: `config/yamlprims-cli.txt` pins the v0.3.0 release archives and binary digests, and the minimum version is now 0.3.0.

@@ -1632,23 +1632,10 @@ func (s *scanner) scanBlockScalarContentLine(out *[]byte) {
 
 func (s *scanner) skipBlockScalarIndent(indent int, breaks *[]byte) {
 	for {
-		maxLen := s.input.bufmaxlen()
-		if indent < maxLen-2 {
-			s.input.lookahead(maxLen)
-			for s.mark.col < indent && s.input.peek() == ' ' {
-				s.skipBlank()
-			}
-		} else {
-			for {
-				s.input.lookahead(maxLen)
-				for !s.input.bufIsEmpty() && s.mark.col < indent && s.input.peek() == ' ' {
-					s.skipBlank()
-				}
-				if s.mark.col == indent || (!s.input.bufIsEmpty() && s.input.peek() != ' ') {
-					break
-				}
-			}
-			s.input.lookahead(2)
+		// The whole input is in memory, so every indentation width takes the same
+		// path. peek returns 0 at end of input, which ends the run of spaces.
+		for s.mark.col < indent && s.input.peek() == ' ' {
+			s.skipBlank()
 		}
 		if s.input.nextIsBreak() {
 			s.readBreak(breaks)
