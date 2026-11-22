@@ -1498,8 +1498,11 @@ export function createTag(uri: string, handle = "", suffix?: string): Tag {
   assertWellFormedUnicode(uri, "Tag.uri");
   assertWellFormedUnicode(handle, "Tag.handle");
   assertWellFormedUnicode(actualSuffix, "Tag.suffix");
-  if (!isValidNonCoreTagUri(uri) || !isConsistentTagSpelling(uri, handle, actualSuffix)) {
-    throw invalidOptionsError(`invalid Tag (${uri}, handle=${handle}, suffix=${actualSuffix})`);
+  if (!isValidNonCoreTagUri(uri)) {
+    throw invalidOptionsError("tag URI must be a non-empty local (!name) or RFC 3986 global non-core URI");
+  }
+  if (!isConsistentTagSpelling(uri, handle, actualSuffix)) {
+    throw invalidOptionsError("tag handle and suffix are inconsistent with tag URI");
   }
   return { uri, handle, suffix: actualSuffix };
 }
@@ -1519,14 +1522,14 @@ export function createTaggedNode(
       throw notSourceError(
         "tag_kind_mismatch",
         {},
-        "tag:yaml.org,2002:merge may only wrap a String node",
+        "tagged value inner kind is not permitted for this tag",
       );
     }
   } else if (value.kind !== "string" && value.kind !== "sequence" && value.kind !== "mapping") {
     throw notSourceError(
       "tag_kind_mismatch",
       {},
-      `Tagged node must wrap string, sequence, or mapping (found ${value.kind})`,
+      "tagged value inner kind is not permitted for this tag",
     );
   }
   return {
@@ -1565,7 +1568,7 @@ export function createDocument(
       throw notSourceError(
         "unsupported_yaml_version",
         {},
-        `unsupported YAML directive version: ${JSON.stringify(yamlVersion)}`,
+        "unsupported YAML version",
       );
     }
     return { yamlVersion: [yamlVersion[0], yamlVersion[1]], explicitStart, root };

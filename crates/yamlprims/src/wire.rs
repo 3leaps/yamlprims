@@ -708,8 +708,15 @@ fn wire_limit_err(limit: LimitKind, configured: usize) -> Error {
     )
 }
 
-fn wire_internal_err(msg: impl std::fmt::Display) -> Error {
-    Error::not_source(ErrorKind::Internal, None, msg)
+/// Public message for every malformed-payload refusal raised by the wire
+/// decoders (spec §11.1). Identical in every binding; the specific reason is
+/// kept, bounded, in `engine_detail`, which is not serialized.
+pub(crate) const WIRE_PAYLOAD_REFUSAL: &str = "invalid yamlprims wire payload";
+
+fn wire_internal_err(detail: impl std::fmt::Display) -> Error {
+    let mut e = Error::not_source(ErrorKind::Internal, None, WIRE_PAYLOAD_REFUSAL);
+    e.engine_detail = Some(crate::error::bounded(detail, crate::error::MAX_MESSAGE));
+    e
 }
 
 fn parse_canonical_wire_int(s: &str) -> Option<Integer> {

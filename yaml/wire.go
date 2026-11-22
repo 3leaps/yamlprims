@@ -1231,7 +1231,7 @@ func DecodeWire(text string, opts ...Options) (WireEnvelope, *Error) {
 		}
 	}
 	if len(text) > o.Limits.MaxInputBytes {
-		return WireEnvelope{}, notSourceLimit(LimitMaxInputBytes, o.Limits.MaxInputBytes, "wire input exceeds max_input_bytes")
+		return WireEnvelope{}, wireLimitErr(LimitMaxInputBytes, o.Limits.MaxInputBytes)
 	}
 	if !utf8.ValidString(text) {
 		return WireEnvelope{}, errInvalidUtf8(Location{ByteOffset: 0, Line: 1, Column: 1}, nil)
@@ -1255,12 +1255,32 @@ type wireParser struct {
 	ownedBytes uint64
 }
 
-func (p *wireParser) fail(msg string) *Error {
-	return errInternal("wire decode error: " + msg)
+// wirePayloadRefusal is the public message for every malformed-payload
+// refusal raised by the wire decoder (spec §11.1). It is identical in every
+// binding; the specific reason is kept, bounded, in EngineDetail, which is not
+// serialized.
+const wirePayloadRefusal = "invalid yamlprims wire payload"
+
+func (p *wireParser) fail(detail string) *Error {
+	err := newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, wirePayloadRefusal)
+	err.engineDetail = boundedString(detail, MaxMessageBytes)
+	return err
+}
+
+// failv is fail for a reason that quotes payload text; the payload part is
+// bounded before it is concatenated.
+func (p *wireParser) failv(prefix, value string) *Error {
+	return p.fail(prefix + boundedString(value, MaxMessageBytes-len(prefix)))
 }
 
 func (p *wireParser) limitErr(kind LimitKind, configured int) *Error {
-	return notSourceLimit(kind, configured, "wire decode exceeded resource limit")
+	return wireLimitErr(kind, configured)
+}
+
+// wireLimitErr is the wire decoder's LimitExceeded error; the message matches
+// the Rust core byte for byte.
+func wireLimitErr(kind LimitKind, configured int) *Error {
+	return notSourceLimit(kind, configured, fmt.Sprintf("wire payload exceeds %s (%d)", kind.FieldName(), configured))
 }
 
 func (p *wireParser) chargeOwnedBytes(add uint64) *Error {
@@ -1562,7 +1582,7 @@ func (p *wireParser) parseEnvelope() (WireEnvelope, *Error) {
 			return WireEnvelope{}, err
 		}
 		if seen[key] {
-			return WireEnvelope{}, p.fail("duplicate envelope member: " + key)
+			return WireEnvelope{}, p.failv("duplicate envelope member: ", key)
 		}
 		seen[key] = true
 		if err := p.expectByte(':'); err != nil {
@@ -1575,7 +1595,7 @@ func (p *wireParser) parseEnvelope() (WireEnvelope, *Error) {
 				return WireEnvelope{}, err
 			}
 			if f != "yamlprims-value" {
-				return WireEnvelope{}, p.fail("unsupported wire format: " + f)
+				return WireEnvelope{}, p.failv("unsupported wire format: ", f)
 			}
 			hasFormat = true
 		case "version":
@@ -1608,7 +1628,7 @@ func (p *wireParser) parseEnvelope() (WireEnvelope, *Error) {
 			wireErr = e
 			hasErr = true
 		default:
-			return WireEnvelope{}, p.fail("unknown envelope field: " + key)
+			return WireEnvelope{}, p.failv("unknown envelope field: ", key)
 		}
 	}
 	p.skipWS()
@@ -1687,7 +1707,7 @@ func (p *wireParser) parseDocument() (Document, *Error) {
 			return Document{}, err
 		}
 		if seen[key] {
-			return Document{}, p.fail("duplicate document field: " + key)
+			return Document{}, p.failv("duplicate document field: ", key)
 		}
 		seen[key] = true
 		if err := p.expectByte(':'); err != nil {
@@ -1734,7 +1754,7 @@ func (p *wireParser) parseDocument() (Document, *Error) {
 			}
 			root = n
 		default:
-			return Document{}, p.fail("unknown document field: " + key)
+			return Document{}, p.failv("unknown document field: ", key)
 		}
 	}
 	if !seen["yaml_version"] || !seen["explicit_start"] || !seen["root"] {
@@ -1841,7 +1861,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 			return Node{}, err
 		}
 		if seen[key] {
-			return Node{}, p.fail("duplicate node member: " + key)
+			return Node{}, p.failv("duplicate node member: ", key)
 		}
 		seen[key] = true
 		if err := p.expectByte(':'); err != nil {
@@ -1860,7 +1880,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 					return Node{}, p.fail("nested tagged wrapper in wire node")
 				}
 			default:
-				return Node{}, p.fail("unknown node kind: " + k)
+				return Node{}, p.failv("unknown node kind: ", k)
 			}
 			kindStr = k
 
@@ -1875,7 +1895,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 			switch vb {
 			case 't', 'f':
 				if seen["kind"] && kindStr != "bool" {
-					return Node{}, p.fail("unexpected bool value for kind " + kindStr)
+					return Node{}, p.failv("unexpected bool value for kind ", kindStr)
 				}
 				bv, err := p.parseBool()
 				if err != nil {
@@ -1885,7 +1905,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 				payloadKind = payloadBool
 			case '"':
 				if seen["kind"] && kindStr != "int" && kindStr != "string" {
-					return Node{}, p.fail("unexpected string value for kind " + kindStr)
+					return Node{}, p.failv("unexpected string value for kind ", kindStr)
 				}
 				s, err := p.parseString()
 				if err != nil {
@@ -1907,7 +1927,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 					return Node{}, p.fail("nested tagged wrapper in wire node")
 				}
 				if seen["kind"] && kindStr != "tagged" {
-					return Node{}, p.fail("unexpected object value for kind " + kindStr)
+					return Node{}, p.failv("unexpected object value for kind ", kindStr)
 				}
 				inner, err := p.parseNode(depth, isPathKey, true)
 				if err != nil {
@@ -1921,7 +1941,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 
 		case "bits":
 			if payloadKind != payloadNone || (seen["kind"] && kindStr != "float") {
-				return Node{}, p.fail("unexpected bits member for kind " + kindStr)
+				return Node{}, p.failv("unexpected bits member for kind ", kindStr)
 			}
 			s, err := p.parseString()
 			if err != nil {
@@ -1929,14 +1949,14 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 			}
 			fv, ok := isLowerHex16(s)
 			if !ok {
-				return Node{}, p.fail("invalid float bits: " + s)
+				return Node{}, p.failv("invalid float bits: ", s)
 			}
 			payFloat = fv
 			payloadKind = payloadFloat
 
 		case "items":
 			if payloadKind != payloadNone || (seen["kind"] && kindStr != "sequence") {
-				return Node{}, p.fail("unexpected items member for kind " + kindStr)
+				return Node{}, p.failv("unexpected items member for kind ", kindStr)
 			}
 			if !isPathKey && depth+1 > p.limits.MaxDepth {
 				return Node{}, p.limitErr(LimitMaxDepth, p.limits.MaxDepth)
@@ -1975,7 +1995,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 
 		case "entries":
 			if payloadKind != payloadNone || (seen["kind"] && kindStr != "mapping") {
-				return Node{}, p.fail("unexpected entries member for kind " + kindStr)
+				return Node{}, p.failv("unexpected entries member for kind ", kindStr)
 			}
 			if !isPathKey && depth+1 > p.limits.MaxDepth {
 				return Node{}, p.limitErr(LimitMaxDepth, p.limits.MaxDepth)
@@ -2026,7 +2046,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 
 		case "tag":
 			if seen["kind"] && kindStr != "tagged" {
-				return Node{}, p.fail("unexpected tag member for kind " + kindStr)
+				return Node{}, p.failv("unexpected tag member for kind ", kindStr)
 			}
 			t, err := p.parseTagObject()
 			if err != nil {
@@ -2081,7 +2101,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 			}
 
 		default:
-			return Node{}, p.fail("unknown node member: " + key)
+			return Node{}, p.failv("unknown node member: ", key)
 		}
 	}
 
@@ -2089,7 +2109,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 		return Node{}, p.fail("incomplete wire node")
 	}
 	if hasTag && kindStr != "tagged" {
-		return Node{}, p.fail("unexpected tag member for kind " + kindStr)
+		return Node{}, p.failv("unexpected tag member for kind ", kindStr)
 	}
 	var val Value
 	switch kindStr {
@@ -2109,7 +2129,7 @@ func (p *wireParser) parseNode(depth int, isPathKey bool, inTagged bool) (Node, 
 		}
 		iv, ok := isCanonicalWireInt(payStr)
 		if !ok {
-			return Node{}, p.fail("non-canonical wire integer: " + payStr)
+			return Node{}, p.failv("non-canonical wire integer: ", payStr)
 		}
 		val = IntValue(iv)
 	case "string":
@@ -2194,7 +2214,7 @@ func (p *wireParser) parseMappingEntry(depth int, isPathKey bool) (Node, Node, *
 			return Node{}, Node{}, err
 		}
 		if seen[k] {
-			return Node{}, Node{}, p.fail("duplicate mapping entry member: " + k)
+			return Node{}, Node{}, p.failv("duplicate mapping entry member: ", k)
 		}
 		seen[k] = true
 		if err := p.expectByte(':'); err != nil {
@@ -2214,7 +2234,7 @@ func (p *wireParser) parseMappingEntry(depth int, isPathKey bool) (Node, Node, *
 			}
 			vNode = n
 		default:
-			return Node{}, Node{}, p.fail("unknown mapping entry member: " + k)
+			return Node{}, Node{}, p.failv("unknown mapping entry member: ", k)
 		}
 	}
 	if !seen["key"] || !seen["value"] {
@@ -2250,7 +2270,7 @@ func (p *wireParser) parseTagObject() (Tag, *Error) {
 			return Tag{}, err
 		}
 		if seen[k] {
-			return Tag{}, p.fail("duplicate tag member: " + k)
+			return Tag{}, p.failv("duplicate tag member: ", k)
 		}
 		seen[k] = true
 		if err := p.expectByte(':'); err != nil {
@@ -2268,7 +2288,7 @@ func (p *wireParser) parseTagObject() (Tag, *Error) {
 		case "suffix":
 			suffix = v
 		default:
-			return Tag{}, p.fail("unknown tag member: " + k)
+			return Tag{}, p.failv("unknown tag member: ", k)
 		}
 	}
 	if !seen["uri"] || !seen["handle"] || !seen["suffix"] {
@@ -2304,7 +2324,7 @@ func (p *wireParser) parseViaObject() (Via, *Error) {
 	case "merge":
 		return ViaMerge(sp), nil
 	default:
-		return Via{}, p.fail("unknown via member: " + k)
+		return Via{}, p.failv("unknown via member: ", k)
 	}
 }
 
@@ -2350,7 +2370,7 @@ func (p *wireParser) parseWireError() (*Error, *Error) {
 			return nil, err
 		}
 		if seen[k] {
-			return nil, p.fail("duplicate error member: " + k)
+			return nil, p.failv("duplicate error member: ", k)
 		}
 		seen[k] = true
 		if err := p.expectByte(':'); err != nil {
@@ -2364,7 +2384,7 @@ func (p *wireParser) parseWireError() (*Error, *Error) {
 			}
 			ek := ErrorKind(ks)
 			if !ek.IsValid() {
-				return nil, p.fail("unknown error kind: " + ks)
+				return nil, p.failv("unknown error kind: ", ks)
 			}
 			out.Kind = ek
 
@@ -2404,7 +2424,7 @@ func (p *wireParser) parseWireError() (*Error, *Error) {
 			out.Message = msg
 
 		default:
-			return nil, p.fail("unknown error member: " + k)
+			return nil, p.failv("unknown error member: ", k)
 		}
 	}
 	if !seen["kind"] || !seen["detail"] || !seen["site"] || !seen["related"] || !seen["path"] || !seen["message"] {
@@ -2446,7 +2466,7 @@ func (p *wireParser) parseRawErrorDetail() (rawErrorDetail, *Error) {
 			return rawErrorDetail{}, err
 		}
 		if d.seen[k] {
-			return rawErrorDetail{}, p.fail("duplicate error detail member: " + k)
+			return rawErrorDetail{}, p.failv("duplicate error detail member: ", k)
 		}
 		d.seen[k] = true
 		if err := p.expectByte(':'); err != nil {
@@ -2469,7 +2489,7 @@ func (p *wireParser) parseRawErrorDetail() (rawErrorDetail, *Error) {
 			}
 			sk, ok := SyntaxKindFromCode(code)
 			if !ok {
-				return rawErrorDetail{}, p.fail("unknown syntax_kind code: " + code)
+				return rawErrorDetail{}, p.failv("unknown syntax_kind code: ", code)
 			}
 			d.syntaxKind = sk
 		case "limit":
@@ -2479,7 +2499,7 @@ func (p *wireParser) parseRawErrorDetail() (rawErrorDetail, *Error) {
 			}
 			lk := LimitKind(ls)
 			if !lk.IsValid() {
-				return rawErrorDetail{}, p.fail("unknown limit kind: " + ls)
+				return rawErrorDetail{}, p.failv("unknown limit kind: ", ls)
 			}
 			d.limit = lk
 		case "configured":
@@ -2508,7 +2528,7 @@ func (p *wireParser) parseRawErrorDetail() (rawErrorDetail, *Error) {
 			}
 			d.field = v
 		default:
-			return rawErrorDetail{}, p.fail("unknown error detail member: " + k)
+			return rawErrorDetail{}, p.failv("unknown error detail member: ", k)
 		}
 	}
 	return d, nil
@@ -2608,7 +2628,7 @@ func (p *wireParser) parseErrorSite() (Site, *Error) {
 			return Site{}, err
 		}
 	default:
-		return Site{}, p.fail("unknown site member: " + k)
+		return Site{}, p.failv("unknown site member: ", k)
 	}
 	if err := p.expectByte('}'); err != nil {
 		return Site{}, err
@@ -2663,7 +2683,7 @@ func (p *wireParser) parseErrorRelated() ([]Related, *Error) {
 				return nil, err
 			}
 			if seen[k] {
-				return nil, p.fail("duplicate related member: " + k)
+				return nil, p.failv("duplicate related member: ", k)
 			}
 			seen[k] = true
 			if err := p.expectByte(':'); err != nil {
@@ -2677,7 +2697,7 @@ func (p *wireParser) parseErrorRelated() ([]Related, *Error) {
 				}
 				role := RelatedRole(rs)
 				if !role.IsValid() {
-					return nil, p.fail("unknown related role: " + rs)
+					return nil, p.failv("unknown related role: ", rs)
 				}
 				r.Role = role
 			case "span":
@@ -2687,7 +2707,7 @@ func (p *wireParser) parseErrorRelated() ([]Related, *Error) {
 				}
 				r.Span = sp
 			default:
-				return nil, p.fail("unknown related member: " + k)
+				return nil, p.failv("unknown related member: ", k)
 			}
 		}
 		if !seen["role"] || !seen["span"] {
@@ -2749,7 +2769,7 @@ func (p *wireParser) parseErrorPath() ([]PathSegment, *Error) {
 			}
 			path = append(path, PathKey(n.value))
 		default:
-			return nil, p.fail("unknown path segment member: " + k)
+			return nil, p.failv("unknown path segment member: ", k)
 		}
 		if err := p.expectByte('}'); err != nil {
 			return nil, err

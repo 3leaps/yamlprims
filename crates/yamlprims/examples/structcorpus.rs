@@ -1617,6 +1617,25 @@ fn run_crosscheck_jsonl() -> ExitCode {
                 .max(opts.limits.max_output_bytes);
             rt_opts.limits.max_warnings = rt_opts.limits.max_warnings.max(opts.limits.max_warnings);
         }
+        if rec["op"].as_str() == Some("decode_wire") {
+            // Malformed/valid wire text: the decode result (re-encoded documents,
+            // the decoded error envelope, or the refusal) is the compared output.
+            let Ok(text) = std::str::from_utf8(&input) else {
+                eprintln!("{id}: decode_wire input must be UTF-8");
+                return ExitCode::from(2);
+            };
+            let out = match decode_wire(text, &opts) {
+                Ok(WireEnvelope::Documents(docs)) => encode(&docs, &rt_opts),
+                Ok(WireEnvelope::Error(e)) => encode_error(&e, &rt_opts),
+                Err(e) => encode_error(&e, &rt_opts),
+            }
+            .unwrap_or_else(|e| encode_error(&e, &def_opts).expect("encode_error"));
+            println!(
+                "{}",
+                json!({"id": id, "wire": out, "roundtrip": out, "plain": "", "emit": "", "ijson": "", "lint": ""})
+            );
+            continue;
+        }
         let loaded = if single {
             load_bytes(&input, &opts).map(|d| vec![d])
         } else {

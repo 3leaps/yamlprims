@@ -404,7 +404,9 @@ func (e *Error) SyntaxKind() (SyntaxKind, bool) {
 	return 0, false
 }
 
-// EngineDetail returns the optional raw parser diagnostic message for syntax errors.
+// EngineDetail returns an optional bounded diagnostic that is not part of the
+// wire envelope: the raw parser message for syntax errors, or the specific
+// reason for a malformed wire payload refused by DecodeWire.
 func (e *Error) EngineDetail() string {
 	if e == nil {
 		return ""

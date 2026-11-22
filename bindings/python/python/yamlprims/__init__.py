@@ -1380,7 +1380,7 @@ class Document:
                 raise _not_source_error(
                     "unsupported_yaml_version",
                     {},
-                    f"unsupported YAML directive version: {yaml_version!r}",
+                    "unsupported YAML version",
                 )
         return Document(root=root, yaml_version=yaml_version, explicit_start=explicit_start)
 

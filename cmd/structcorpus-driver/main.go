@@ -1893,6 +1893,34 @@ func runCrosscheckJSONL() int {
 			}
 		}
 
+		if op, _ := asString(rec["op"]); op == "decode_wire" {
+			// Malformed/valid wire text: the decode result (re-encoded documents,
+			// the decoded error envelope, or the refusal) is the compared output.
+			env, derr := yaml.DecodeWire(string(input), opts)
+			var out string
+			var encErr *yaml.Error
+			switch {
+			case derr != nil:
+				out, encErr = yaml.EncodeError(derr, rtOpts)
+			case env.HasDocuments:
+				out, encErr = yaml.Encode(env.Documents, rtOpts)
+			default:
+				out, encErr = yaml.EncodeError(env.Error, rtOpts)
+			}
+			if encErr != nil {
+				var e2 *yaml.Error
+				out, e2 = yaml.EncodeError(encErr, defOpts)
+				if e2 != nil {
+					fmt.Fprintf(os.Stderr, "%s: EncodeError: %v\n", id, e2)
+					return 2
+				}
+			}
+			fmt.Println(mustJSON(map[string]any{
+				"id": id, "wire": out, "roundtrip": out, "plain": "", "emit": "", "ijson": "", "lint": "",
+			}))
+			continue
+		}
+
 		var docs []yaml.Document
 		var lerr *yaml.Error
 		if single {

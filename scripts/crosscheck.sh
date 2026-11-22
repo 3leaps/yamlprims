@@ -93,6 +93,10 @@ vector_file = root / "conformance" / "vectors" / "cases.jsonl"
 for line in vector_file.read_text(encoding="utf-8").split("\n"):
     if line.strip():
         records.append(json.loads(line))
+decode_file = root / "conformance" / "vectors" / "wire-decode-cases.jsonl"
+for line in decode_file.read_text(encoding="utf-8").split("\n"):
+    if line.strip():
+        records.append(json.loads(line))
 vector_count = len(records)
 
 corpus_count = 0
@@ -222,5 +226,5 @@ if mismatches:
         print("FAIL:", m, file=sys.stderr)
     sys.exit(f"crosscheck FAILED: {len(mismatches)} mismatches out of {len(records)} checks")
 
-print(f"crosscheck PASS: {vector_count} local vectors + {corpus_count} structcorpus expectations ({len(records)} total) byte-identical across wire, DecodeWire round-trip, plain JSON, emit_all, encode_ijson, and encode_lint")
+print(f"crosscheck PASS: {vector_count} local vectors + {corpus_count} structcorpus expectations ({len(records)} total) byte-identical across wire, DecodeWire round-trip, malformed-wire DecodeWire, plain JSON, emit_all, encode_ijson, and encode_lint")
 PY
