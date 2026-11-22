@@ -8,6 +8,14 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+### Added
+
+- Pinned `conformance/pins/pin-2f055c1.json` against `structcorpus` `2f055c10bffb494dbe395a5d8851b374fde07322` (`61,366` cases / `90,988` expectations, `20` result rows, unchanged from `b52fcd0`); it is the `conformance/requalify.sh` default. `pin-b52fcd0.json` and earlier locks are unchanged.
+
+### Changed
+
+- The Rust (`crates/yamlprims/examples/structcorpus.rs`) and Go (`cmd/structcorpus-driver`) conformance drivers, `conformance/scripts/structcorpus_gate.py`, the driver and node-selector controls, `scripts/crosscheck.sh` and `conformance/requalify.sh` read the `structcorpus` format registry (`manifests/formats.json`, `formats/v1`): the YAML case manifest, profiles and span conventions come from its `yaml` entry, with the single-format `manifests/` paths when a checkout has no registry. A malformed registry, a missing `yaml` entry or an absolute, `.`/`..` or escaping path fails closed. Only `"format": "yaml"` case records are run; records of other formats are skipped, and a record without `format` is an error for a registry checkout. For a registry checkout the gate also pins `manifests/formats.json`.
+
 ## [0.3.1] - 2026-11-22
 
 The library contract is still `spec-v1.6`; the in-tree specification text is the unreleased revision 1.7 draft, which this release does not implement.

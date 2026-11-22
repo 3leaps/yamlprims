@@ -2,15 +2,28 @@
 
 The core baseline is tested against specification revision 1.5, the included
 synthetic truth/wire regressions and the exact structcorpus inventory at
-`b52fcd090d6879a0bd58ec5a5496c6a4de90504e`.
+`2f055c10bffb494dbe395a5d8851b374fde07322`.
 
-The lock in `pins/pin-b52fcd0.json` fixes source files, profile revisions,
+The lock in `pins/pin-2f055c1.json` fixes source files, profile revisions,
 hydrated inventory hashes, review-status counts and per-profile result rows.
-Earlier locks (`pins/pin-6b1266e.json`, `pins/pin-c8b7421.json`, `pins/pin-444bc12.json`,
-`pins/pin-400ae34.json`, `pins/pin-1469b2a.json`) remain historical evidence.
+Earlier locks (`pins/pin-b52fcd0.json`, `pins/pin-6b1266e.json`, `pins/pin-c8b7421.json`,
+`pins/pin-444bc12.json`, `pins/pin-400ae34.json`, `pins/pin-1469b2a.json`) remain
+historical evidence.
+
 Do not regenerate expectations from the implementation. The gate rejects pin
 generation; wire golden blessing is disabled. Expectation changes require
 independent semantic review.
+
+The drivers, the gate and the controls read a corpus in either layout. When the
+checkout has `manifests/formats.json` (`formats/v1`), its `yaml` entry names the YAML
+case manifest, profile directory and span-convention directory
+(`manifests/yaml/...` at `2f055c1`), and the lock covers the registry and those paths.
+Without it, the single-format paths `manifests/cases.jsonl`, `manifests/profiles/` and
+`manifests/span-conventions/` are read (`b52fcd0` and earlier). A malformed registry,
+a missing `yaml` entry, or a path that is absolute, has `.` or `..` segments, or
+resolves outside the checkout stops the run. Only case records with `"format": "yaml"`
+are run; records of other formats are skipped, and a record without `format` is an
+error when the checkout has the registry.
 
 Use a clean checkout of the pinned public corpus and a fresh hydration directory
 outside this workspace:
@@ -18,6 +31,7 @@ outside this workspace:
 ```sh
 python3 -I "$CORPUS/tools/corpus.py" hydrate --tier conformance --output "$HYDRATED"
 bash conformance/requalify.sh "$CORPUS" "$HYDRATED" "$EVIDENCE"
+bash conformance/requalify.sh --pin conformance/pins/pin-b52fcd0.json "$CORPUS_B52FCD0" "$HYDRATED_B52FCD0" "$EVIDENCE_B52FCD0"
 bash conformance/requalify.sh --pin conformance/pins/pin-400ae34.json "$CORPUS_400AE34" "$HYDRATED_400AE34" "$EVIDENCE_400AE34"
 python3 -B -m unittest discover -s conformance -p 'test_*.py'
 ```
@@ -36,14 +50,16 @@ profiles (revision 5 when present).
 Failed tests/builds stop execution before the driver. Core package tests need
 only the included fixtures; full corpus qualification needs the pinned corpus.
 
-The baseline inventory at `b52fcd0` contains 61,366 provisional records and
+The baseline inventory at `2f055c1` (unchanged from `b52fcd0`; the corpus moved the
+YAML manifests under `manifests/yaml/` without changing their bytes) contains 61,366
+provisional records and
 90,988 compared expectations across 20 result rows, including 21 node spans,
 6 expectations under `yamlprims-core-depth128` r1, 6 expectations under
 `yamlprims-core-depth255` r1 and 6 expectations under
 `yamlprims-core-entries2` r1, with eight explicit exclusions (`yaml-core` r1).
 The four revision 4 and four revision 5 policy profiles (`yamlprims-core`,
 `yamlprims-core-stream`, `yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key`
-r4 and r5) carry zero shipped corpus records in `b52fcd0`; revision 5 cites
+r4 and r5) carry zero shipped corpus records in `2f055c1`; revision 5 cites
 specification 1.5 and keeps the revision 4 source-loader policy fields. The
 driver validates their policy bindings
 and `structcorpus_probes_v14.py` exercises them synthetically without adding

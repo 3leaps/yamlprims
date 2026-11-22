@@ -157,7 +157,7 @@ class RequalifyTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             py_calls = py_log.read_text().splitlines()
             self.assertEqual(len(py_calls), 10, py_calls)
-            expected_pin = str(ROOT / "conformance/pins/pin-b52fcd0.json")
+            expected_pin = str(ROOT / "conformance/pins/pin-2f055c1.json")
             self.assertIn(f"conformance/scripts/structcorpus_gate.py {expected_pin}", py_calls[0])
             self.assertIn("conformance/scripts/structcorpus_probes_v13.py", py_calls[1])
             self.assertIn("conformance/scripts/structcorpus_probes_v14.py --require-depth255 --require-r5", py_calls[2])
@@ -451,7 +451,7 @@ class LayoutTests(unittest.TestCase):
                 (src / "manifests").mkdir(parents=True)
                 (src / "manifests/formats.json").write_text(doc)
                 result = subprocess.run(
-                    [sys.executable, "-I", str(ROOT / SOURCE_READERS[0]), str(ROOT / "conformance/pins/pin-b52fcd0.json"),
+                    [sys.executable, "-I", str(ROOT / SOURCE_READERS[0]), str(ROOT / "conformance/pins/pin-2f055c1.json"),
                      str(Path(tmp) / "hyd"), str(src), str(Path(tmp) / "driver")],
                     capture_output=True, text=True, timeout=10,
                 )
@@ -464,7 +464,7 @@ class LayoutTests(unittest.TestCase):
             src = Path(tmp) / "src"
             (src / "manifests").mkdir(parents=True)
             (src / "manifests/formats.json").write_text(json.dumps(_registry(_yaml_entry(), version="formats/v2")))
-            pin = str(ROOT / "conformance/pins/pin-b52fcd0.json")
+            pin = str(ROOT / "conformance/pins/pin-2f055c1.json")
             hyd, drv, out = (str(Path(tmp) / n) for n in ("hyd", "driver", "out.json"))
             for script, args in (
                 (SOURCE_READERS[1], [pin, hyd, str(src), drv]),
@@ -477,6 +477,18 @@ class LayoutTests(unittest.TestCase):
                                             capture_output=True, text=True, timeout=10)
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertIn("structcorpus layout:", result.stderr)
+
+    def test_registry_pin_shape(self):
+        pins = ROOT / "conformance/pins"
+        new = json.loads((pins / "pin-2f055c1.json").read_text())
+        old = json.loads((pins / "pin-b52fcd0.json").read_text())
+        self.assertEqual(new["corpus_commit"], "2f055c10bffb494dbe395a5d8851b374fde07322")
+        for key in ("cases", "review_status", "rows", "hydrated", "tier", "schema", "repository"):
+            self.assertEqual(new[key], old[key], key)
+        self.assertIn("manifests/formats.json", new["files"])
+        self.assertIn("manifests/yaml/cases.jsonl", new["files"])
+        self.assertFalse([f for f in new["files"] if f.startswith(("manifests/profiles/", "manifests/span-conventions/"))])
+        self.assertEqual(len(new["files"]), len(old["files"]) + 1)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 prefix_only=false
-pin="$root/conformance/pins/pin-b52fcd0.json"
+pin="$root/conformance/pins/pin-2f055c1.json"
 if [ "${1:-}" = --prefix-only ] && [ "$#" -eq 1 ]; then
   prefix_only=true
 else
