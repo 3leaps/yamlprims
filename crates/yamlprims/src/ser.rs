@@ -905,7 +905,7 @@ impl<'a> Serializer for NodeSerializer<'a> {
                 {
                     return Err(ser_err(
                         ErrorKind::InvalidOptions,
-                        "TaggedValue contains invalid or oversized tag URI",
+                        "Tagged node contains invalid or oversized tag URI",
                     ));
                 }
                 let inner = value.serialize(NodeSerializer {

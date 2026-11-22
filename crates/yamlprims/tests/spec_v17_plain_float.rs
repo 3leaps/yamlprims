@@ -13,9 +13,10 @@ fn plain(f: f64) -> String {
 
 #[test]
 fn exact_ties_choose_the_even_final_digit() {
-    // 10^15 + 1/4 (bits 430c6bf526340002): neighbours are 10^15 and
-    // 10^15 + 1/2, so both 17-digit candidates .2 and .3 read back, and each
-    // is 1/20 away. 16 digits cannot express it.
+    // x = 10^15 + 1/4 (bits 430c6bf526340002): the adjacent binary64 values
+    // are x - 1/8 and x + 1/8, so the rounding midpoints are x +/- 1/16. Both
+    // 17-digit candidates .2 and .3 lie inside them and each is 1/20 from x;
+    // no 16-digit (integer) candidate does.
     let x: f64 = 1e15 + 0.25;
     assert_eq!(x.to_bits(), 0x430c_6bf5_2634_0002);
     assert_eq!(plain(x), "1000000000000000.2");
@@ -67,8 +68,9 @@ fn every_output_reads_back_to_the_same_bits() {
         let s = plain(f);
         let back: f64 = s.parse().unwrap();
         assert_eq!(back.to_bits(), f.to_bits(), "{s}");
-        // Shortest: never more characters than Rust's own shortest Debug
-        // form (which differs only in exact-tie digit choice).
+        // Representation-size regression check only (not a proof of minimum
+        // significant digits, nearest choice or even tie break): never longer
+        // than Rust's own Debug form.
         assert!(s.len() <= format!("{f:?}").len(), "{s}");
     }
 }

@@ -31,7 +31,7 @@ The library contract is still `spec-v1.6`; the in-tree specification text is the
 
 - The workflow digest and permission checkers run the published `yamlprims` v0.3.0 CLI: `config/yamlprims-cli.txt` pins the v0.3.0 release archives and binary digests, and the minimum version is now 0.3.0.
 - Rust, Python and TypeScript plain JSON output (`encode_plain`, `dump --plain`) now spells a float that lies exactly halfway between two shortest decimals with the even final digit, as Go already did (spec revision 1.7 §11.3). The printed digits can change for such ties; the value read back is unchanged.
-- The error message for a tag URI that is invalid or over the emit tag limit is now worded the same in all four bindings (`Tagged node contains invalid or oversized tag URI`); the error kind and site are unchanged.
+- The error message for a tag URI that is invalid or over the emit tag limit is now worded the same in all four bindings (`Tagged node contains invalid or oversized tag URI`, also on the Rust serde `TaggedValue` path); the error kind and site are unchanged.
 
 ## [0.3.0] - 2026-11-18
 
