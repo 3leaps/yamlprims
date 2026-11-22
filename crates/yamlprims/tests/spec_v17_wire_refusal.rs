@@ -93,3 +93,97 @@ fn refusal_envelope_fits_an_exact_output_budget_and_not_one_less() {
     let over = encode_error(&e, &less).unwrap_err();
     assert!(matches!(over.kind, ErrorKind::OutputLimitExceeded { .. }));
 }
+
+#[test]
+fn constructor_refusals_match_the_shared_table() {
+    use yamlprims::{Document, Node, Tag, Tagged, Value};
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../conformance/vectors/constructor-error-cases.json");
+    let table: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let d = Options::default();
+    let local = Tag::try_new("!t").unwrap();
+    let merge = Tag::try_new("tag:yaml.org,2002:merge");
+    for case in table["cases"].as_array().unwrap() {
+        let id = case["id"].as_str().unwrap();
+        let err = match id {
+            "tag.empty-uri" => Tag::try_new("").unwrap_err(),
+            "tag.core-uri" => Tag::try_new("tag:yaml.org,2002:str").unwrap_err(),
+            "tag.inconsistent-spelling" => Tag::with_spelling("!x", "!!", "y").unwrap_err(),
+            "tagged.bool-inner" => {
+                Tagged::new(local.clone(), Node::synthetic(Value::Bool(true))).unwrap_err()
+            }
+            "tagged.merge-sequence-inner" => Tagged::new(
+                merge.clone().expect("merge tag is constructible"),
+                Node::synthetic(Value::Sequence(vec![])),
+            )
+            .unwrap_err(),
+            "document.version-2-0" => {
+                Document::with_metadata(Node::synthetic(Value::Null), Some((2, 0)), false)
+                    .unwrap_err()
+            }
+            other => panic!("unknown case {other}"),
+        };
+        let wire = encode_error(&err, &d).unwrap();
+        let want = format!(
+            r#"{{"format":"yamlprims-value","version":1,"error":{{"kind":"{}","detail":{{}},"site":{{"not_source":{{"last_known":null}}}},"related":[],"path":[],"message":"{}"}}}}"#,
+            case["kind"].as_str().unwrap(),
+            case["message"].as_str().unwrap()
+        );
+        assert_eq!(wire, want, "{id}");
+    }
+}
+
+#[test]
+fn out_of_range_metadata_is_refused_as_the_shared_table_says() {
+    use yamlprims::{Error, LimitKind, Location, PathSegment, Site};
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../conformance/vectors/constructor-error-cases.json");
+    let table: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let big: usize = 1 << 53;
+    let ns = || Site::NotSource { last_known: None };
+    for case in table["encode_error_cases"].as_array().unwrap() {
+        let id = case["id"].as_str().unwrap();
+        let err = match id {
+            "path-index-2^53" => {
+                let mut e = Error::new(ErrorKind::Internal, ns(), "m");
+                e.path.push(PathSegment::Index(big));
+                e
+            }
+            "site-offset-2^53" => Error::new(
+                ErrorKind::Internal,
+                Site::Source(Location {
+                    byte_offset: big,
+                    line: 1,
+                    column: 1,
+                }),
+                "m",
+            ),
+            "configured-2^53" => Error::new(
+                ErrorKind::LimitExceeded {
+                    limit: LimitKind::MaxNodes,
+                    configured: big as u64,
+                },
+                ns(),
+                "m",
+            ),
+            "configured-zero" => Error::new(
+                ErrorKind::LimitExceeded {
+                    limit: LimitKind::MaxNodes,
+                    configured: 0,
+                },
+                ns(),
+                "m",
+            ),
+            other => panic!("unknown case {other}"),
+        };
+        let refused = encode_error(&err, &Options::default()).unwrap_err();
+        assert!(matches!(refused.kind, ErrorKind::Internal), "{id}");
+        assert_eq!(refused.message, case["message"].as_str().unwrap(), "{id}");
+        assert!(
+            matches!(refused.site, Site::NotSource { last_known: None }),
+            "{id}"
+        );
+    }
+}

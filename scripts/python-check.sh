@@ -72,13 +72,19 @@ PY
 
 tests="${root}/bindings/python/tests"
 vectors="${root}/conformance/vectors/cases.jsonl"
+decode_cases="${root}/conformance/vectors/wire-decode-cases.jsonl"
 (cd "${work}" && YAMLPRIMS_VECTORS_FILE="${vectors}" YAMLPRIMS_RESULTS_OUT="${work}/py.results" \
+  YAMLPRIMS_WIRE_DECODE_CASES_FILE="${decode_cases}" \
+  YAMLPRIMS_CONSTRUCTOR_CASES_FILE="${root}/conformance/vectors/constructor-error-cases.json" \
   "${venv_python}" -I -m unittest discover -v -s "${tests}" -t "${tests}") 2>"${work}/unittest.log" ||
   { cat "${work}/unittest.log" >&2; exit 1; }
 if grep -q 'skipped' "${work}/unittest.log"; then
   echo "python-check: the Python tests must not skip" >&2
   exit 1
 fi
+grep -q '^test_every_case_meets_its_expectation .* ok$' "${work}/unittest.log" ||
+  { echo "python-check: the wire decode inventory did not run" >&2; exit 1; }
+echo "python-check: $(grep '^Ran ' "${work}/unittest.log"), including the wire decode inventory ($(grep -c . "${decode_cases}") cases)"
 
 cargo build --quiet --locked -p yamlprims --example structcorpus >/dev/null
 rust_driver="${CARGO_TARGET_DIR:-${root}/target}/debug/examples/structcorpus"

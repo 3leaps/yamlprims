@@ -111,8 +111,11 @@ printf '{"name":"consumer","private":true,"type":"module"}\n' > "${work}/consume
 (cd "${work}/consumer" && npm install --offline --ignore-scripts --no-audit --no-fund --silent "${tarball}")
 
 (cd "${work}/consumer" && YAMLPRIMS_VECTORS_FILE="${root}/conformance/vectors/cases.jsonl" \
+  YAMLPRIMS_WIRE_DECODE_CASES_FILE="${root}/conformance/vectors/wire-decode-cases.jsonl" \
+  YAMLPRIMS_CONSTRUCTOR_CASES_FILE="${root}/conformance/vectors/constructor-error-cases.json" \
   YAMLPRIMS_RESULTS_OUT="${work}/ts.results" YAMLPRIMS_VERSION="${version}" \
-  node --test --test-reporter=tap test/api.test.mjs test/allocation.test.mjs test/corpus.test.mjs > "${work}/test.tap" 2>&1) ||
+  node --test --test-reporter=tap test/api.test.mjs test/allocation.test.mjs test/corpus.test.mjs \
+    test/wire-decode.test.mjs > "${work}/test.tap" 2>&1) ||
   { cat "${work}/test.tap" >&2; exit 1; }
 
 # Every test must pass: none failed, cancelled, skipped or todo, and the
@@ -126,6 +129,9 @@ ok = (len(counts) == 6 and counts["pass"] == counts["tests"] and counts["tests"]
 sys.exit(0 if ok else f"summary {counts}")
 PY
   { cat "${work}/test.tap" >&2; echo "ts-check: tests failed, skipped or todo" >&2; exit 1; }
+grep -q '^ok [0-9]* - wire decode inventory meets every expectation$' "${work}/test.tap" ||
+  { echo "ts-check: the wire decode inventory did not run" >&2; exit 1; }
+echo "ts-check: wire decode inventory passed ($(grep -c . "${root}/conformance/vectors/wire-decode-cases.jsonl") cases)"
 
 cargo build --quiet --locked -p yamlprims --example structcorpus >/dev/null
 rust_driver="${CARGO_TARGET_DIR:-${root}/target}/debug/examples/structcorpus"

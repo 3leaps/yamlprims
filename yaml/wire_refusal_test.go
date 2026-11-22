@@ -1,6 +1,9 @@
 package yaml
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -84,5 +87,91 @@ func TestWireRefusalEnvelopeExactOutputBudget(t *testing.T) {
 	less.Limits.MaxOutputBytes = len(full) - 1
 	if _, e := EncodeError(err, less); e == nil || e.Kind != ErrorKindOutputLimitExceeded {
 		t.Fatalf("one less: %v", e)
+	}
+}
+
+func TestConstructorRefusalsMatchSharedTable(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "conformance", "vectors", "constructor-error-cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table struct {
+		Cases []struct{ ID, Kind, Message string } `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatal(err)
+	}
+	d := DefaultOptions()
+	local, _ := TryNewTag("!t")
+	merge, mErr := TryNewTag("tag:yaml.org,2002:merge")
+	if mErr != nil {
+		t.Fatal(mErr)
+	}
+	for _, c := range table.Cases {
+		var e *Error
+		switch c.ID {
+		case "tag.empty-uri":
+			_, e = TryNewTag("")
+		case "tag.core-uri":
+			_, e = TryNewTag("tag:yaml.org,2002:str")
+		case "tag.inconsistent-spelling":
+			_, e = TryNewTagWithSpelling("!x", "!!", "y")
+		case "tagged.bool-inner":
+			_, e = TryNewTagged(local, NewSyntheticNode(BoolValue(true)))
+		case "tagged.merge-sequence-inner":
+			_, e = TryNewTagged(merge, NewSyntheticNode(SequenceValue(nil)))
+		case "document.version-2-0":
+			_, e = TryNewDocumentWithMetadata(NewSyntheticNode(NullValue()), &[2]uint32{2, 0}, false)
+		default:
+			t.Fatalf("unknown case %s", c.ID)
+		}
+		if e == nil {
+			t.Fatalf("%s: no error", c.ID)
+		}
+		got, encErr := EncodeError(e, d)
+		want := `{"format":"yamlprims-value","version":1,"error":{"kind":"` + c.Kind +
+			`","detail":{},"site":{"not_source":{"last_known":null}},"related":[],"path":[],"message":"` + c.Message + `"}}`
+		if encErr != nil || got != want {
+			t.Errorf("%s:\n got %s\nwant %s", c.ID, got, want)
+		}
+	}
+}
+
+func TestOutOfRangeMetadataMatchesSharedTable(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "conformance", "vectors", "constructor-error-cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var table struct {
+		Cases []struct{ ID, Message string } `json:"encode_error_cases"`
+	}
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatal(err)
+	}
+	const big = 1 << 53
+	ns := SiteNotSource(nil)
+	for _, c := range table.Cases {
+		var e *Error
+		switch c.ID {
+		case "path-index-2^53":
+			e = &Error{Kind: ErrorKindInternal, Site: ns, Message: "m",
+				Path: []PathSegment{{Kind: PathSegmentIndex, Index: big}}}
+		case "site-offset-2^53":
+			e = &Error{Kind: ErrorKindInternal, Message: "m",
+				Site: SiteSource(Location{ByteOffset: big, Line: 1, Column: 1})}
+		case "configured-2^53":
+			e = &Error{Kind: ErrorKindLimitExceeded, Site: ns, Message: "m",
+				Detail: ErrorDetail{Limit: LimitMaxNodes, Configured: big, HasConfigured: true}}
+		case "configured-zero":
+			e = &Error{Kind: ErrorKindLimitExceeded, Site: ns, Message: "m",
+				Detail: ErrorDetail{Limit: LimitMaxNodes, Configured: 0, HasConfigured: true}}
+		default:
+			t.Fatalf("unknown case %s", c.ID)
+		}
+		_, refused := EncodeError(e, DefaultOptions())
+		if refused == nil || refused.Kind != ErrorKindInternal || refused.Message != c.Message ||
+			refused.Site != SiteNotSource(nil) {
+			t.Errorf("%s: got %+v", c.ID, refused)
+		}
 	}
 }

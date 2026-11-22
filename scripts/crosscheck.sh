@@ -211,13 +211,15 @@ def check_decode(expect, d):
     if d.get("encode_ok") is not True:
         fails.append("result did not encode")
         return fails
+    if expect.get("reencodes_input") and d["wire"] != by_id[d["id"]]["input"]:
+        fails.append("re-encoded result differs from the input envelope")
     env = json.loads(d["wire"])
     if expect["outcome"] == "documents":
         if "documents" not in env:
             fails.append("no documents in result")
         return fails
     err = env.get("error") or {}
-    for key in ("kind", "detail", "site", "message"):
+    for key in ("kind", "detail", "site", "related", "path", "message"):
         if key in expect and err.get(key) != expect[key]:
             fails.append(f"{key} {err.get(key)!r} != {expect[key]!r}")
     return fails

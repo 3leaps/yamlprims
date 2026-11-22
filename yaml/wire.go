@@ -34,14 +34,17 @@ func (o *outBuf) push(t string) *Error {
 
 func (o *outBuf) pushUint(n uint64) *Error {
 	if n > MaxWireInt {
-		return errInternal("wire metadata integer exceeds 2^53 - 1")
+		return newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, "wire metadata integer exceeds 2^53 - 1")
 	}
 	return o.push(strconv.FormatUint(n, 10))
 }
 
 func (o *outBuf) pushInt(n int) *Error {
-	if n < 0 || uint64(n) > MaxWireInt {
+	if n < 0 {
 		return errInternal("wire metadata integer out of range")
+	}
+	if uint64(n) > MaxWireInt {
+		return newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, "wire metadata integer exceeds 2^53 - 1")
 	}
 	return o.push(strconv.Itoa(n))
 }
@@ -540,7 +543,7 @@ func validateErrorPair(e *Error) (string, *Error) {
 			return "", errInternal("stale detail on invalid_utf8 error")
 		}
 		if d.InvalidUtf8Len != nil && (*d.InvalidUtf8Len < 0 || uint64(*d.InvalidUtf8Len) > MaxWireInt) {
-			return "", errInternal("invalid_len out of wire range")
+			return "", newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, "invalid_len out of wire range")
 		}
 		return "", nil
 
@@ -557,7 +560,7 @@ func validateErrorPair(e *Error) (string, *Error) {
 			return "", errInternal("stale detail on limit_exceeded error")
 		}
 		if !d.Limit.IsValid() || d.Configured == 0 || d.Configured > MaxWireInt {
-			return "", errInternal("invalid limit_exceeded detail")
+			return "", newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, "invalid limit_exceeded detail")
 		}
 		return "", nil
 
@@ -587,7 +590,7 @@ func validateErrorPair(e *Error) (string, *Error) {
 			return "", errInternal("stale detail on output_limit_exceeded error")
 		}
 		if d.Configured == 0 || d.Configured > MaxWireInt {
-			return "", errInternal("invalid output_limit_exceeded detail")
+			return "", newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, "invalid output_limit_exceeded detail")
 		}
 		return "", nil
 
@@ -630,7 +633,7 @@ func preflightPath(path []PathSegment, l Limits) *Error {
 		seg := &path[i]
 		if seg.Kind == PathSegmentIndex {
 			if seg.Index < 0 || uint64(seg.Index) > MaxWireInt {
-				return errInternal("path index out of wire range")
+				return newNotSourceError(ErrorKindInternal, ErrorDetail{}, nil, "path index out of wire range")
 			}
 			continue
 		}

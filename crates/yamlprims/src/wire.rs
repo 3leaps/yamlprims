@@ -59,6 +59,18 @@ impl Out {
         Ok(())
     }
     pub(crate) fn num(&mut self, n: usize) -> Result<(), Error> {
+        self.num_u64(n as u64)
+    }
+    /// A wire metadata integer, which stays within the JSON-safe range (§11.1)
+    /// as in the Go twin; a caller-built value may be larger.
+    pub(crate) fn num_u64(&mut self, n: u64) -> Result<(), Error> {
+        if n > MAX_WIRE_META_UINT {
+            return Err(Error::not_source(
+                ErrorKind::Internal,
+                None,
+                "wire metadata integer exceeds 2^53 - 1",
+            ));
+        }
         self.push(&n.to_string())
     }
     pub(crate) fn string(&mut self, v: &str) -> Result<(), Error> {
@@ -121,19 +133,30 @@ impl Out {
             format_args!("encoded output exceeds max_output_bytes ({})", self.max),
         ))
     }
+    /// `[a,b,...]` of metadata integers, written and checked in order as the Go
+    /// twin does, so a range refusal and an output limit meet in the same place.
+    fn meta_array(&mut self, values: &[usize]) -> Result<(), Error> {
+        self.push("[")?;
+        for (i, v) in values.iter().enumerate() {
+            if i > 0 {
+                self.push(",")?;
+            }
+            self.num(*v)?;
+        }
+        self.push("]")
+    }
     fn loc(&mut self, l: &Location) -> Result<(), Error> {
-        self.push(&format!("[{},{},{}]", l.byte_offset, l.line, l.column))
+        self.meta_array(&[l.byte_offset, l.line, l.column])
     }
     pub(crate) fn span(&mut self, s: &Span) -> Result<(), Error> {
-        self.push(&format!(
-            "[{},{},{},{},{},{}]",
+        self.meta_array(&[
             s.start.byte_offset,
             s.start.line,
             s.start.column,
             s.end.byte_offset,
             s.end.line,
-            s.end.column
-        ))
+            s.end.column,
+        ])
     }
 }
 
@@ -353,7 +376,19 @@ pub(crate) fn preflight_path(path: &[PathSegment], l: &Limits) -> Result<(), Err
         ));
     }
     for seg in path {
-        let PathSegment::Key(k) = seg else { continue };
+        let k = match seg {
+            PathSegment::Index(n) => {
+                if *n as u64 > MAX_WIRE_META_UINT {
+                    return Err(Error::not_source(
+                        ErrorKind::Internal,
+                        None,
+                        "path index out of wire range",
+                    ));
+                }
+                continue;
+            }
+            PathSegment::Key(k) => k,
+        };
         // Each node is charged when pushed, so the stack never holds more than the key's
         // weight budget allows.
         let over = || {
@@ -433,7 +468,30 @@ pub(crate) fn write_path_segments(o: &mut Out, path: &[PathSegment]) -> Result<(
     Ok(())
 }
 
+/// The kind/detail pair must form a valid wire pair before any JSON is
+/// written (§11.1 error encoding validation); checked in the Go twin's order.
+fn validate_error_pair(e: &Error) -> Result<(), Error> {
+    let bad = |what: &'static str| Err(Error::not_source(ErrorKind::Internal, None, what));
+    match &e.kind {
+        ErrorKind::InvalidUtf8 {
+            invalid_len: Some(n),
+        } if *n as u64 > MAX_WIRE_META_UINT => bad("invalid_len out of wire range"),
+        ErrorKind::LimitExceeded { configured, .. }
+            if *configured == 0 || *configured > MAX_WIRE_META_UINT =>
+        {
+            bad("invalid limit_exceeded detail")
+        }
+        ErrorKind::OutputLimitExceeded { configured }
+            if *configured == 0 || *configured > MAX_WIRE_META_UINT =>
+        {
+            bad("invalid output_limit_exceeded detail")
+        }
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn encode_error(e: &Error, l: &Limits) -> Result<String, Error> {
+    validate_error_pair(e)?;
     preflight(e, l)?;
     let mut o = Out {
         s: String::new(),
@@ -455,7 +513,9 @@ pub(crate) fn encode_error(e: &Error, l: &Limits) -> Result<String, Error> {
         ErrorKind::LimitExceeded { limit, configured } => {
             o.push("{\"limit\":")?;
             o.string(limit.field_name())?;
-            o.push(&format!(",\"configured\":{configured}}}"))?
+            o.push(",\"configured\":")?;
+            o.num_u64(*configured)?;
+            o.push("}")?
         }
         ErrorKind::Type { expected, found } => {
             o.push("{\"expected\":")?;
@@ -470,7 +530,9 @@ pub(crate) fn encode_error(e: &Error, l: &Limits) -> Result<String, Error> {
             o.push("}")?
         }
         ErrorKind::OutputLimitExceeded { configured } => {
-            o.push(&format!("{{\"configured\":{configured}}}"))?
+            o.push("{\"configured\":")?;
+            o.num_u64(*configured)?;
+            o.push("}")?
         }
         _ => o.push("{}")?,
     }
