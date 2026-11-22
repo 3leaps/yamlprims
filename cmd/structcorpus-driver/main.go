@@ -1894,20 +1894,24 @@ func runCrosscheckJSONL() int {
 		}
 
 		if op, _ := asString(rec["op"]); op == "decode_wire" {
-			// Malformed/valid wire text: the decode result (re-encoded documents,
-			// the decoded error envelope, or the refusal) is the compared output.
+			// The decode decision (documents, a decoded error envelope, or a
+			// refusal) and the encoding of its result are reported separately.
 			env, derr := yaml.DecodeWire(string(input), opts)
-			var out string
+			var outcome, out string
 			var encErr *yaml.Error
 			switch {
 			case derr != nil:
+				outcome = "refused"
 				out, encErr = yaml.EncodeError(derr, rtOpts)
 			case env.HasDocuments:
+				outcome = "documents"
 				out, encErr = yaml.Encode(env.Documents, rtOpts)
 			default:
+				outcome = "decoded_error"
 				out, encErr = yaml.EncodeError(env.Error, rtOpts)
 			}
-			if encErr != nil {
+			encodeOK := encErr == nil
+			if !encodeOK {
 				var e2 *yaml.Error
 				out, e2 = yaml.EncodeError(encErr, defOpts)
 				if e2 != nil {
@@ -1916,7 +1920,8 @@ func runCrosscheckJSONL() int {
 				}
 			}
 			fmt.Println(mustJSON(map[string]any{
-				"id": id, "wire": out, "roundtrip": out, "plain": "", "emit": "", "ijson": "", "lint": "",
+				"id": id, "decode_outcome": outcome, "encode_ok": encodeOK, "wire": out,
+				"roundtrip": "", "plain": "", "emit": "", "ijson": "", "lint": "",
 			}))
 			continue
 		}

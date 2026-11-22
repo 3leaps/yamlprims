@@ -200,6 +200,29 @@ go_lines = [json.loads(l) for l in go_proc.stdout.split("\n") if l.strip()]
 if len(rust_lines) != len(records) or len(go_lines) != len(records):
     sys.exit(f"crosscheck count mismatch: records={len(records)} rust={len(rust_lines)} go={len(go_lines)}")
 
+by_id = {rec["id"]: rec for rec in records}
+
+
+def check_decode(expect, d):
+    """Failures of one driver's decode result against the record's expectation."""
+    fails = []
+    if d.get("decode_outcome") != expect["outcome"]:
+        fails.append(f"outcome {d.get('decode_outcome')} != {expect['outcome']}")
+    if d.get("encode_ok") is not True:
+        fails.append("result did not encode")
+        return fails
+    env = json.loads(d["wire"])
+    if expect["outcome"] == "documents":
+        if "documents" not in env:
+            fails.append("no documents in result")
+        return fails
+    err = env.get("error") or {}
+    for key in ("kind", "detail", "site", "message"):
+        if key in expect and err.get(key) != expect[key]:
+            fails.append(f"{key} {err.get(key)!r} != {expect[key]!r}")
+    return fails
+
+
 mismatches = []
 for r, g in zip(rust_lines, go_lines):
     rid = r["id"]
@@ -208,6 +231,16 @@ for r, g in zip(rust_lines, go_lines):
         continue
     if r["wire"] != g["wire"]:
         mismatches.append(f"{rid} [wire]:\n  rust: {r['wire']}\n  go:   {g['wire']}")
+    rec = by_id.get(rid, {})
+    if rec.get("op") == "decode_wire":
+        # Decode decision and encoding outcome are compared between twins and
+        # each driver is checked against the record's own expectation.
+        for side, d in (("rust", r), ("go", g)):
+            for f in check_decode(rec["expect"], d):
+                mismatches.append(f"{rid} [{side}-expect]: {f}")
+        if (r.get("decode_outcome"), r.get("encode_ok")) != (g.get("decode_outcome"), g.get("encode_ok")):
+            mismatches.append(f"{rid} [decode-outcome]: rust {r.get('decode_outcome')}/{r.get('encode_ok')} go {g.get('decode_outcome')}/{g.get('encode_ok')}")
+        continue
     if r["roundtrip"] != r["wire"]:
         mismatches.append(f"{rid} [rust-roundtrip]:\n  rust: {r['wire']}\n  rt:   {r['roundtrip']}")
     if g["roundtrip"] != r["wire"]:

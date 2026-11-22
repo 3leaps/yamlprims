@@ -75,3 +75,21 @@ fn limits_and_options_are_not_folded_into_the_refusal() {
     let e = decode_wire("nope", &bad).unwrap_err();
     assert!(matches!(e.kind, ErrorKind::InvalidOptions));
 }
+
+#[test]
+fn refusal_envelope_fits_an_exact_output_budget_and_not_one_less() {
+    let d = Options::default();
+    let e = decode_wire("{}", &d).unwrap_err();
+    let full = encode_error(&e, &d).unwrap();
+    assert_eq!(
+        full,
+        r#"{"format":"yamlprims-value","version":1,"error":{"kind":"internal","detail":{},"site":{"not_source":{"last_known":null}},"related":[],"path":[],"message":"invalid yamlprims wire payload"}}"#
+    );
+    let mut exact = Options::default();
+    exact.limits.max_output_bytes = full.len();
+    assert_eq!(encode_error(&e, &exact).unwrap(), full);
+    let mut less = Options::default();
+    less.limits.max_output_bytes = full.len() - 1;
+    let over = encode_error(&e, &less).unwrap_err();
+    assert!(matches!(over.kind, ErrorKind::OutputLimitExceeded { .. }));
+}

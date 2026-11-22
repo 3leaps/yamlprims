@@ -66,3 +66,23 @@ func TestWireLimitsAndOptionsAreNotFolded(t *testing.T) {
 		t.Fatalf("got %+v", err)
 	}
 }
+
+func TestWireRefusalEnvelopeExactOutputBudget(t *testing.T) {
+	d := DefaultOptions()
+	_, err := DecodeWire("{}", d)
+	full, encErr := EncodeError(err, d)
+	want := `{"format":"yamlprims-value","version":1,"error":{"kind":"internal","detail":{},"site":{"not_source":{"last_known":null}},"related":[],"path":[],"message":"invalid yamlprims wire payload"}}`
+	if encErr != nil || full != want {
+		t.Fatalf("got %s %v", full, encErr)
+	}
+	exact := DefaultOptions()
+	exact.Limits.MaxOutputBytes = len(full)
+	if out, e := EncodeError(err, exact); e != nil || out != full {
+		t.Fatalf("exact budget: %s %v", out, e)
+	}
+	less := DefaultOptions()
+	less.Limits.MaxOutputBytes = len(full) - 1
+	if _, e := EncodeError(err, less); e == nil || e.Kind != ErrorKindOutputLimitExceeded {
+		t.Fatalf("one less: %v", e)
+	}
+}
