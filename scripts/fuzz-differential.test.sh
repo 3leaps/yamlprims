@@ -114,6 +114,48 @@ if [ "$(diffrun X Y)" = go-roundtrip,wire ]; then ok; else bad "both Go checks";
 if [ -z "$(diffrun X X open)" ]; then ok; else bad "open known difference does not suppress"; fi
 if [ "$(diffrun X X closed)" = wire ]; then ok; else bad "closed known difference suppresses"; fi
 
+# 2b. A driver that hangs on one input is killed, bisected down to that input,
+# and reported as a timeout finding with its digest only. Other inputs in the
+# same chunk are still compared, a known entry cannot suppress a timeout, and the
+# per-record limit is validated.
+mkdir -p "$work/corpus-hang"
+printf 'a: 1\n' >"$work/corpus-hang/plain"
+hang_marker=HANGMARK-$$
+printf '%s\n' "$hang_marker" >"$work/corpus-hang/hang"
+hang_hex=$(printf '%s' "$hang_marker" | od -An -tx1 | tr -d ' \n')
+cat >"$work/go-hang" <<STUB
+#!/usr/bin/env python3
+import json, sys, time
+for line in sys.stdin:
+    if line.strip():
+        r = json.loads(line)
+        if "$hang_hex" in r.get("input_hex", ""):
+            time.sleep(600)
+        print(json.dumps({"id": r["id"], "wire": "W", "roundtrip": "W", "plain": "p", "emit": "e", "ijson": "i", "lint": "l"}), flush=True)
+STUB
+chmod +x "$work/go-hang"
+: >"$work/known.jsonl"
+start=$(date +%s)
+status=0
+out=$(YAMLPRIMS_FUZZ_DRIVER_TIMEOUT=1 python3 -I "$helper" run "$work/known.jsonl" "$work/rust" "$work/go-hang" "$work" "raw:$work/corpus-hang" 2>&1) || status=$?
+elapsed=$(($(date +%s) - start))
+if [ "$status" -ne 0 ]; then ok; else bad "a hanging driver passed"; fi
+if [ "$elapsed" -lt 60 ]; then ok; else bad "a hanging driver was not bounded (${elapsed}s)"; fi
+if [ "$(grep -c '^DIFF go-driver-timeout:' <<<"$out")" = 2 ]; then ok; else bad "hanging input not reported once per mode"; fi
+if [ "$(grep -c '^DIFF ' <<<"$out")" = 2 ]; then ok; else bad "inputs beside the hanging one were not compared cleanly"; fi
+if grep -q -e "$hang_marker" -e "$hang_hex" <<<"$out"; then bad "timeout output contains input bytes"; else ok; fi
+if grep -q '(2 driver timeouts)' <<<"$out"; then ok; else bad "summary does not count driver timeouts"; fi
+if pgrep -f "$work/go-hang" >/dev/null; then bad "hanging driver left running"; else ok; fi
+entry 'operation="go-driver-timeout"' >"$work/known-hang.jsonl"
+if python3 -I "$helper" check-known "$work/known-hang.jsonl" >/dev/null 2>&1; then bad "known list accepted a timeout entry"; else ok; fi
+for v in 0 abc 3601; do
+  if YAMLPRIMS_FUZZ_DRIVER_TIMEOUT=$v python3 -I "$helper" run "$work/known.jsonl" "$work/rust" "$work/go-hang" "$work" "raw:$work/corpus-ok" >/dev/null 2>&1; then
+    bad "driver timeout $v accepted"
+  else
+    ok
+  fi
+done
+
 # 3. Corpus decode failures report a digest and a fixed kind, never the input.
 marker=MARKER-$$-SECRET
 printf 'go test fuzz v1\n[]byte("%s\\xZZ")\n' "$marker" >"$work/corpus/bad-escape"
