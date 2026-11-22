@@ -25,7 +25,9 @@ Revision 1.7 makes loading refuse a resolved tag identity that is neither a
 local tag nor a global tag URI (including verbatim `!<!>`), pins named tag
 handle spelling, and requires separation between a `%TAG` handle and its
 prefix, all during bounded source validation in event order (§3, §4.4, §7.1,
-§10.2, §11.1).
+§10.2, §11.1). It also states the digit selection and layout of plain JSON
+float text (§11.3) and that four-language byte parity covers the whole
+serialized error envelope, including `message` (§7.1, §11.1).
 
 This document is the normative contract for yamlprims: an owned YAML 1.2 data
 layer over a maintained, safe-Rust event parser. Its key words MUST, MUST NOT,
@@ -2294,10 +2296,10 @@ value under round-to-nearest, ties-to-even. Among candidates with that minimum
 digit count, it MUST choose the decimal value nearest the exact binary64 value;
 if two candidates are equally near, it MUST choose the one with an even final
 significant digit. This is the digit-selection rule of §10.2, not its YAML
-rendering rule. For example, the binary64 value `1701411804604692.25` is
-written `1701411804604692.2`. With the chosen digits `d_0 d_1 … d_(n−1)` and
-scientific exponent `e` (the value is `d_0.d_1… × 10^e`), the layout is a `-`
-for a negative value, then:
+rendering rule. For example, the binary64 value `10^15 + 1/4` (bits
+`430c6bf526340002`) is written `1000000000000000.2`. With the chosen digits
+`d_0 d_1 … d_(n−1)` and scientific exponent `e` (the chosen decimal magnitude
+is `d_0.d_1… × 10^e`), the layout is a `-` for a negative value, then:
 
 - when `-4 <= e < 16`, fixed point: the digits with the decimal point after
   `d_e` when `e >= 0` (padding with `0` digits and appending `.0` when the

@@ -1,6 +1,7 @@
 # spec-v1.7 — unreleased draft specification
 
-Revision 1.7 tightens loading to the YAML 1.2.2 tag rules. Specification
+Revision 1.7 tightens loading to the YAML 1.2.2 tag rules, states plain JSON
+float digits, and confirms whole-envelope error parity. Specification
 publication does not claim runtime implementation or qualification.
 
 - `1.7/E-1`: bounded source validation refuses a resolved node tag identity,
