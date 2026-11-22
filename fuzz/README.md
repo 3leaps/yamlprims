@@ -109,6 +109,15 @@ that assumption:
 The lock and these checks are supported on local filesystems only. `flock`
 behaviour on NFS or other network filesystems is not relied on or verified.
 
+## Driver time limits
+
+The differential sends records to each driver in chunks of 256, and each chunk
+has a time limit: `YAMLPRIMS_FUZZ_DRIVER_TIMEOUT` seconds (default 10, range 1
+to 3600) plus 0.05 s per record. A chunk that runs out of time is killed and
+split until the record that does not finish is found. That record is reported
+as `rust-driver-timeout` or `go-driver-timeout` with its input digest only. A
+timeout is a finding, and no known-differences entry can suppress it.
+
 ## Known differences
 
 `known-differences.jsonl` lists Rust/Go differences that are under review.
