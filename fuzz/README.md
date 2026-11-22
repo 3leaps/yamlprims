@@ -116,7 +116,10 @@ has a time limit: `YAMLPRIMS_FUZZ_DRIVER_TIMEOUT` seconds (default 10, range 1
 to 3600) plus 0.05 s per record. A chunk that runs out of time is killed and
 split until the record that does not finish is found. That record is reported
 as `rust-driver-timeout` or `go-driver-timeout` with its input digest only. A
-timeout is a finding, and no known-differences entry can suppress it.
+batch that times out although each of its records finishes alone is reported
+as `rust-driver-chunk-timeout` or `go-driver-chunk-timeout`, naming the
+smallest such batch by its first and last record ids. A timeout is a finding,
+and no known-differences entry can suppress it.
 
 ## Known differences
 

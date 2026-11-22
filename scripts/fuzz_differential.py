@@ -20,8 +20,11 @@ Each driver run is time-bounded. Records go to the drivers in chunks of CHUNK;
 a chunk gets YAMLPRIMS_FUZZ_DRIVER_TIMEOUT seconds (default 10) plus
 CHUNK_SLACK per record. A chunk that exceeds it is killed and bisected down to
 single records, and a single record that exceeds the per-record limit is
-reported as a `rust-driver-timeout` or `go-driver-timeout` finding. Timeouts
-are never suppressed by the known-differences list.
+reported as a `rust-driver-timeout` or `go-driver-timeout` finding. A batch
+that times out although every record in it finishes on its own is reported as
+a `rust-driver-chunk-timeout` or `go-driver-chunk-timeout` finding naming the
+smallest such batch by its first and last record ids. Timeouts are never
+suppressed by the known-differences list.
 """
 import hashlib
 import json
@@ -43,7 +46,7 @@ OPTION_NAMES = {name for name, _ in OPTIONS.values()}
 CROSS = ("wire", "plain", "emit", "ijson", "lint")
 OPERATIONS = set(CROSS) | {"rust-roundtrip", "go-roundtrip", "rust-driver-error", "go-driver-error"}
 # Hangs are findings, not differences: not in OPERATIONS, so no known entry matches them.
-TIMEOUT_OPS = ("rust-driver-timeout", "go-driver-timeout")
+TIMEOUT_OPS = ("rust-driver-timeout", "go-driver-timeout", "rust-driver-chunk-timeout", "go-driver-chunk-timeout")
 CHUNK = 256
 CHUNK_SLACK = 0.05
 # Only these statuses suppress a difference; "closed" entries are kept as history.
@@ -200,25 +203,36 @@ def run_batch(driver, recs, per_record):
     return lines, ""
 
 
-def run_driver(driver, recs, per_record=None):
+def run_driver(driver, recs, chunk_hangs):
+    """Results for every record, in chunks of CHUNK. Batches that time out
+    although each of their records finishes alone are appended to chunk_hangs
+    as lists of record ids."""
+    per_record = driver_timeout()
+    out = []
+    for i in range(0, len(recs), CHUNK):
+        out += _bisect(driver, recs[i : i + CHUNK], per_record, chunk_hangs)[0]
+    return out
+
+
+def _bisect(driver, recs, per_record, chunk_hangs):
     """The drivers stop a batch when their own wire round trip fails, and a
     batch is killed when it runs out of time. Bisect the batch so the failing
-    or hanging records are isolated and reported."""
-    if per_record is None:
-        per_record = driver_timeout()
-        out = []
-        for i in range(0, len(recs), CHUNK):
-            out += run_driver(driver, recs[i : i + CHUNK], per_record)
-        return out
+    or hanging records are isolated and reported. Returns the results and
+    whether a timeout was reported at or below this batch."""
     lines, err = run_batch(driver, recs, per_record)
     if lines is not None:
-        return lines
+        return lines, False
+    timed_out = err is None
     if len(recs) == 1:
-        if err is None:
-            return [{"id": recs[0]["id"], "driver_timeout": True}]
-        return [{"id": recs[0]["id"], "driver_error": err.strip()}]
+        if timed_out:
+            return [{"id": recs[0]["id"], "driver_timeout": True}], True
+        return [{"id": recs[0]["id"], "driver_error": err.strip()}], False
     mid = len(recs) // 2
-    return run_driver(driver, recs[:mid], per_record) + run_driver(driver, recs[mid:], per_record)
+    left, left_hang = _bisect(driver, recs[:mid], per_record, chunk_hangs)
+    right, right_hang = _bisect(driver, recs[mid:], per_record, chunk_hangs)
+    if timed_out and not (left_hang or right_hang):
+        chunk_hangs.append([r["id"] for r in recs])
+    return left + right, timed_out or left_hang or right_hang
 
 
 def main_run(known_path, rust_driver, go_driver, out, specs):
@@ -249,8 +263,14 @@ def main_run(known_path, rust_driver, go_driver, out, specs):
                 meta.append((digest, name))
     if not records and not found:
         sys.exit("fuzz-differential: no inputs")
-    rust = run_driver(rust_driver, records) if records else []
-    go = run_driver(go_driver, records) if records else []
+    hangs = {"rust": [], "go": []}
+    rust = run_driver(rust_driver, records, hangs["rust"]) if records else []
+    go = run_driver(go_driver, records, hangs["go"]) if records else []
+    for who, batches in hangs.items():
+        for ids in batches:
+            cid = f"chunk:{len(ids)}:{ids[0]}..{ids[-1]}"
+            found.append((cid, f"{who}-driver-chunk-timeout"))
+            details.append({"id": cid, "operation": f"{who}-driver-chunk-timeout", "records": ids})
     for (digest, name), r, g in zip(meta, rust, go):
         for op in compare(r, g):
             if op not in TIMEOUT_OPS and (digest, name, op) in known:
@@ -261,9 +281,9 @@ def main_run(known_path, rust_driver, go_driver, out, specs):
         report = write_new(out, "differential-failures.jsonl", "".join(json.dumps(d) + "\n" for d in details))
         for rid, op in found[:20]:
             print(f"DIFF {op}: {rid}", file=sys.stderr)
-        hangs = sum(1 for _, op in found if op in TIMEOUT_OPS)
+        n_timeouts = sum(1 for _, op in found if op in TIMEOUT_OPS)
         sys.exit(
-            f"fuzz-differential FAILED: {len(found)} unlisted differences ({hangs} driver timeouts) in {len(records)} records; details in {report}"
+            f"fuzz-differential FAILED: {len(found)} unlisted differences ({n_timeouts} driver timeouts) in {len(records)} records; details in {report}"
         )
     print(f"fuzz-differential PASS: {len(records)} records ({len(records) // 2} inputs), no unlisted Rust/Go differences")
 

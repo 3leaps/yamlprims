@@ -156,6 +156,40 @@ for v in 0 abc 3601; do
   fi
 done
 
+# 2c. A driver that hangs only when one process sees both records of an input,
+# but finishes each record alone, is reported as a chunk timeout naming the
+# smallest such batch, not as a pass.
+mkdir -p "$work/corpus-chunk"
+chunk_marker=CHUNKMARK-$$
+printf '%s\n' "$chunk_marker" >"$work/corpus-chunk/pair"
+printf 'b: 2\n' >"$work/corpus-chunk/zplain"
+chunk_hex=$(printf '%s' "$chunk_marker" | od -An -tx1 | tr -d ' \n')
+cat >"$work/go-chunk" <<STUB
+#!/usr/bin/env python3
+import json, sys, time
+seen = 0
+for line in sys.stdin:
+    if line.strip():
+        r = json.loads(line)
+        if "$chunk_hex" in r.get("input_hex", ""):
+            seen += 1
+            if seen >= 2:
+                time.sleep(600)
+        print(json.dumps({"id": r["id"], "wire": "W", "roundtrip": "W", "plain": "p", "emit": "e", "ijson": "i", "lint": "l"}), flush=True)
+STUB
+chmod +x "$work/go-chunk"
+: >"$work/known.jsonl"
+status=0
+out=$(YAMLPRIMS_FUZZ_DRIVER_TIMEOUT=1 python3 -I "$helper" run "$work/known.jsonl" "$work/rust" "$work/go-chunk" "$work" "raw:$work/corpus-chunk" 2>&1) || status=$?
+if [ "$status" -ne 0 ]; then ok; else bad "a chunk-only hang passed"; fi
+if [ "$(grep -c '^DIFF go-driver-chunk-timeout: chunk:2:' <<<"$out")" = 1 ]; then ok; else bad "chunk-only hang not reported once at the smallest batch"; fi
+if [ "$(grep -c '^DIFF ' <<<"$out")" = 1 ]; then ok; else bad "chunk-only hang reported other differences"; fi
+if grep -q -e "$chunk_marker" -e "$chunk_hex" <<<"$out"; then bad "chunk timeout output contains input bytes"; else ok; fi
+if grep -q '(1 driver timeouts)' <<<"$out"; then ok; else bad "summary does not count the chunk timeout"; fi
+if pgrep -f "$work/go-chunk" >/dev/null; then bad "chunk-hanging driver left running"; else ok; fi
+entry 'operation="go-driver-chunk-timeout"' >"$work/known-chunk.jsonl"
+if python3 -I "$helper" check-known "$work/known-chunk.jsonl" >/dev/null 2>&1; then bad "known list accepted a chunk-timeout entry"; else ok; fi
+
 # 3. Corpus decode failures report a digest and a fixed kind, never the input.
 marker=MARKER-$$-SECRET
 printf 'go test fuzz v1\n[]byte("%s\\xZZ")\n' "$marker" >"$work/corpus/bad-escape"
