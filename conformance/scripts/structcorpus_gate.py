@@ -32,6 +32,7 @@ Pin generation is disabled; changed expectations require independent review.
 import collections
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -46,8 +47,14 @@ def sha256(p):
     return h.hexdigest()
 
 
+# Git runs without inherited GIT_* variables (GIT_DIR, GIT_INDEX_FILE, ...), so every
+# question is answered by SOURCE_DIR's own repository, and `git status` takes no optional
+# index lock or refresh write.
+GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {"GIT_OPTIONAL_LOCKS": "0"}
+
+
 def git(src, *args):
-    return subprocess.run(["git", "-C", str(src), *args], capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(["git", "-C", str(src), *args], capture_output=True, text=True, check=True, env=GIT_ENV).stdout.strip()
 
 
 def structcorpus_layout(src):
@@ -193,11 +200,12 @@ def tag_problems(src, tag, commit):
     if not isinstance(tag, dict):
         return [f"corpus_tag is not an object: {json.dumps(tag)[:200]}"]
     name, obj = tag.get("name"), tag.get("object")
-    if not isinstance(name, str) or not isinstance(obj, str) or not name or not re.fullmatch(r"[0-9a-f]{40}", obj):
+    if (not isinstance(name, str) or not isinstance(obj, str) or not name or "\x00" in name
+            or not re.fullmatch(r"[0-9a-f]{40}", obj)):
         return [f"corpus_tag is malformed: {json.dumps(tag)[:200]}"]
     ref = f"refs/tags/{name}"
     def run(*args):
-        r = subprocess.run(["git", "-C", str(src), *args], capture_output=True, text=True)
+        r = subprocess.run(["git", "-C", str(src), *args], capture_output=True, text=True, env=GIT_ENV)
         return r.stdout.strip() if r.returncode == 0 else None
     if run("check-ref-format", ref) is None:
         return [f"corpus_tag name {json.dumps(name)} is not a valid tag name"]

@@ -12,6 +12,7 @@ source. Neither SOURCE_DIR nor HYDRATED_DIR is modified. Prints one row per prob
 exits 1 if any control does not behave as expected.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -188,31 +189,59 @@ drive("input-over-not-phase-limit", [input_case("input-over", {"error": {"phase"
 drive("input-at-not-error", [input_case("input-at", {"error": {"phase": "input"}})], False)
 
 
+# Git runs without inherited GIT_* variables, so GIT_DIR, GIT_INDEX_FILE and the like
+# can never point a probe at SOURCE_DIR's repository.
+GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {"GIT_OPTIONAL_LOCKS": "0"}
+
+
 def private_copy(src, dst, meta):
     """A copy of the SOURCE_DIR checkout with git metadata of its own.
 
     The worktree files are copied without `.git` (a linked worktree's `.git` is a gitfile
-    pointing at the shared repository). The copy gets the refs and index of a
-    `git clone --shared --no-checkout` of SOURCE_DIR, which borrows objects read-only,
-    so probes that edit refs or files never touch SOURCE_DIR's repository.
+    pointing at the shared repository). The copy gets the refs of a
+    `git clone --shared --no-checkout` of SOURCE_DIR, which borrows objects read-only, and
+    an index built from HEAD. Every command names the copy's git directory, which is
+    confirmed private before anything is written, so probes that edit refs or files never
+    touch SOURCE_DIR's repository or index.
     """
     shutil.copytree(src, dst, symlinks=True, ignore=lambda d, names: [".git"] if Path(d) == Path(src) else [])
-    run = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, check=True).stdout.strip()
+    run = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, check=True, env=GIT_ENV).stdout.strip()
     head = run("-C", str(src), "rev-parse", "HEAD")
     run("clone", "--quiet", "--shared", "--no-checkout", str(src), str(meta))
     shutil.move(str(meta / ".git"), str(dst / ".git"))
-    run("-C", str(dst), "update-ref", "--no-deref", "HEAD", head)
-    run("-C", str(dst), "read-tree", "HEAD")
-    run("-C", str(dst), "update-index", "-q", "--refresh")
-    if run("-C", str(dst), "rev-parse", "--git-common-dir") != ".git":
+    gd = (dst / ".git").resolve()
+    if not (dst / ".git").is_dir() or (dst / ".git").is_symlink():
         sys.exit("gate probes: private copy does not have its own git directory")
+    own = ["--git-dir", str(gd), "--work-tree", str(dst)]
+    if run(*own, "rev-parse", "--absolute-git-dir") != str(gd):
+        sys.exit("gate probes: private copy does not have its own git directory")
+    run(*own, "update-ref", "--no-deref", "HEAD", head)
+    run(*own, "read-tree", "HEAD")
+    run(*own, "update-index", "-q", "--refresh")
     return dst
 
 
-def gate(label, h, s):
-    r = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/structcorpus_gate.py"), str(pin), str(h), str(s), str(driver)], capture_output=True, text=True)
+def write_inside(root, rel, data):
+    """Replace the bytes of root/rel, refusing a symlink in any component of rel."""
+    p = Path(root)
+    for part in Path(rel).parts:
+        p = p / part
+        if p.is_symlink():
+            sys.exit(f"gate probes: {rel} passes through a symlink in the copy")
+    fd = os.open(p, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+
+
+def gate(label, h, s, expect=None):
+    """A control (expect None) must pass; a corruption must fail with a FAIL line containing `expect`."""
+    r = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/structcorpus_gate.py"), str(pin), str(h), str(s), str(driver)],
+                       capture_output=True, text=True, env=GIT_ENV)
     fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
-    ok = (r.returncode == 0) == (label == "control")
+    if expect is None:
+        ok = r.returncode == 0
+    else:
+        ok = r.returncode != 0 and any(expect in l for l in fails)
     results.append((f"gate:{label}", r.returncode, ok, " | ".join(fails)[:160] or r.stdout.strip()[-120:]))
 
 
@@ -226,28 +255,30 @@ with tempfile.TemporaryDirectory() as t:
     shutil.copy(hyd / ".structcorpus-hydrated.json", h)
     lines = (hyd / "cases.jsonl").read_text().splitlines(keepends=True)
     (h / "cases.jsonl").write_text("".join(lines[:-1]))
-    gate("missing-case", h, src)
+    gate("missing-case", h, src, "hydrated differs from the pin")
     # Altered source: a fixture byte changed in a copied checkout.
     s = private_copy(src, t / "src", t / "meta")
+    # The unaltered copy must pass, so each corruption below fails for its own reason.
+    gate("control-copy", hyd, s)
     tag = json.loads(pin.read_text()).get("corpus_tag")
     if tag:
         # Moved tag: the pinned tag name re-pointed at the same commit without the tag
         # object. Only the private copy's refs change.
         ref = f"refs/tags/{tag['name']}"
-        git_s = ["git", "-C", str(s)]
-        subprocess.run([*git_s, "update-ref", ref, f"{tag['object']}^{{commit}}"], check=True)
+        git_s = ["git", "--git-dir", str((s / ".git").resolve()), "--work-tree", str(s)]
+        subprocess.run([*git_s, "update-ref", ref, f"{tag['object']}^{{commit}}"], check=True, env=GIT_ENV)
         try:
-            gate("moved-tag", hyd, s)
+            gate("moved-tag", hyd, s, "corpus_tag")
         finally:
-            subprocess.run([*git_s, "update-ref", ref, tag["object"]], check=True)
-    f = s / "fixtures/yaml/indent-flow-indented.yaml"
-    f.write_bytes(f.read_bytes().replace(b"a", b"x", 1))
-    gate("altered-fixture", hyd, s)
+            subprocess.run([*git_s, "update-ref", ref, tag["object"]], check=True, env=GIT_ENV)
+    rel = "fixtures/yaml/indent-flow-indented.yaml"
+    write_inside(s, rel, (s / rel).read_bytes().replace(b"a", b"x", 1))
+    gate("altered-fixture", hyd, s, "does not match its record")
     if REGISTRY:
         # Altered registry: an unsupported schema_version fails before anything is read.
-        reg = s / "manifests/formats.json"
-        reg.write_text(reg.read_text().replace('"formats/v1"', '"formats/v0"', 1))
-        gate("altered-registry", hyd, s)
+        rel = "manifests/formats.json"
+        write_inside(s, rel, (s / rel).read_bytes().replace(b'"formats/v1"', b'"formats/v0"', 1))
+        gate("altered-registry", hyd, s, "unsupported schema_version")
 
 bad = 0
 print("probe\texit\tas_expected\tdetail")

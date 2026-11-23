@@ -96,7 +96,9 @@ for line in vector_file.read_text(encoding="utf-8").split("\n"):
 vector_count = len(records)
 
 corpus_count = 0
-has_manifest = (corpus_root / "manifests" / "formats.json").is_file() or (corpus_root / "manifests" / "cases.jsonl").is_file()
+# Any directory entry counts, a dangling link included, so the layout check fails closed.
+present = lambda q: q.exists() or q.is_symlink()
+has_manifest = present(corpus_root / "manifests" / "formats.json") or present(corpus_root / "manifests" / "cases.jsonl")
 if has_manifest and (corpus_root / "tools" / "corpus.py").is_file():
     try:
         cases_file, profiles_dir, _, registry = structcorpus_layout(corpus_root)

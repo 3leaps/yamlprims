@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -380,6 +381,18 @@ def _function_sources(text):
     return {n.name: ast.get_source_segment(text, n) for n in tree.body if isinstance(n, ast.FunctionDef)}
 
 
+def _script_names(path, *names):
+    """Functions and the GIT_ENV assignment of a conformance script, evaluated now."""
+    text = (ROOT / path).read_text()
+    tree = ast.parse(text)
+    env = [ast.get_source_segment(text, n) for n in tree.body
+           if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "GIT_ENV" for t in n.targets)]
+    ns = {"json": json, "os": os, "re": re, "shutil": shutil, "subprocess": subprocess, "sys": sys, "Path": Path}
+    for src in env + [_function_sources(text)[n] for n in names]:
+        exec(src, ns)
+    return ns
+
+
 def _embedded_python(path):
     """The Python heredoc bodies of a shell script."""
     text = (ROOT / path).read_text()
@@ -486,10 +499,6 @@ class LayoutTests(unittest.TestCase):
                     self.assertIn("structcorpus layout:", result.stderr)
 
     def test_probe_copy_has_private_refs(self):
-        ns = {}
-        exec(_function_sources((ROOT / SOURCE_READERS[1]).read_text())["private_copy"],
-             {"Path": Path, "shutil": shutil, "subprocess": subprocess, "sys": sys}, ns)
-        private_copy = ns["private_copy"]
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             main, wt = tmp / "main", tmp / "wt"
@@ -504,7 +513,17 @@ class LayoutTests(unittest.TestCase):
             obj, c1 = run(main, "rev-parse", "refs/tags/v1"), run(main, "rev-parse", "HEAD")
             run(main, "worktree", "add", "-q", "--detach", str(wt), "v1")
             self.assertTrue((wt / ".git").is_file())
-            copy = private_copy(wt, tmp / "copy", tmp / "meta")
+            src_gitdir = Path(run(wt, "rev-parse", "--absolute-git-dir"))
+            run(wt, "update-index", "--assume-unchanged", "f.txt")
+            index_before = (src_gitdir / "index").read_bytes()
+            head_before = (src_gitdir / "HEAD").read_bytes()
+            # Inherited variables that would point git at the source repository are dropped.
+            with mock.patch.dict(os.environ, {"GIT_INDEX_FILE": str(src_gitdir / "index"), "GIT_DIR": str(src_gitdir)}):
+                private_copy = _script_names(SOURCE_READERS[1], "private_copy")["private_copy"]
+                copy = private_copy(wt, tmp / "copy", tmp / "meta")
+            self.assertEqual((src_gitdir / "index").read_bytes(), index_before)
+            self.assertEqual((src_gitdir / "HEAD").read_bytes(), head_before)
+            self.assertTrue((copy / ".git" / "index").is_file())
             self.assertTrue((copy / ".git").is_dir())
             self.assertEqual(run(copy, "status", "--porcelain", "--untracked-files=no"), "")
             self.assertEqual(run(copy, "rev-parse", "HEAD"), c1)
@@ -514,6 +533,24 @@ class LayoutTests(unittest.TestCase):
             self.assertEqual(run(main, "rev-parse", "refs/tags/v1"), obj)
             self.assertEqual(run(main, "cat-file", "-t", "v1"), "tag")
             self.assertEqual((wt / "f.txt").read_text(), "x\n")
+
+    def test_probe_writes_refuse_symlinks(self):
+        write_inside = _script_names(SOURCE_READERS[1], "write_inside")["write_inside"]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root, outside = tmp / "root", tmp / "outside"
+            (root / "d").mkdir(parents=True)
+            outside.mkdir()
+            (outside / "f").write_text("x\n")
+            (root / "d/real").write_text("a\n")
+            write_inside(root, "d/real", b"b\n")
+            self.assertEqual((root / "d/real").read_text(), "b\n")
+            (root / "d/link").symlink_to(outside / "f")
+            (root / "dirlink").symlink_to(outside)
+            for rel in ("d/link", "dirlink/f"):
+                with self.subTest(rel), self.assertRaises(SystemExit):
+                    write_inside(root, rel, b"Z\n")
+            self.assertEqual((outside / "f").read_text(), "x\n")
 
     def test_registry_pin_shape(self):
         pins = ROOT / "conformance/pins"
@@ -537,9 +574,7 @@ class LayoutTests(unittest.TestCase):
                          {k: v for k, v in old.items() if k != "corpus_commit"})
 
     def test_gate_checks_corpus_tag(self):
-        ns = {}
-        exec(_function_sources((ROOT / SOURCE_READERS[0]).read_text())["tag_problems"], {"json": json, "re": re, "subprocess": subprocess}, ns)
-        tag_problems = ns["tag_problems"]
+        tag_problems = _script_names(SOURCE_READERS[0], "tag_problems")["tag_problems"]
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp)
             run = lambda *a: subprocess.run(["git", "-C", tmp, *a], capture_output=True, text=True, check=True).stdout.strip()
@@ -558,6 +593,15 @@ class LayoutTests(unittest.TestCase):
             for name in ("v1^{tag}", "v1^0", "refs/tags/v1", "v1~0", "@", "v1..v1"):
                 self.assertTrue(tag_problems(src, {"name": name, "object": obj}, c1), name)
             self.assertTrue(tag_problems(src, {"name": "v1", "object": obj[:12]}, c1))
+            self.assertTrue(tag_problems(src, {"name": "v1\x00", "object": obj}, c1))
+            # An inherited GIT_DIR naming another repository is not consulted.
+            other = Path(tmp) / "other"
+            other.mkdir()
+            run_o = lambda *a: subprocess.run(["git", "-C", str(other), *a], capture_output=True, text=True, check=True)
+            run_o("init", "-q")
+            with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git")}):
+                scoped = _script_names(SOURCE_READERS[0], "tag_problems")["tag_problems"]
+                self.assertEqual(scoped(src, {"name": "v1", "object": obj}, c1), [])
             run("tag", "-f", "v1", c1)
             problems = tag_problems(src, {"name": "v1", "object": obj}, c1)
             self.assertTrue(any("not an annotated tag" in p for p in problems), problems)
