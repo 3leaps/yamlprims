@@ -8,6 +8,14 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-22
+
+The library contract is still `spec-v1.6`; the in-tree specification text is the unreleased revision 1.7 draft, which this release does not implement.
+
+### Fixed
+
+- Pure Go: loading a block scalar whose content is indented 14 or more columns no longer fails to terminate when the input ends inside that indentation (all Go load entrypoints, v0.1.0 through v0.3.0). Six conformance vectors cover the indentation boundary and chomping (`194` in-repo vectors).
+
 ### Changed
 
 - The workflow digest and permission checkers run the published `yamlprims` v0.3.0 CLI: `config/yamlprims-cli.txt` pins the v0.3.0 release archives and binary digests, and the minimum version is now 0.3.0.
@@ -98,7 +106,8 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 - Conformance qualification against `conformance/pins/pin-c8b7421.json` (`structcorpus` `c8b7421b9e2473a9a7f37d04e3acfd5f552a2f99`, 19 profile rows across `spec-v1.0` through `spec-v1.4`, `61,360` corpus cases / `90,982` expectations) and 154 in-repo differential conformance vectors (`conformance/vectors/cases.jsonl`).
 - Dual-track signed release, packaging, and provenance verification workflows and scripts (`.github/workflows/release.yml`, `.github/workflows/crates-verify.yml`, `.github/workflows/registry-publish.yml`, `scripts/release-*.sh`, `scripts/release-*.py`, `scripts/check-packages.sh`, `scripts/deps-check.sh`, `scripts/doctor.py`) supporting OpenPGP + Minisign release signing, zero-compile `crates.io` publication, and OIDC Trusted Publishing with PyPI PEP 740 and npm Sigstore provenance verification.
 
-[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/3leaps/yamlprims/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/3leaps/yamlprims/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/3leaps/yamlprims/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/3leaps/yamlprims/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/3leaps/yamlprims/compare/v0.2.0...v0.2.1

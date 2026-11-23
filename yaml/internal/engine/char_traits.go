@@ -147,10 +147,6 @@ func (in *strInput) bufmaxlen() int {
 	return inputBufCap
 }
 
-func (in *strInput) bufIsEmpty() bool {
-	return len(in.src) == 0
-}
-
 func (in *strInput) rawReadCh() rune {
 	if len(in.src) == 0 {
 		return 0

@@ -186,3 +186,9 @@
 {"id": "lint.limits.path_max_owned_bytes_reject", "input": "long_ancestor_key_name_for_lint_budget: {inner: yes}\n", "single": true, "limits": {"max_owned_bytes": 430, "max_scalar_bytes": 256, "max_key_bytes": 256}, "check_plain": true}
 {"id": "lint.limits.max_output_bytes_reject", "input": "flag: yes\n", "single": true, "limits": {"max_output_bytes": 64}, "check_plain": true}
 {"id": "lint.booleans.all_spellings", "input": "[y, Y, yes, Yes, YES, n, N, no, No, NO, on, On, ON, off, Off, OFF]\n", "single": true, "check_plain": true}
+{"id": "block_scalar.indent13.trailing_spaces", "input": "k: |\n             x\n ", "single": true, "check_plain": true}
+{"id": "block_scalar.indent14.trailing_spaces", "input": "k: |\n              x\n ", "single": true, "check_plain": true}
+{"id": "block_scalar.indent20.strip.trailing_spaces", "input": "k: |-\n                    x\n  ", "single": true, "check_plain": true}
+{"id": "block_scalar.indent20.keep.trailing_spaces", "input": "k: |+\n                    x\n  ", "single": true, "check_plain": true}
+{"id": "block_scalar.indent20.blank_lines", "input": "k: |\n                    x\n\n   \n                    y\n     ", "single": true, "check_plain": true}
+{"id": "block_scalar.indent40.no_final_break", "input": "- |\n                                        x\n                                        y", "single": true, "check_plain": true}
