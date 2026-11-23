@@ -12,6 +12,8 @@ Checks, in order; every failure is reported and the exit status is 1:
 - SOURCE_DIR is a clean checkout at the pinned commit, and the pinned files (the registry
   when present, the YAML case manifest, every profile and span convention, every recipe)
   have their pinned sha256;
+- when the pin names a `corpus_tag`, SOURCE_DIR's `refs/tags/<name>` is that annotated tag
+  object and it peels to the pinned commit (a moved, lightweight or missing tag fails);
 - structcorpus's own `tools/corpus.py verify` accepts HYDRATED_DIR, and the hydrated
   case inventory and hydration record have their pinned sha256;
 - the inventory (records with `"format": "yaml"`; other formats in the hydrated manifest are
@@ -175,6 +177,28 @@ def observe(hyd, src, driver):
     return obs, problems
 
 
+def tag_problems(src, tag, commit):
+    """The pinned tag must exist in SOURCE_DIR as the pinned annotated tag object on the pinned commit."""
+    name, obj = tag.get("name"), tag.get("object")
+    if not isinstance(name, str) or not isinstance(obj, str) or not name or not obj:
+        return [f"corpus_tag is malformed: {json.dumps(tag)[:200]}"]
+    def rev(*args):
+        r = subprocess.run(["git", "-C", str(src), *args], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+    got = rev("rev-parse", "--verify", "--quiet", f"refs/tags/{name}")
+    if got is None:
+        return [f"corpus_tag {name} is missing from the source checkout"]
+    problems = []
+    if got != obj:
+        problems.append(f"corpus_tag {name} is object {got}, pinned {obj}")
+    if rev("cat-file", "-t", got) != "tag":
+        problems.append(f"corpus_tag {name} is not an annotated tag")
+    peeled = rev("rev-parse", "--verify", "--quiet", f"{got}^{{commit}}")
+    if peeled != commit:
+        problems.append(f"corpus_tag {name} peels to {peeled}, pinned commit {commit}")
+    return problems
+
+
 def main():
     args = sys.argv[1:]
     if "--write-pin" in args:
@@ -189,6 +213,8 @@ def main():
     pin_path, hyd, src, driver = Path(args[0]), Path(args[1]), Path(args[2]), Path(args[3])
     obs, problems = observe(hyd, src, driver)
     pin = json.loads(pin_path.read_text())
+    if "corpus_tag" in pin:
+        problems += tag_problems(src, pin["corpus_tag"], pin["corpus_commit"])
     for key in ("corpus_commit", "files", "hydrated", "cases", "review_status", "rows"):
         if obs[key] != pin[key]:
             if isinstance(pin[key], dict):

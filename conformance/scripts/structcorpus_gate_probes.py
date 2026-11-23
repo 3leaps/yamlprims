@@ -205,6 +205,13 @@ with tempfile.TemporaryDirectory() as t:
     # Altered source: a fixture byte changed in a copied checkout.
     s = t / "src"
     shutil.copytree(src, s, symlinks=True)
+    tag = json.loads(pin.read_text()).get("corpus_tag")
+    if tag:
+        # Moved tag: the pinned tag name re-pointed at the same commit without the tag object.
+        ref = f"refs/tags/{tag['name']}"
+        subprocess.run(["git", "-C", str(s), "update-ref", ref, f"{tag['object']}^{{commit}}"], check=True)
+        gate("moved-tag", hyd, s)
+        subprocess.run(["git", "-C", str(s), "update-ref", ref, tag["object"]], check=True)
     f = s / "fixtures/yaml/indent-flow-indented.yaml"
     f.write_bytes(f.read_bytes().replace(b"a", b"x", 1))
     gate("altered-fixture", hyd, s)

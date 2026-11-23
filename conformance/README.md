@@ -1,12 +1,16 @@
 # Conformance checks
 
 The core baseline is tested against specification revision 1.5, the included
-synthetic truth/wire regressions and the exact structcorpus inventory at
-`2f055c10bffb494dbe395a5d8851b374fde07322`.
+synthetic truth/wire regressions and the exact structcorpus inventory of the
+signed `v0.1.0` release (tag object `d9d37e9d937041cebc41c31380dd02381f34dc23`,
+commit `d04cd325262717b2fcec1884536c6f72398e3b63`).
 
-The lock in `pins/pin-2f055c1.json` fixes source files, profile revisions,
-hydrated inventory hashes, review-status counts and per-profile result rows.
-Earlier locks (`pins/pin-b52fcd0.json`, `pins/pin-6b1266e.json`, `pins/pin-c8b7421.json`,
+The lock in `pins/pin-d04cd32.json` fixes the release tag object and commit, source
+files, profile revisions, hydrated inventory hashes, review-status counts and
+per-profile result rows. The gate requires the source checkout's `refs/tags/v0.1.0` to
+be that annotated tag object on the pinned commit. Its inventory, hydration and result
+rows are byte-identical to `2f055c1`. Earlier locks (`pins/pin-2f055c1.json`,
+`pins/pin-b52fcd0.json`, `pins/pin-6b1266e.json`, `pins/pin-c8b7421.json`,
 `pins/pin-444bc12.json`, `pins/pin-400ae34.json`, `pins/pin-1469b2a.json`) remain
 historical evidence.
 
@@ -17,7 +21,7 @@ independent semantic review.
 The drivers, the gate and the controls read a corpus in either layout. When the
 checkout has `manifests/formats.json` (`formats/v1`), its `yaml` entry names the YAML
 case manifest, profile directory and span-convention directory
-(`manifests/yaml/...` at `2f055c1`), and the lock covers the registry and those paths.
+(`manifests/yaml/...` from `2f055c1`), and the lock covers the registry and those paths.
 Without it, the single-format paths `manifests/cases.jsonl`, `manifests/profiles/` and
 `manifests/span-conventions/` are read (`b52fcd0` and earlier). A malformed registry,
 a missing `yaml` entry, or a path that is absolute, has `.` or `..` segments, or
@@ -50,8 +54,9 @@ profiles (revision 5 when present).
 Failed tests/builds stop execution before the driver. Core package tests need
 only the included fixtures; full corpus qualification needs the pinned corpus.
 
-The baseline inventory at `2f055c1` (unchanged from `b52fcd0`; the corpus moved the
-YAML manifests under `manifests/yaml/` without changing their bytes) contains 61,366
+The baseline inventory at `v0.1.0` (unchanged from `2f055c1` and `b52fcd0`; at
+`2f055c1` the corpus moved the YAML manifests under `manifests/yaml/` without changing
+their bytes) contains 61,366
 provisional records and
 90,988 compared expectations across 20 result rows, including 21 node spans,
 6 expectations under `yamlprims-core-depth128` r1, 6 expectations under
@@ -59,7 +64,7 @@ provisional records and
 `yamlprims-core-entries2` r1, with eight explicit exclusions (`yaml-core` r1).
 The four revision 4 and four revision 5 policy profiles (`yamlprims-core`,
 `yamlprims-core-stream`, `yamlprims-core-merge-apply`, `yamlprims-core-merge-as-key`
-r4 and r5) carry zero shipped corpus records in `2f055c1`; revision 5 cites
+r4 and r5) carry zero shipped corpus records in `v0.1.0`; revision 5 cites
 specification 1.5 and keeps the revision 4 source-loader policy fields. The
 driver validates their policy bindings
 and `structcorpus_probes_v14.py` exercises them synthetically without adding

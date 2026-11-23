@@ -157,7 +157,7 @@ class RequalifyTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             py_calls = py_log.read_text().splitlines()
             self.assertEqual(len(py_calls), 10, py_calls)
-            expected_pin = str(ROOT / "conformance/pins/pin-2f055c1.json")
+            expected_pin = str(ROOT / "conformance/pins/pin-d04cd32.json")
             self.assertIn(f"conformance/scripts/structcorpus_gate.py {expected_pin}", py_calls[0])
             self.assertIn("conformance/scripts/structcorpus_probes_v13.py", py_calls[1])
             self.assertIn("conformance/scripts/structcorpus_probes_v14.py --require-depth255 --require-r5", py_calls[2])
@@ -489,6 +489,35 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("manifests/yaml/cases.jsonl", new["files"])
         self.assertFalse([f for f in new["files"] if f.startswith(("manifests/profiles/", "manifests/span-conventions/"))])
         self.assertEqual(len(new["files"]), len(old["files"]) + 1)
+
+    def test_release_pin_shape(self):
+        pins = ROOT / "conformance/pins"
+        new = json.loads((pins / "pin-d04cd32.json").read_text())
+        old = json.loads((pins / "pin-2f055c1.json").read_text())
+        self.assertEqual(new["corpus_commit"], "d04cd325262717b2fcec1884536c6f72398e3b63")
+        self.assertEqual(new["corpus_tag"], {"name": "v0.1.0", "object": "d9d37e9d937041cebc41c31380dd02381f34dc23"})
+        self.assertEqual({k: v for k, v in new.items() if k not in ("corpus_commit", "corpus_tag")},
+                         {k: v for k, v in old.items() if k != "corpus_commit"})
+
+    def test_gate_checks_corpus_tag(self):
+        ns = {}
+        exec(_function_sources((ROOT / SOURCE_READERS[0]).read_text())["tag_problems"], {"json": json, "subprocess": subprocess}, ns)
+        tag_problems = ns["tag_problems"]
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp)
+            run = lambda *a: subprocess.run(["git", "-C", tmp, *a], capture_output=True, text=True, check=True).stdout.strip()
+            run("init", "-q")
+            run("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "c1")
+            c1 = run("rev-parse", "HEAD")
+            run("-c", "user.name=t", "-c", "user.email=t@example.invalid", "tag", "-a", "-m", "t", "v1")
+            obj = run("rev-parse", "refs/tags/v1")
+            self.assertEqual(tag_problems(src, {"name": "v1", "object": obj}, c1), [])
+            self.assertTrue(tag_problems(src, {"name": "v2", "object": obj}, c1))
+            self.assertTrue(tag_problems(src, {"name": "v1", "object": obj}, "0" * 40))
+            self.assertTrue(tag_problems(src, {"name": "v1"}, c1))
+            run("tag", "-f", "v1", c1)
+            problems = tag_problems(src, {"name": "v1", "object": obj}, c1)
+            self.assertTrue(any("not an annotated tag" in p for p in problems), problems)
 
 
 if __name__ == "__main__":
