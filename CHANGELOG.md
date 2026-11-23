@@ -25,6 +25,10 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 - `encode_error` in Rust, Python and TypeScript now refuses, as Go already did, an error whose `configured` limit is 0 or above 2^53 - 1, whose `invalid_len` is above 2^53 - 1, or that carries a path index, location or span value above 2^53 - 1, with an `Internal` error and no output. Previously Rust could write such an envelope, which `decode_wire` then refused.
 - Wire decoding limit errors read `wire payload exceeds <limit> (<configured>)` in Go as in Rust, and the Go `Tagged` and `Document` constructors, the TypeScript `createTag`, `createTaggedNode` and `createDocument`, the Python `Document` constructor, and the Python emitter's unsupported-version error use the same messages as the Rust core.
 - The error message for a tag URI that is invalid or over the emit tag limit is now worded the same in all four bindings (`Tagged node contains invalid or oversized tag URI`, also on the Rust serde `TaggedValue` path); the error kind and site are unchanged.
+- Loading refuses a resolved node tag that is neither a local tag nor a global tag URI with an RFC 3986 scheme (for example `!<$:?>` or a `%TAG` expansion without a scheme), as `Syntax(InvalidGlobalTagCharacter)` at the tag, before construction and the `unknown_tags` policy. Such documents previously loaded with the tag retained, and `emit*` and `decode_wire` then refused them (`spec-v1.7 §4.4`, `§7.1`).
+- Loading refuses a verbatim `!<!>` tag the same way. It was previously treated as the non-specific `!` and its tag was dropped; a bare `!` is unchanged (`spec-v1.7 §4.4`).
+- A `%TAG` directive whose named handle uses a character outside `[0-9A-Za-z-]` (such as `_`) is refused as `Syntax(ExpectedTagDirectiveBang)` at the directive, used or not, and a tag using such a handle as `Syntax(InvalidTagTerminator)` at the tag. Underscores in primary local tags, suffixes and URIs are unchanged (`spec-v1.7 §4.4`, `§7.1`).
+- A `%TAG` directive whose prefix immediately follows its handle is refused as `Syntax(ExpectedWhitespace)` at the first prefix character, whether or not the handle is used; a space or tab separator is required (`spec-v1.7 §7.1`).
 
 ## [0.3.1] - 2026-11-22
 
@@ -36,10 +40,6 @@ The library contract is still `spec-v1.6`; the in-tree specification text is the
 
 ### Changed
 
-- Loading refuses a resolved node tag that is neither a local tag nor a global tag URI with an RFC 3986 scheme (for example `!<$:?>` or a `%TAG` expansion without a scheme), as `Syntax(InvalidGlobalTagCharacter)` at the tag, before construction and the `unknown_tags` policy. Such documents previously loaded with the tag retained, and `emit*` and `decode_wire` then refused them (`spec-v1.7 §4.4`, `§7.1`).
-- Loading refuses a verbatim `!<!>` tag the same way. It was previously treated as the non-specific `!` and its tag was dropped; a bare `!` is unchanged (`spec-v1.7 §4.4`).
-- A `%TAG` directive whose named handle uses a character outside `[0-9A-Za-z-]` (such as `_`) is refused as `Syntax(ExpectedTagDirectiveBang)` at the directive, used or not, and a tag using such a handle as `Syntax(InvalidTagTerminator)` at the tag. Underscores in primary local tags, suffixes and URIs are unchanged (`spec-v1.7 §4.4`, `§7.1`).
-- A `%TAG` directive whose prefix immediately follows its handle is refused as `Syntax(ExpectedWhitespace)` at the first prefix character, whether or not the handle is used; a space or tab separator is required (`spec-v1.7 §7.1`).
 - The workflow digest and permission checkers run the published `yamlprims` v0.3.0 CLI: `config/yamlprims-cli.txt` pins the v0.3.0 release archives and binary digests, and the minimum version is now 0.3.0.
 
 ## [0.3.0] - 2026-11-18
