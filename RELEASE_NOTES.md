@@ -1,6 +1,7 @@
 # spec-v1.7 — unreleased draft specification
 
-Revision 1.7 tightens loading to the YAML 1.2.2 tag rules. Specification
+Revision 1.7 tightens loading to the YAML 1.2.2 tag rules, states plain JSON
+float digits, and confirms whole-envelope error parity. Specification
 publication does not claim runtime implementation or qualification.
 
 - `1.7/E-1`: bounded source validation refuses a resolved node tag identity,
@@ -19,6 +20,14 @@ publication does not claim runtime implementation or qualification.
   directive with any other named handle is `Syntax(ExpectedTagDirectiveBang)`
   at the directive start, and a tag using one is
   `Syntax(InvalidTagTerminator)` at the tag.
+- `1.7/E-5`: plain JSON float text is stated: the fewest significant decimal
+  digits that round back to the same binary64 value, the nearest such decimal,
+  and an even final digit when two are equally near, with the existing
+  fixed-point/exponent layout written out. An exact tie may be spelled
+  differently from earlier output; the value is unchanged.
+- `1.7/E-6`: error message wording is not a stable cross-release API; within
+  one qualified revision, four-language byte parity covers the whole
+  serialized error envelope, including `message`, `related` and `path`.
 
 ## spec-v1.6 — tagged draft specification
 

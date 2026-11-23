@@ -25,7 +25,9 @@ Revision 1.7 makes loading refuse a resolved tag identity that is neither a
 local tag nor a global tag URI (including verbatim `!<!>`), pins named tag
 handle spelling, and requires separation between a `%TAG` handle and its
 prefix, all during bounded source validation in event order (§3, §4.4, §7.1,
-§10.2, §11.1).
+§10.2, §11.1). It also states the digit selection and layout of plain JSON
+float text (§11.3) and that four-language byte parity covers the whole
+serialized error envelope, including `message` (§7.1, §11.1).
 
 This document is the normative contract for yamlprims: an owned YAML 1.2 data
 layer over a maintained, safe-Rust event parser. Its key words MUST, MUST NOT,
@@ -812,7 +814,7 @@ pub struct ErrorDetail {
     pub site: Site,
     pub related: Vec<Related>,       // e.g. first duplicate, alias use site, merge directive
     pub path: Vec<PathSegment>,
-    pub message: String,             // human-readable, bounded, not a contract
+    pub message: String,             // human-readable, bounded; wording is not a stable API (§11.1)
     pub engine_detail: Option<String>,
 }
 impl Error {
@@ -2100,6 +2102,12 @@ Error     = {"kind":"<kind>","detail":Detail,
   not part of the contract.
 - **Paths are exact identities.** A `path` key segment carries the full
   structured key; display truncation (§6) never applies to it.
+- **Error envelope parity.** Human-readable error message wording is not a
+  stable cross-release API. For equivalent operations and inputs within a
+  qualified revision's common supported domain, the four-language byte-parity
+  requirement applies to the complete serialized error envelope, including
+  `message`, `related` and `path`. Applications MUST use the structured error
+  fields rather than message text for programmatic decisions.
 
 **Error vocabulary.** `kind` is the snake_case `ErrorKind` name. `detail` has
 exactly these members:
@@ -2280,6 +2288,29 @@ below. Use the `Node`/`Document` model or the wire format for lossless data.
 | non-String key (Int, Bool, Null, Float, composite) | **error** (`Type`) | **error** (`Type`) | **error** (`Type`) |
 | Tagged | **error** (`UnknownTag`) | **error** (`UnknownTag`) | **error** (`UnknownTag`) |
 | spans, `via`, `tag_start` | dropped (documented) | dropped (documented) | dropped (documented) |
+
+**Float text in plain JSON (`encode_plain`, `dump --plain`).** Signed zero is
+written `0.0` or `-0.0`. For a finite nonzero Float, plain JSON text MUST use
+the fewest significant decimal digits that round back to the same binary64
+value under round-to-nearest, ties-to-even. Among candidates with that minimum
+digit count, it MUST choose the decimal value nearest the exact binary64 value;
+if two candidates are equally near, it MUST choose the one with an even final
+significant digit. This is the digit-selection rule of §10.2, not its YAML
+rendering rule. For example, the binary64 value `10^15 + 1/4` (bits
+`430c6bf526340002`) is written `1000000000000000.2`. With the chosen digits
+`d_0 d_1 … d_(n−1)` and scientific exponent `e` (the chosen decimal magnitude
+is `d_0.d_1… × 10^e`), the layout is a `-` for a negative value, then:
+
+- when `-4 <= e < 16`, fixed point: the digits with the decimal point after
+  `d_e` when `e >= 0` (padding with `0` digits and appending `.0` when the
+  value is integral), or `0.` followed by `−e−1` zeros and the digits when
+  `e < 0`;
+- otherwise `d_0`, then `.` and `d_1…` when `n > 1`, then a lowercase `e` and
+  `e` in base 10 with a `-` sign only when negative and no leading zeros (for
+  example `1e16`, `1.5e-5`).
+
+This layout is not the §10.2 emitter layout and not the §11.6 I-JSON
+(RFC 8785) number format.
 
 **Go `Unmarshal*` / `UnmarshalNode` target conversion (`yaml.Unmarshal`, `yaml.UnmarshalWith`, `yaml.UnmarshalReader`, `yaml.UnmarshalReaderWith`, `yaml.UnmarshalNode`).**
 The Go binding provides typed unmarshaling into a caller-supplied target `v any`
@@ -3018,6 +3049,8 @@ their pinned profiles remain unchanged.
 | E-2 | §7.1 | Require a space or tab between a `%TAG` handle and its prefix (YAML 1.2.2 productions [88], [66]); a prefix that immediately follows the handle is `Syntax(ExpectedWhitespace)` at the first prefix character, including for an unused directive, checked where the parser processes the prologue directive in event order. |
 | E-3 | §4.4, §7.1 | Pin named tag handles to `!` + `[0-9A-Za-z-]+` + `!` (YAML 1.2.2 productions [38], [92]): a `%TAG` directive with any other named handle is `Syntax(ExpectedTagDirectiveBang)` at the directive start, used or not, and a tag using one is `Syntax(InvalidTagTerminator)` at `tag_start`. Underscores remain valid in primary local tags, suffixes and URIs. |
 | E-4 | §4.4 | Correct the YAML 1.2.2 production numbers cited for the global tag prefix and the verbatim tag to `[95] ns-global-tag-prefix` and `[98] c-verbatim-tag` (revision 1.6 cited `[86]` and `[91]`). |
+| E-5 | §11.3 | State the plain JSON float text: fewest significant decimal digits that round back to the same binary64 value, the nearest such decimal, and the one with an even final significant digit when two are equally near (the §10.2 digit-selection rule, not its rendering), with the existing fixed-point/exponent layout and signed-zero spelling written out. Revision 1.6 did not state digit selection; an exact tie may now be spelled differently, and the binary64 value is unchanged. |
+| E-6 | §7.1, §11.1 | Clarify that human-readable error message wording is not a stable cross-release API, and that for equivalent operations and inputs within a qualified revision's common supported domain the four-language byte-parity requirement covers the complete serialized error envelope, including `message`, `related` and `path`. Applications use the structured fields, not message text. |
 
 Wire grammar version 1 (`yamlprims-value/1`), the 81-code `SyntaxKind`
 vocabulary and the §6 subtree-weight formula are unchanged.
