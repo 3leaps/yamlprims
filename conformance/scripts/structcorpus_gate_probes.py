@@ -28,8 +28,12 @@ def structcorpus_layout(src):
     a source checkout; keep the copies identical.
     """
     reg = src / "manifests/formats.json"
-    if not reg.exists():
+    try:
+        reg.lstat()
+    except FileNotFoundError:
         return src / "manifests/cases.jsonl", src / "manifests/profiles", src / "manifests/span-conventions", False
+    except OSError as e:
+        raise ValueError(f"{reg}: {e}") from None
     try:
         doc = json.loads(reg.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
@@ -184,6 +188,27 @@ drive("input-over-not-phase-limit", [input_case("input-over", {"error": {"phase"
 drive("input-at-not-error", [input_case("input-at", {"error": {"phase": "input"}})], False)
 
 
+def private_copy(src, dst, meta):
+    """A copy of the SOURCE_DIR checkout with git metadata of its own.
+
+    The worktree files are copied without `.git` (a linked worktree's `.git` is a gitfile
+    pointing at the shared repository). The copy gets the refs and index of a
+    `git clone --shared --no-checkout` of SOURCE_DIR, which borrows objects read-only,
+    so probes that edit refs or files never touch SOURCE_DIR's repository.
+    """
+    shutil.copytree(src, dst, symlinks=True, ignore=lambda d, names: [".git"] if Path(d) == Path(src) else [])
+    run = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, check=True).stdout.strip()
+    head = run("-C", str(src), "rev-parse", "HEAD")
+    run("clone", "--quiet", "--shared", "--no-checkout", str(src), str(meta))
+    shutil.move(str(meta / ".git"), str(dst / ".git"))
+    run("-C", str(dst), "update-ref", "--no-deref", "HEAD", head)
+    run("-C", str(dst), "read-tree", "HEAD")
+    run("-C", str(dst), "update-index", "-q", "--refresh")
+    if run("-C", str(dst), "rev-parse", "--git-common-dir") != ".git":
+        sys.exit("gate probes: private copy does not have its own git directory")
+    return dst
+
+
 def gate(label, h, s):
     r = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/structcorpus_gate.py"), str(pin), str(h), str(s), str(driver)], capture_output=True, text=True)
     fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
@@ -203,15 +228,18 @@ with tempfile.TemporaryDirectory() as t:
     (h / "cases.jsonl").write_text("".join(lines[:-1]))
     gate("missing-case", h, src)
     # Altered source: a fixture byte changed in a copied checkout.
-    s = t / "src"
-    shutil.copytree(src, s, symlinks=True)
+    s = private_copy(src, t / "src", t / "meta")
     tag = json.loads(pin.read_text()).get("corpus_tag")
     if tag:
-        # Moved tag: the pinned tag name re-pointed at the same commit without the tag object.
+        # Moved tag: the pinned tag name re-pointed at the same commit without the tag
+        # object. Only the private copy's refs change.
         ref = f"refs/tags/{tag['name']}"
-        subprocess.run(["git", "-C", str(s), "update-ref", ref, f"{tag['object']}^{{commit}}"], check=True)
-        gate("moved-tag", hyd, s)
-        subprocess.run(["git", "-C", str(s), "update-ref", ref, tag["object"]], check=True)
+        git_s = ["git", "-C", str(s)]
+        subprocess.run([*git_s, "update-ref", ref, f"{tag['object']}^{{commit}}"], check=True)
+        try:
+            gate("moved-tag", hyd, s)
+        finally:
+            subprocess.run([*git_s, "update-ref", ref, tag["object"]], check=True)
     f = s / "fixtures/yaml/indent-flow-indented.yaml"
     f.write_bytes(f.read_bytes().replace(b"a", b"x", 1))
     gate("altered-fixture", hyd, s)

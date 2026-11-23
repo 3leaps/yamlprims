@@ -42,8 +42,12 @@ def structcorpus_layout(src):
     a source checkout; keep the copies identical.
     """
     reg = src / "manifests/formats.json"
-    if not reg.exists():
+    try:
+        reg.lstat()
+    except FileNotFoundError:
         return src / "manifests/cases.jsonl", src / "manifests/profiles", src / "manifests/span-conventions", False
+    except OSError as e:
+        raise ValueError(f"{reg}: {e}") from None
     try:
         doc = json.loads(reg.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:

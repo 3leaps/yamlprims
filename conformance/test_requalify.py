@@ -3,6 +3,7 @@ import ast
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -430,6 +431,12 @@ class LayoutTests(unittest.TestCase):
                         layout(src)
                 finally:
                     os.rmdir(outside)
+                # A dangling registry link is not a missing registry: it fails closed.
+                (src / "manifests/formats.json").unlink()
+                (src / "manifests/formats.json").symlink_to(src / "manifests/no-such-registry.json")
+                (src / "manifests/cases.jsonl").write_text("")
+                with self.assertRaisesRegex(ValueError, "formats.json"):
+                    layout(src)
 
     def test_yaml_record(self):
         ns = {}
@@ -478,6 +485,36 @@ class LayoutTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertIn("structcorpus layout:", result.stderr)
 
+    def test_probe_copy_has_private_refs(self):
+        ns = {}
+        exec(_function_sources((ROOT / SOURCE_READERS[1]).read_text())["private_copy"],
+             {"Path": Path, "shutil": shutil, "subprocess": subprocess, "sys": sys}, ns)
+        private_copy = ns["private_copy"]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            main, wt = tmp / "main", tmp / "wt"
+            run = lambda d, *a: subprocess.run(["git", "-C", str(d), *a], capture_output=True, text=True, check=True).stdout.strip()
+            ident = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+            main.mkdir()
+            run(main, "init", "-q")
+            (main / "f.txt").write_text("x\n")
+            run(main, "add", "f.txt")
+            run(main, *ident, "commit", "-q", "-m", "c1")
+            run(main, *ident, "tag", "-a", "-m", "t", "v1")
+            obj, c1 = run(main, "rev-parse", "refs/tags/v1"), run(main, "rev-parse", "HEAD")
+            run(main, "worktree", "add", "-q", "--detach", str(wt), "v1")
+            self.assertTrue((wt / ".git").is_file())
+            copy = private_copy(wt, tmp / "copy", tmp / "meta")
+            self.assertTrue((copy / ".git").is_dir())
+            self.assertEqual(run(copy, "status", "--porcelain", "--untracked-files=no"), "")
+            self.assertEqual(run(copy, "rev-parse", "HEAD"), c1)
+            self.assertEqual(run(copy, "rev-parse", "refs/tags/v1"), obj)
+            run(copy, "update-ref", "refs/tags/v1", c1)
+            (copy / "f.txt").write_text("y\n")
+            self.assertEqual(run(main, "rev-parse", "refs/tags/v1"), obj)
+            self.assertEqual(run(main, "cat-file", "-t", "v1"), "tag")
+            self.assertEqual((wt / "f.txt").read_text(), "x\n")
+
     def test_registry_pin_shape(self):
         pins = ROOT / "conformance/pins"
         new = json.loads((pins / "pin-2f055c1.json").read_text())
@@ -501,7 +538,7 @@ class LayoutTests(unittest.TestCase):
 
     def test_gate_checks_corpus_tag(self):
         ns = {}
-        exec(_function_sources((ROOT / SOURCE_READERS[0]).read_text())["tag_problems"], {"json": json, "subprocess": subprocess}, ns)
+        exec(_function_sources((ROOT / SOURCE_READERS[0]).read_text())["tag_problems"], {"json": json, "re": re, "subprocess": subprocess}, ns)
         tag_problems = ns["tag_problems"]
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp)
@@ -515,6 +552,12 @@ class LayoutTests(unittest.TestCase):
             self.assertTrue(tag_problems(src, {"name": "v2", "object": obj}, c1))
             self.assertTrue(tag_problems(src, {"name": "v1", "object": obj}, "0" * 40))
             self.assertTrue(tag_problems(src, {"name": "v1"}, c1))
+            for bad in (None, [], "v1", 1):
+                self.assertTrue(tag_problems(src, bad, c1), bad)
+            # A revision expression naming the same object is not the tag name.
+            for name in ("v1^{tag}", "v1^0", "refs/tags/v1", "v1~0", "@", "v1..v1"):
+                self.assertTrue(tag_problems(src, {"name": name, "object": obj}, c1), name)
+            self.assertTrue(tag_problems(src, {"name": "v1", "object": obj[:12]}, c1))
             run("tag", "-f", "v1", c1)
             problems = tag_problems(src, {"name": "v1", "object": obj}, c1)
             self.assertTrue(any("not an annotated tag" in p for p in problems), problems)

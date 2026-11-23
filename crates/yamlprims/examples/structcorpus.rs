@@ -352,13 +352,19 @@ const FORMATS_REL: &str = "manifests/formats.json";
 /// `manifests/formats.json` exists (failing closed on any problem), else the legacy paths.
 fn layout(src: &Path) -> Result<Layout, String> {
     let reg = src.join(FORMATS_REL);
-    if !reg.exists() {
-        return Ok(Layout {
-            cases: src.join("manifests/cases.jsonl"),
-            profiles: src.join("manifests/profiles"),
-            span_conventions: src.join("manifests/span-conventions"),
-            registry: false,
-        });
+    // Only a missing entry selects the legacy layout; a dangling or unreadable
+    // registry fails closed (as in the Go driver).
+    match fs::symlink_metadata(&reg) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Layout {
+                cases: src.join("manifests/cases.jsonl"),
+                profiles: src.join("manifests/profiles"),
+                span_conventions: src.join("manifests/span-conventions"),
+                registry: false,
+            });
+        }
+        Err(e) => return Err(format!("{}: {e}", reg.display())),
+        Ok(_) => {}
     }
     let doc: J = fs::read_to_string(&reg)
         .map_err(|e| e.to_string())
@@ -1776,6 +1782,19 @@ mod layout_tests {
         e["profiles"] = json!("manifests/out");
         fs::write(t.0.join(FORMATS_REL), registry(e)).unwrap();
         assert!(layout(&t.0).unwrap_err().contains("outside"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_registry_link_fails_closed() {
+        let t = tmp("dangling");
+        fs::write(t.0.join("manifests/cases.jsonl"), "").unwrap();
+        std::os::unix::fs::symlink(
+            t.0.join("manifests/no-such-registry.json"),
+            t.0.join(FORMATS_REL),
+        )
+        .unwrap();
+        assert!(layout(&t.0).unwrap_err().contains("formats.json"));
     }
 
     #[test]

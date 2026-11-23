@@ -5,6 +5,10 @@ Usage:
 
 DRIVER is the built `structcorpus` example (yamlprims/examples/structcorpus.rs).
 Checks, in order; every failure is reported and the exit status is 1:
+- when the pin names a `corpus_tag`, SOURCE_DIR's `refs/tags/<name>` (an exact ref,
+  not a revision expression) is that annotated tag object and it peels to the pinned
+  commit; a moved, lightweight or missing tag, or a malformed `corpus_tag`, fails before
+  anything from SOURCE_DIR runs;
 - SOURCE_DIR's YAML inventory is located: with `manifests/formats.json` (a `formats/v1`
   registry with a `yaml` entry) the YAML case shard, profile and span-convention directories
   it names, otherwise the legacy `manifests/cases.jsonl`, `manifests/profiles` and
@@ -12,8 +16,6 @@ Checks, in order; every failure is reported and the exit status is 1:
 - SOURCE_DIR is a clean checkout at the pinned commit, and the pinned files (the registry
   when present, the YAML case manifest, every profile and span convention, every recipe)
   have their pinned sha256;
-- when the pin names a `corpus_tag`, SOURCE_DIR's `refs/tags/<name>` is that annotated tag
-  object and it peels to the pinned commit (a moved, lightweight or missing tag fails);
 - structcorpus's own `tools/corpus.py verify` accepts HYDRATED_DIR, and the hydrated
   case inventory and hydration record have their pinned sha256;
 - the inventory (records with `"format": "yaml"`; other formats in the hydrated manifest are
@@ -30,6 +32,7 @@ Pin generation is disabled; changed expectations require independent review.
 import collections
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -57,8 +60,12 @@ def structcorpus_layout(src):
     a source checkout; keep the copies identical.
     """
     reg = src / "manifests/formats.json"
-    if not reg.exists():
+    try:
+        reg.lstat()
+    except FileNotFoundError:
         return src / "manifests/cases.jsonl", src / "manifests/profiles", src / "manifests/span-conventions", False
+    except OSError as e:
+        raise ValueError(f"{reg}: {e}") from None
     try:
         doc = json.loads(reg.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
@@ -178,22 +185,31 @@ def observe(hyd, src, driver):
 
 
 def tag_problems(src, tag, commit):
-    """The pinned tag must exist in SOURCE_DIR as the pinned annotated tag object on the pinned commit."""
+    """The pinned tag must exist in SOURCE_DIR as the pinned annotated tag object on the pinned commit.
+
+    The name is a literal tag name (`git check-ref-format`), looked up as exactly
+    `refs/tags/<name>` with `git show-ref --verify`, never as a revision expression.
+    """
+    if not isinstance(tag, dict):
+        return [f"corpus_tag is not an object: {json.dumps(tag)[:200]}"]
     name, obj = tag.get("name"), tag.get("object")
-    if not isinstance(name, str) or not isinstance(obj, str) or not name or not obj:
+    if not isinstance(name, str) or not isinstance(obj, str) or not name or not re.fullmatch(r"[0-9a-f]{40}", obj):
         return [f"corpus_tag is malformed: {json.dumps(tag)[:200]}"]
-    def rev(*args):
+    ref = f"refs/tags/{name}"
+    def run(*args):
         r = subprocess.run(["git", "-C", str(src), *args], capture_output=True, text=True)
         return r.stdout.strip() if r.returncode == 0 else None
-    got = rev("rev-parse", "--verify", "--quiet", f"refs/tags/{name}")
+    if run("check-ref-format", ref) is None:
+        return [f"corpus_tag name {json.dumps(name)} is not a valid tag name"]
+    got = run("show-ref", "--verify", "--hash", ref)
     if got is None:
         return [f"corpus_tag {name} is missing from the source checkout"]
     problems = []
     if got != obj:
         problems.append(f"corpus_tag {name} is object {got}, pinned {obj}")
-    if rev("cat-file", "-t", got) != "tag":
+    if run("cat-file", "-t", got) != "tag":
         problems.append(f"corpus_tag {name} is not an annotated tag")
-    peeled = rev("rev-parse", "--verify", "--quiet", f"{got}^{{commit}}")
+    peeled = run("rev-parse", "--verify", "--quiet", f"{got}^{{commit}}")
     if peeled != commit:
         problems.append(f"corpus_tag {name} peels to {peeled}, pinned commit {commit}")
     return problems
@@ -211,10 +227,18 @@ def main():
     if len(args) != 4:
         sys.exit(__doc__)
     pin_path, hyd, src, driver = Path(args[0]), Path(args[1]), Path(args[2]), Path(args[3])
-    obs, problems = observe(hyd, src, driver)
     pin = json.loads(pin_path.read_text())
+    # The tag is checked before anything from the source checkout runs.
     if "corpus_tag" in pin:
-        problems += tag_problems(src, pin["corpus_tag"], pin["corpus_commit"])
+        early = tag_problems(src, pin["corpus_tag"], pin["corpus_commit"])
+        if early:
+            if record:
+                record.write_text(json.dumps({"pin": str(pin_path), "problems": early, "result": "FAIL"}, indent=1) + "\n")
+            for p in early:
+                print("FAIL", p)
+            print("gate FAIL: corpus tag")
+            sys.exit(1)
+    obs, problems = observe(hyd, src, driver)
     for key in ("corpus_commit", "files", "hydrated", "cases", "review_status", "rows"):
         if obs[key] != pin[key]:
             if isinstance(pin[key], dict):
