@@ -50,6 +50,16 @@ same instrumentation flags as `cargo fuzz`. Set `YAMLPRIMS_FUZZ_TOOLCHAIN` to
 use a locally installed toolchain with the pinned commit hash. See
 `scripts/fuzz-smoke.sh` for the other settings.
 
+By default a target stops at its first failing input. Campaigns set
+`YAMLPRIMS_FUZZ_KEEP_GOING=1`: libFuzzer runs in fork mode (`-fork=1`) and
+ignores crashes, timeouts and out-of-memory, so a target uses its whole budget
+after a failure. Every failing input is still saved under the run's `crashers/`
+and fails the run; the record gives the kind and the count per artifact type
+(for example `panic (crash=4)`). Fork mode keeps its working copies in a
+`libFuzzerTemp.FuzzWithFork*` directory under `TMPDIR` and removes it when the
+target exits; after an interrupted run, remove it by hand, because it can hold
+failing inputs.
+
 Go mutation (`go test -fuzz`) is not run locally until an enforced memory
 ceiling is available. The Go `Fuzz*` targets run their seed corpora under
 `fuzz-replay`, with per-input time and heap assertions.

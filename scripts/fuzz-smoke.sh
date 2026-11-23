@@ -17,6 +17,11 @@
 #   YAMLPRIMS_FUZZ_MAX_LEN        libFuzzer -max_len bytes (default 65536)
 #   YAMLPRIMS_FUZZ_TOOLCHAIN      rustup toolchain name; must have the commit hash
 #                                 pinned in fuzz/toolchain.txt (default: the pinned channel)
+#   YAMLPRIMS_FUZZ_KEEP_GOING     1: libFuzzer fork mode (-fork=1) ignoring crashes,
+#                                 timeouts and OOMs, so a target keeps fuzzing for its
+#                                 whole budget after a failing input. Every saved
+#                                 artifact still fails the run, counted by kind.
+#                                 0 (default): a target stops at its first failure.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -32,6 +37,12 @@ rust_seconds=${YAMLPRIMS_FUZZ_RUST_SECONDS:-60}
 per_input_timeout=${YAMLPRIMS_FUZZ_TIMEOUT:-10}
 rss_mb=${YAMLPRIMS_FUZZ_RSS_MB:-2048}
 max_len=${YAMLPRIMS_FUZZ_MAX_LEN:-65536}
+keep_going=${YAMLPRIMS_FUZZ_KEEP_GOING:-0}
+case "$keep_going" in
+  0) keep_flags=() ;;
+  1) keep_flags=(-fork=1 -ignore_crashes=1 -ignore_timeouts=1 -ignore_ooms=1) ;;
+  *) echo "fuzz-smoke: YAMLPRIMS_FUZZ_KEEP_GOING must be 0 or 1" >&2; exit 2 ;;
+esac
 
 # The output root is created exclusively (or is an empty directory, or one
 # this harness marked, so a campaign can reuse its corpora). Containment is
@@ -102,6 +113,15 @@ classify() { # log
   else echo error
   fi
 }
+# Keep-going runs: the saved artifacts by kind, e.g. "crash=3 timeout=1"; empty if none.
+artifact_kinds() { # dir
+  local d=$1 k n out=""
+  for k in crash timeout oom leak slow-unit; do
+    n=$(find "$d" -maxdepth 1 -type f -name "$k-*" | wc -l | tr -d ' ')
+    [ "$n" -gt 0 ] && out="$out${out:+ }$k=$n"
+  done
+  echo "$out"
+}
 
 pin_channel=$(awk '$1 == "channel" {print $2}' fuzz/toolchain.txt)
 pin_hash=$(awk '$1 == "commit-hash" {print $2}' fuzz/toolchain.txt)
@@ -116,7 +136,7 @@ fi
 host=$(rustc "+$toolchain" -vV | awk '$1 == "host:" {print $2}')
 guard
 f=$(fresh "$run/settings.txt")
-printf '%s\n' "engine=libfuzzer per_input_timeout_s=$per_input_timeout memory_limit_mb=$rss_mb max_len=$max_len" \
+printf '%s\n' "engine=libfuzzer per_input_timeout_s=$per_input_timeout memory_limit_mb=$rss_mb max_len=$max_len keep_going=$keep_going" \
   "toolchain=$toolchain toolchain_commit=$pin_hash" >"$f"
 place "$f" "$run/settings.txt"
 
@@ -157,16 +177,25 @@ for t in load decode_wire emit_round_trip lint_yaml11 encode; do
   if (cd "$run" && "$CARGO_TARGET_DIR/$host/release/$t" "$out/corpus/$t" ${dict[@]+"${dict[@]}"} \
     -max_total_time="$rust_seconds" -timeout="$per_input_timeout" \
     -rss_limit_mb="$rss_mb" -malloc_limit_mb="$rss_mb" -max_len="$max_len" \
+    ${keep_flags[@]+"${keep_flags[@]}"} \
     -artifact_prefix="$run/crashers/$t/" -print_final_stats=1 >"$f" 2>&1); then
     place "$f" "$log"
     outcome=pass kind=""
   else
     place "$f" "$log"
     outcome=fail kind=$(classify "$log")
-    fail "$t" "$kind"
   fi
+  if [ "$keep_going" = 1 ]; then
+    found=$(artifact_kinds "$run/crashers/$t")
+    if [ -n "$found" ]; then
+      outcome=fail kind="$(classify "$log") ($found)"
+    fi
+  fi
+  [ "$outcome" = fail ] && fail "$t" "$kind"
   guard
   execs=$(sed -n 's/^stat::number_of_executed_units: *//p' "$log" | tail -1)
+  # Fork mode prints no final stats; take the last "#<execs>: cov:" status line.
+  [ -n "$execs" ] || execs=$(sed -n 's/^#\([0-9]*\): cov:.*/\1/p' "$log" | tail -1)
   cov=$(grep -o 'cov: [0-9]*' "$log" | tail -1 | cut -d' ' -f2 || true)
   [ "$outcome" = pass ] && echo "ok   $t: ${execs:-?} execs in ${rust_seconds}s, cov ${cov:-?}"
   row "$t" "$rust_seconds" "${execs:-}" "${cov:-}" "$outcome" "$kind"
