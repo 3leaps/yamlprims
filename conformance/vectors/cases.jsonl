@@ -195,3 +195,90 @@
 {"id": "plain.float.exact-ties", "input": "a: 1000000000000000.25\nb: -1000000000000000.25\nc: 1000000000000000.75\nd: -1000000000000000.75\n", "single": true, "check_plain": true}
 {"id": "plain.float.layout-boundaries", "input": "a: 0.0\nb: -0.0\nc: 1e15\nd: 9999999999999998.0\ne: 1e16\nf: 1.5e16\ng: 0.0001\nh: 0.00001\ni: -2.5e-7\nj: 5e-324\nk: 2.2250738585072014e-308\nl: 1.7976931348623157e308\n", "single": true, "check_plain": true}
 {"id": "emit.tag-uri-over-emit-limit", "input": "!<tag:example.com,2026:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx> value\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-scheme-less", "input": "!<$:?> value\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-digit-scheme", "input": "key: !<9ab:c> value\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-no-colon", "input": "- !<abc> value\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bad-scheme-char", "input": "!<a*b:c> value\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-on-sequence", "input": "!<abc> [1, 2]\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-on-mapping", "input": "!<abc> {k: v}\n", "single": true, "check_plain": true}
+{"id": "tags.identity.directive-expansion-no-scheme", "input": "%TAG !n! 12\n--- !n!3 v\n", "single": true, "check_plain": true}
+{"id": "tags.identity.secondary-handle-redefined", "input": "%TAG !! 12\n--- !!3 v\n", "single": true, "check_plain": true}
+{"id": "tags.identity.reject-policy-invalid", "input": "!<abc> value\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.identity.reject-policy-valid-then-invalid", "input": "a: !<tag:example.com,2026:t> x\nb: !<abc> y\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.identity.before-later-syntax", "input": "a: !<abc> 1\nb: [\n", "single": true, "check_plain": true}
+{"id": "tags.identity.depth-before-tag", "input": "[[!<abc> [1]]]\n", "single": true, "limits": {"max_depth": 2}, "check_plain": true}
+{"id": "tags.identity.location-bom-multibyte", "input": "\ufeff\u00e9: !<abc> x\n", "single": true, "check_plain": true}
+{"id": "tags.identity.location-crlf", "input": "a: 1\r\nb: !<abc> x\r\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-empty-scheme-specific", "input": "!<x:> value\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-global", "input": "!<tag:example.com,2026:item> value\n", "single": true, "check_plain": true}
+{"id": "tags.identity.local-named", "input": "!local value\n", "single": true, "check_plain": true}
+{"id": "tags.identity.partial-prefix-expansion", "input": "%TAG !p! ta\n--- !p!g:example.com/x v\n", "single": true, "check_plain": true}
+{"id": "tags.identity.unused-scheme-less-prefix", "input": "%TAG !n! 12\n--- v\n", "single": true, "check_plain": true}
+{"id": "tags.identity.percent-escaped-scheme", "input": "!<%74ag:example.com,2026:x> v\n", "single": true, "check_plain": true}
+{"id": "tags.identity.percent-escaped-suffix", "input": "!local%21x v\n", "single": true, "check_plain": true}
+{"id": "tags.identity.core-and-non-specific", "input": "- !!str 1\n- ! 2\n- !!int 3\n", "single": true, "check_plain": true}
+{"id": "tags.identity.collections-valid", "input": "!<tag:example.com,2026:s> [1]\n", "single": true, "check_plain": true}
+{"id": "tags.directive.prefix-without-separator-used", "input": "%TAG !e!tag:example.com,2026:\n--- !e!a b\n", "single": true, "check_plain": true}
+{"id": "tags.directive.prefix-without-separator-unused", "input": "%TAG !e!tag:example.com,2026:\n--- b\n", "single": true, "check_plain": true}
+{"id": "tags.directive.secondary-handle-without-separator", "input": "%TAG !!tag:example.com,2026:\n--- b\n", "single": true, "check_plain": true}
+{"id": "tags.directive.primary-handle-without-separator", "input": "%TAG !:x\n--- b\n", "single": true, "check_plain": true}
+{"id": "tags.directive.space-separator", "input": "%TAG !e! tag:example.com,2026:\n--- !e!a b\n", "single": true, "check_plain": true}
+{"id": "tags.directive.tab-separator", "input": "%TAG !e!\ttag:example.com,2026:\n--- !e!a b\n", "single": true, "check_plain": true}
+{"id": "tags.directive.without-separator-crlf-second", "input": "%TAG !e! tag:a,1:\r\n%TAG !f!tag:b,1:\r\n--- x\r\n", "single": true, "check_plain": true}
+{"id": "tags.directive.without-separator-bom", "input": "\ufeff%TAG !e!tag:example.com,2026:\n--- b\n", "single": true, "check_plain": true}
+{"id": "tags.directive.without-separator-before-later-syntax", "input": "%TAG !e!tag:a,1:\n--- [\n", "single": true, "check_plain": true}
+{"id": "tags.directive.handle-error-wins", "input": "%TAG !e0 a:\n%TAG !f!b:\n--- x\n", "single": true, "check_plain": true}
+{"id": "tags.directive.empty-prefix-unchanged", "input": "%TAG !e!\n--- x\n", "single": true, "check_plain": true}
+{"id": "tags.directive.second-document-without-separator", "input": "a\n...\n%TAG !e!tag:a,1:\n--- b\n", "single": false, "check_plain": false}
+{"id": "tags.directive.dots-then-letter-is-content", "input": "...a\n%TAG !.\u0000", "single": true, "check_plain": true}
+{"id": "tags.directive.four-dots-is-content", "input": "....\n%TAG !.\u0000", "single": true, "check_plain": true}
+{"id": "tags.directive.scanner-error-at-end-of-input", "input": "%TAG !e! tag:a,1:\n--- 'x\n", "single": true, "check_plain": true}
+{"id": "tags.directive.scanner-error-at-end-after-break", "input": "%TAG !e! tag:a,1:\n--- {a: 1\n", "single": true, "check_plain": true}
+{"id": "tags.directive.scanner-error-at-end-in-quoted", "input": "a: '%TAG\n", "single": true, "check_plain": true}
+{"id": "tags.directive.scanner-error-at-end-after-directive-name", "input": "%TAG: [\n", "single": true, "check_plain": true}
+{"id": "tags.directive.earlier-tag-identity-wins", "input": "!<abc> x\n...\n%TAG !e!x:\n--- y\n", "single": false, "check_plain": false}
+{"id": "tags.directive.earlier-depth-wins", "input": "[[[1]]]\n...\n%TAG !e!x:\n--- y\n", "single": false, "limits": {"max_depth": 2}, "check_plain": false}
+{"id": "tags.directive.earlier-parser-error-wins", "input": "- a\nb: c\n...\n%TAG !e!x:\n--- y\n", "single": false, "check_plain": false}
+{"id": "tags.directive.gap-before-later-tag-identity", "input": "%TAG !e!x:\n--- !<abc> y\n", "single": true, "check_plain": true}
+{"id": "tags.directive.gap-before-later-depth", "input": "%TAG !e!x:\n--- [[[1]]]\n", "single": true, "limits": {"max_depth": 2}, "check_plain": true}
+{"id": "tags.directive.gap-before-later-syntax", "input": "%TAG !e!x:\n--- [\n", "single": true, "check_plain": true}
+{"id": "tags.directive.gap-before-later-duplicate-key", "input": "%TAG !e!x:\n--- a: 1\na: 2\n", "single": true, "check_plain": true}
+{"id": "tags.directive.gap-in-second-document-after-valid-first", "input": "a: 1\n...\n%TAG !e!x:\n--- b\n", "single": false, "check_plain": false}
+{"id": "tags.directive.duplicate-handle-before-gap", "input": "%TAG !e! a:\n%TAG !e!b:\n--- x\n", "single": true, "check_plain": true}
+{"id": "tags.directive.prefix-scan-error-wins-over-gap", "input": "%TAG !e!%zz\n--- x\n", "single": true, "check_plain": true}
+{"id": "tags.directive.inside-document-unchanged", "input": "a\n%TAG !e!x:\n--- b\n", "single": false, "check_plain": false}
+{"id": "tags.handle.underscore-directive-used", "input": "%TAG !a_b! tag:example.com,2026:\n--- !a_b!y z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-directive-unused", "input": "%TAG !a_b! tag:example.com,2026:\n--- z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-and-gap", "input": "%TAG !a_b!x:\n--- z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-use-undeclared", "input": "--- !a_b!y z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-use-in-flow", "input": "k: [ !a_b!y z ]\n", "single": true, "check_plain": true}
+{"id": "tags.handle.hyphen-and-digits-valid", "input": "%TAG !a-1! tag:example.com,2026:\n--- !a-1!y z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-primary-local-valid", "input": "--- !a_b z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-suffix-valid", "input": "%TAG !e! tag:example.com,2026:\n--- !e!a_b z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-uri-valid", "input": "!<tag:example.com,2026:a_b> z\n", "single": true, "check_plain": true}
+{"id": "tags.handle.underscore-prefix-valid", "input": "%TAG !e! tag:a_b.example,2026:\n--- !e!y z\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bang-scalar", "input": "!<!> x\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bang-in-sequence", "input": "- !<!> x\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bang-collection", "input": "!<!> [1]\n", "single": true, "check_plain": true}
+{"id": "tags.identity.verbatim-bang-reject", "input": "!<!> x\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.identity.verbatim-bang-collection-reject", "input": "!<!> {a: 1}\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.identity.bare-bang-scalar", "input": "! x\n", "single": true, "check_plain": true}
+{"id": "tags.identity.bare-bang-collection", "input": "! [1]\n", "single": true, "check_plain": true}
+{"id": "tags.identity.bare-bang-reject", "input": "! x\n", "single": true, "unknown_tags": "reject", "check_plain": true}
+{"id": "tags.directive.after-sequence-entry-unchanged", "input": "- a\n%TAG !e!x:\n--- b\n", "single": false, "check_plain": false}
+{"id": "tags.directive.inside-sequence-prefix-error-unchanged", "input": "-\n%TAG !%\n", "single": false, "check_plain": false}
+{"id": "tags.directive.gap-then-end-of-input-same-line", "input": "%TAG !e!x:", "single": true, "check_plain": true}
+{"id": "tags.directive.gap-then-nul-same-line", "input_hex": "2554414720216521783a002d2d2d20790a", "single": true, "check_plain": true}
+{"id": "tags.directive.terminator-error-wins-over-gap", "input": "%TAG !e!x: ]\n--- y\n", "single": true, "check_plain": true}
+{"id": "tags.directive.bom-prologue-gap", "input_hex": "610a2e2e2e0aefbbbf25544147202165217461673a783a0a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.bom-prologue-gap-reject", "input_hex": "610a2e2e2e0aefbbbf25544147202165217461673a783a0a2d2d2d20780a", "single": false, "unknown_tags": "reject", "check_plain": false}
+{"id": "tags.handle.bom-prologue-underscore-used", "input_hex": "610a2e2e2e0aefbbbf255441472021615f6221207461673a783a0a2d2d2d2021615f62217620780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.handle.bom-prologue-underscore-unused", "input_hex": "610a2e2e2e0aefbbbf255441472021615f6221207461673a783a0a2d2d2d20780a", "single": false, "unknown_tags": "reject", "check_plain": false}
+{"id": "tags.directive.bom-prologue-valid", "input_hex": "610a2e2e2e0aefbbbf2554414720216521207461673a783a0a2d2d2d202165217620780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.bom-prologue-valid-reject", "input_hex": "610a2e2e2e0aefbbbf2554414720216521207461673a783a0a2d2d2d202165217620780a", "single": false, "unknown_tags": "reject", "check_plain": false}
+{"id": "tags.directive.double-bom-prologue-gap", "input_hex": "610a2e2e2e0aefbbbfefbbbf2554414720216521783a0a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.malformed-comment-wins-over-gap", "input_hex": "2554414720216521783a2023010a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.handle.malformed-comment-wins-over-underscore", "input_hex": "255441472021615f6221783a2023010a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.gap-before-later-malformed-comment", "input_hex": "2554414720216521783a2023206f6b0a255441472021662120793a2023010a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.later-directive-malformed-comment", "input_hex": "255441472021652120783a0a2554414720216621793a2023010a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}
+{"id": "tags.directive.comment-ended-by-nul-wins-over-gap", "input_hex": "2554414720216521783a202363000a2d2d2d20780a", "single": false, "unknown_tags": "preserve", "check_plain": false}

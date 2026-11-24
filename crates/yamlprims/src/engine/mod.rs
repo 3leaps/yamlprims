@@ -199,6 +199,12 @@ impl<'a> Engine<'a> {
         }
     }
     fn parser(input: &'a str, opts: &Options) -> Parser<'a, granit_parser::StrInput<'a>> {
+        let g = Self::engine_options(opts);
+        #[cfg(test)]
+        validation_tests::observe(|s| s.parsers += 1);
+        Parser::new_from_str_with_options(input, g)
+    }
+    fn engine_options(opts: &Options) -> granit_parser::Options {
         let mut g = granit_parser::Options::default();
         g.strict_indentation = opts.strict_indentation();
         // A pending simple key can hold back a start while the scanner reads
@@ -209,9 +215,7 @@ impl<'a> Engine<'a> {
         let native_depth = opts.limits.max_depth + g.simple_key_max_lookahead + 2;
         g.flow_nesting_limit = native_depth;
         g.block_nesting_limit = native_depth;
-        #[cfg(test)]
-        validation_tests::observe(|s| s.parsers += 1);
-        Parser::new_from_str_with_options(input, g)
+        g
     }
     fn loc(&self, m: &Marker) -> Result<Location, Error> {
         let b = m
@@ -254,16 +258,211 @@ impl<'a> Engine<'a> {
         err
     }
 
+    /// §7.1 resolved-tag identity check for a node event's tag. The
+    /// non-specific `!` keeps its own resolution path; every other resolved,
+    /// percent-decoded identity must be a local tag or start with an RFC 3986
+    /// scheme (YAML 1.2.2 §6.9.1).
+    fn check_tag_identity(
+        &self,
+        tag: Option<&GTag>,
+        span: &granit_parser::Span,
+    ) -> Result<(), Error> {
+        let Some(t) = tag else { return Ok(()) };
+        let at = span.tag_start().unwrap_or(span.start);
+        if t.handle().is_empty() && t.suffix() == "!" {
+            // Only the bare `!` token is non-specific; a verbatim `!<!>` is a
+            // specific tag whose identity is `!` alone (YAML 1.2.2 Example 6.25).
+            let verbatim = at
+                .byte_offset()
+                .and_then(|b| self.input.get(b..))
+                .is_some_and(|rest| rest.starts_with("!<"));
+            if !verbatim {
+                return Ok(());
+            }
+        } else if valid_resolved_tag_identity(&t.to_string()) {
+            return Ok(());
+        }
+        Err(Error::at(
+            ErrorKind::Syntax(SyntaxKind::InvalidGlobalTagCharacter),
+            self.loc(&at)?,
+            INVALID_TAG_IDENTITY_MESSAGE,
+        ))
+    }
+
+    /// Revision 1.7 `%TAG` checks (spec §7.1), made where the parser processes
+    /// a document prologue. The pinned engine accepts a named handle containing
+    /// `_` and a prefix that immediately follows the handle. `from` is the end
+    /// of the last yielded event (stream start or document end), and `until`
+    /// the position of the next event or engine error. A directive whose line
+    /// (up to its break or NUL, trailing comment included) ends at or before it
+    /// was tokenized and is checked in source order, as the parser processes
+    /// it; a directive the error falls inside, or starts at, is the one the
+    /// engine failed on while scanning or processing it (including a duplicate
+    /// handle or a malformed trailing comment), and keeps that failure. Before it the engine has accepted only directive
+    /// tokens, comments, blank lines and document end markers; a content line
+    /// ends the prologue.
+    fn prologue_directives(&self, from: usize, until: usize) -> Result<Option<Error>, Error> {
+        let src = self.input.as_bytes();
+        let until = until.min(src.len());
+        let mut i = from.min(until);
+        if i > 0 && !matches!(src[i - 1], b'\n' | b'\r') {
+            i = next_line(src, i);
+        }
+        while i < until {
+            // A document prologue may start with byte order marks (YAML 1.2.2
+            // l-document-prefix); the engine skips them and does not count them
+            // as columns.
+            let mut c = i;
+            while src[c..].starts_with(BOM) {
+                c += BOM.len();
+            }
+            match src.get(c).copied().unwrap_or(b'\n') {
+                b'%' => {
+                    // The engine tokenized this directive only if it reached the
+                    // directive's end (its trailing comment included). A failure
+                    // inside the line is the engine's own scanner diagnostic.
+                    let mut end = c;
+                    while end < src.len() && !matches!(src[end], b'\n' | b'\r' | b'\0') {
+                        end += 1;
+                    }
+                    if end > until || !directive_completes(src, c, end) {
+                        return Ok(None);
+                    }
+                    if let Some((kind, at)) = tag_directive_fault(src, c) {
+                        return Ok(Some(self.directive_error(kind, at)?));
+                    }
+                }
+                b'#' | b'\n' | b'\r' | b' ' | b'\t' => {
+                    let mut j = c;
+                    while j < src.len() && matches!(src[j], b' ' | b'\t') {
+                        j += 1;
+                    }
+                    if j < src.len() && !matches!(src[j], b'#' | b'\n' | b'\r') {
+                        return Ok(None);
+                    }
+                }
+                // A document end marker is `...` followed by a blank, a break,
+                // NUL or the end of input; `....` or `...a` is content.
+                b'.' if src[c..].starts_with(b"...")
+                    && matches!(
+                        src.get(c + 3),
+                        None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'\0')
+                    ) => {}
+                _ => return Ok(None),
+            }
+            i = next_line(src, i);
+        }
+        Ok(None)
+    }
+
+    /// A tag using a named handle outside `[0-9A-Za-z-]+` reaches the engine
+    /// as an undeclared handle (its directive is refused first); report it as
+    /// `InvalidTagTerminator` at the tag (spec §4.4, §7.1).
+    fn malformed_handle_use(&self, e: &ScanError) -> Option<Error> {
+        if !matches!(e.kind(), granit_parser::ErrorKind::UndeclaredTagHandle) {
+            return None;
+        }
+        let b = e.marker().byte_offset()?;
+        let src = self.input.as_bytes();
+        let (_, malformed) = scan_handle(src, b)?;
+        if !malformed {
+            return None;
+        }
+        let loc = self.loc(e.marker()).ok()?;
+        let mut err = Error::at(
+            ErrorKind::Syntax(SyntaxKind::InvalidTagTerminator),
+            loc,
+            format!("syntax error: {INVALID_TAG_TERMINATOR_DETAIL}"),
+        );
+        err.engine_detail = Some(INVALID_TAG_TERMINATOR_DETAIL.to_owned());
+        Some(err)
+    }
+
+    fn directive_error(&self, kind: SyntaxKind, at: usize) -> Result<Error, Error> {
+        let before = self
+            .input
+            .get(..at)
+            .ok_or_else(|| internal("directive offset off a character boundary"))?;
+        let bytes = before.as_bytes();
+        let mut line = 1usize;
+        let mut line_start = 0usize;
+        let mut k = 0usize;
+        while k < bytes.len() {
+            match bytes[k] {
+                b'\r' if bytes.get(k + 1) == Some(&b'\n') => {
+                    line += 1;
+                    k += 2;
+                    line_start = k;
+                }
+                b'\r' | b'\n' => {
+                    line += 1;
+                    k += 1;
+                    line_start = k;
+                }
+                _ => k += 1,
+            }
+        }
+        let line_text = &before[line_start..];
+        let column = line_text.trim_start_matches('\u{feff}').chars().count() + 1;
+        let detail = match kind {
+            SyntaxKind::ExpectedWhitespace => "expected whitespace",
+            _ => EXPECTED_TAG_DIRECTIVE_BANG_DETAIL,
+        };
+        let mut err = Error::at(
+            ErrorKind::Syntax(kind),
+            Location {
+                byte_offset: at + self.bom,
+                line,
+                column,
+            },
+            format!("syntax error: {detail}"),
+        );
+        err.engine_detail = Some(detail.to_owned());
+        Ok(err)
+    }
+
     pub(crate) fn syntax_pass(&self) -> Result<(), Error> {
         #[cfg(test)]
         validation_tests::observe(|s| s.source_passes += 1);
         let mut depth = 0usize;
+        // End of the last stream-start or document-end event while the parser
+        // is in a document prologue; `None` inside a document.
+        let mut prologue: Option<usize> = None;
         for ev in Self::parser(self.input, self.opts) {
             #[cfg(test)]
             validation_tests::observe(|s| s.source_results += 1);
-            let (event, span) = ev.map_err(|e| self.scan_err(e))?;
+            let (event, span) = match ev {
+                Ok(ok) => ok,
+                Err(e) => {
+                    if let (Some(from), Some(b)) = (prologue, e.marker().byte_offset()) {
+                        if let Some(err) = self.prologue_directives(from, b)? {
+                            return Err(err);
+                        }
+                    }
+                    if let Some(err) = self.malformed_handle_use(&e) {
+                        return Err(err);
+                    }
+                    return Err(self.scan_err(e));
+                }
+            };
+            if let (GEvent::DocumentStart(true, _), Some(from)) = (&event, prologue) {
+                let at = span
+                    .start
+                    .byte_offset()
+                    .ok_or_else(|| internal("document start without byte offset"))?;
+                if let Some(err) = self.prologue_directives(from, at)? {
+                    return Err(err);
+                }
+            }
+            prologue = match &event {
+                GEvent::StreamStart | GEvent::DocumentEnd => span.end.byte_offset(),
+                _ => None,
+            };
+            if let GEvent::Scalar(_, _, _, tag) = &event {
+                self.check_tag_identity(tag.as_deref(), &span)?;
+            }
             match event {
-                GEvent::SequenceStart(..) | GEvent::MappingStart(..) => {
+                GEvent::SequenceStart(_, _, ref tag) | GEvent::MappingStart(_, _, ref tag) => {
                     let next = depth
                         .checked_add(1)
                         .ok_or_else(|| internal("source depth overflow"))?;
@@ -274,6 +473,7 @@ impl<'a> Engine<'a> {
                             self.loc(&span.start)?,
                         ));
                     }
+                    self.check_tag_identity(tag.as_deref(), &span)?;
                     depth = next;
                     #[cfg(test)]
                     validation_tests::observe(|s| s.highwater = s.highwater.max(depth));
@@ -345,6 +545,141 @@ impl<'a> Engine<'a> {
         ))
     }
 }
+/// Diagnostic for a resolved tag identity outside the local/global forms (§4.4, §7.1).
+pub(crate) const INVALID_TAG_IDENTITY_MESSAGE: &str =
+    "syntax error: resolved tag is neither a local tag nor a global tag URI";
+
+/// A resolved, percent-decoded identity other than the non-specific `!` is a local
+/// tag (`!` plus at least one character) or starts with an RFC 3986 §3.1 scheme and
+/// `:` (YAML 1.2.2 §6.9.1). Core Schema URIs satisfy the scheme rule.
+pub(crate) fn valid_resolved_tag_identity(uri: &str) -> bool {
+    if uri.starts_with('!') {
+        return uri.len() >= 2;
+    }
+    let Some(colon) = uri.find(':') else {
+        return false;
+    };
+    let scheme = &uri.as_bytes()[..colon];
+    match scheme.split_first() {
+        Some((first, rest)) => {
+            first.is_ascii_alphabetic()
+                && rest
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+        }
+        None => false,
+    }
+}
+
+const BOM: &[u8] = "\u{feff}".as_bytes();
+
+const EXPECTED_TAG_DIRECTIVE_BANG_DETAIL: &str =
+    "while parsing a tag directive, did not find expected '!'";
+const INVALID_TAG_TERMINATOR_DETAIL: &str =
+    "while scanning a tag, did not find expected whitespace or line break";
+
+/// Index just past the line break ending the line that holds `i` (or the end).
+fn next_line(src: &[u8], mut i: usize) -> usize {
+    while i < src.len() && !matches!(src[i], b'\n' | b'\r') {
+        i += 1;
+    }
+    if i < src.len() {
+        i += if src[i] == b'\r' && src.get(i + 1) == Some(&b'\n') {
+            2
+        } else {
+            1
+        };
+    }
+    i
+}
+
+/// A tag handle starting at `b`, scanned as the engine does: `!`, word
+/// characters (ASCII alphanumerics, `_`, `-`), then an optional `!`. Returns
+/// the end of the handle and whether it is a named handle `!word!` whose word
+/// uses a character outside `[0-9A-Za-z-]` (YAML 1.2.2 productions [38], [92]).
+/// `None` unless `b` holds `!`.
+fn scan_handle(src: &[u8], b: usize) -> Option<(usize, bool)> {
+    if src.get(b) != Some(&b'!') {
+        return None;
+    }
+    let mut i = b + 1;
+    let mut underscore = false;
+    while i < src.len() && (src[i].is_ascii_alphanumeric() || matches!(src[i], b'_' | b'-')) {
+        underscore |= src[i] == b'_';
+        i += 1;
+    }
+    let named = i > b + 1 && src.get(i) == Some(&b'!');
+    if src.get(i) == Some(&b'!') {
+        i += 1;
+    }
+    Some((i, named && underscore))
+}
+
+/// Whether the engine finishes tokenizing the `%TAG` directive at `pct` whose
+/// line ends at `end` (a break, NUL or the end of input). A trailing comment
+/// runs to the next break and must then be followed by a printable character,
+/// so a comment ended by a NUL fails inside the directive's own scan; a NUL
+/// directly after the prefix (or its trailing blanks) ends the directive.
+fn directive_completes(src: &[u8], pct: usize, end: usize) -> bool {
+    if src.get(end) != Some(&b'\0') {
+        return true;
+    }
+    let is_blank = |b: u8| matches!(b, b' ' | b'\t');
+    let line = &src[pct..end];
+    if !line.starts_with(b"%TAG") {
+        return true;
+    }
+    let mut i = 4;
+    while i < line.len() && is_blank(line[i]) {
+        i += 1;
+    }
+    let Some((h, _)) = scan_handle(line, i) else {
+        return true;
+    };
+    i = h;
+    while i < line.len() && is_blank(line[i]) {
+        i += 1;
+    }
+    while i < line.len() && !is_blank(line[i]) {
+        i += 1;
+    }
+    while i < line.len() && is_blank(line[i]) {
+        i += 1;
+    }
+    line.get(i) != Some(&b'#')
+}
+
+/// For a directive at `pct` that the engine has tokenized, the revision 1.7
+/// `%TAG` fault in processing order: a malformed named handle
+/// (`ExpectedTagDirectiveBang` at the directive start), then a prefix that
+/// immediately follows the handle (`ExpectedWhitespace` at that character).
+fn tag_directive_fault(src: &[u8], pct: usize) -> Option<(SyntaxKind, usize)> {
+    let is_blank = |b: u8| matches!(b, b' ' | b'\t');
+    let is_breakz = |b: u8| matches!(b, b'\n' | b'\r' | b'\0');
+    if src.get(pct) != Some(&b'%') {
+        return None;
+    }
+    let mut i = pct + 1;
+    let name_start = i;
+    while i < src.len() && !is_blank(src[i]) && !is_breakz(src[i]) {
+        i += 1;
+    }
+    if &src[name_start..i] != b"TAG" {
+        return None;
+    }
+    while i < src.len() && is_blank(src[i]) {
+        i += 1;
+    }
+    let (end, malformed) = scan_handle(src, i)?;
+    if malformed {
+        return Some((SyntaxKind::ExpectedTagDirectiveBang, pct));
+    }
+    match src.get(end) {
+        Some(&b) if !is_blank(b) && !is_breakz(b) => Some((SyntaxKind::ExpectedWhitespace, end)),
+        _ => None,
+    }
+}
+
 fn scalar_style(style: granit_parser::ScalarStyle) -> ScalarStyle {
     use granit_parser::ScalarStyle as G;
     match style {

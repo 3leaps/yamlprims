@@ -172,6 +172,11 @@ type queuedToken struct {
 	text2  string
 	params []string
 	style  ScalarStyle
+	// Revision 1.7 %TAG facts, checked when the parser processes the
+	// directive (spec §7.1): a named handle outside [0-9A-Za-z-]+, and the
+	// first prefix character when no space or tab separates it from the handle.
+	badNamedHandle bool
+	prefixGap      *Marker
 }
 
 type simpleKey struct {
