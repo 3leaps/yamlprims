@@ -39,6 +39,20 @@ jobs:
           make crosscheck
       - name: Check qualification failure propagation
         run: python3 -B -m unittest discover -s conformance -p 'test_*.py'
+  fuzz-replay:
+    name: fuzz seed replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install exact toolchain
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Replay the committed fuzz seeds without mutation
+        env:
+          RUSTUP_TOOLCHAIN: "1.88.0"
+        run: make fuzz-replay
   typescript:
     name: typescript (node ${{ matrix.node }})
     runs-on: ubuntu-latest

@@ -4,6 +4,7 @@ SHELL := bash
 
 CARGO ?= cargo
 GO ?= go
+GOVULNCHECK ?= govulncheck
 GOENV := GOWORK=off CGO_ENABLED=0
 GOENV_RACE := GOWORK=off CGO_ENABLED=1
 PYTHON ?= python3
@@ -21,7 +22,7 @@ SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
 .PHONY: all help prepush precommit pr-final check-tooling lint-workflows
 .PHONY: check test-docs lint lint-shell lint-yaml fmt-yaml fmt fmt-check
 .PHONY: test-rust check-rust msrv-check check-go test-go test-go-race crosscheck fuzz-replay fuzz-smoke fuzz-differential test-fuzz-tooling python-check ts-check test-conformance-tools build clean
-.PHONY: version spec-version version-check check-packages deps-check deny
+.PHONY: version spec-version version-check check-packages deps-check deny vulncheck
 .PHONY: workflow-pin jq-portability content-check host-path-check surface-scan doctor
 .PHONY: test-release-tag-controls release-tooling-test release-check release-github-preflight
 .PHONY: release-preflight release-prepare-tag-message release-tag release-push-tag
@@ -42,6 +43,7 @@ help:
 	@echo "make prepush Run full local gates (Unix, installed tools required)"
 	@echo "make check-tooling Verify the pinned goneat version"
 	@echo "make lint-workflows Run actionlint on workflows"
+	@echo "make deny vulncheck Audit Rust dependencies (cargo-deny) and the Go module (govulncheck); needs network access"
 	@echo "make check   Validate specification-release files and local links"
 	@echo "make test-docs Test documentation validation using temporary fixtures"
 	@echo "make lint-yaml Check YAML formatting and lint (two-space indentation)"
@@ -143,6 +145,9 @@ deny:
 	$(CARGO) deny --manifest-path $(PY_BINDING)/Cargo.toml --locked check
 	$(CARGO) deny --manifest-path $(TS_BINDING)/Cargo.toml --locked check
 	$(CARGO) deny --manifest-path fuzz/Cargo.toml --all-features --locked check
+
+vulncheck:
+	$(GOENV) $(GOVULNCHECK) ./...
 
 workflow-pin:
 	$(PYTHON) -B -E scripts/release-workflow-pin.py check

@@ -1,0 +1,50 @@
+name: Dependency audit
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+permissions:
+  contents: read
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # reviewed 2026-08-04 commit
+        with:
+          toolchain: "1.88.0"
+      - name: Install cargo-deny
+        run: |
+          name=cargo-deny-0.20.2-x86_64-unknown-linux-musl
+          mkdir -p "${RUNNER_TEMP}/cargo-deny"
+          cd "${RUNNER_TEMP}/cargo-deny"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --retry 3 --output "$name.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/$name.tar.gz"
+          echo "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f  $name.tar.gz" | sha256sum --check
+          tar -xzf "$name.tar.gz" --strip-components=1 "$name/cargo-deny"
+          echo "${RUNNER_TEMP}/cargo-deny" >> "$GITHUB_PATH"
+      - name: Check advisories, bans, licenses and sources
+        run: |
+          cargo deny --version
+          make deny
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: go1.27.4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - name: Check the Go module
+        run: |
+          go version
+          make vulncheck GOVULNCHECK="$(go env GOPATH)/bin/govulncheck"

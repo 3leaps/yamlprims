@@ -143,5 +143,77 @@ class DocumentationChecks(unittest.TestCase):
         )
 
 
+    RUST_LIMITS = (
+        "impl Default for Limits {\n    fn default() -> Self {\n        Limits {\n"
+        "            max_input_bytes: 8 << 20,\n            max_nodes: 250_000,\n"
+        "        }\n    }\n}\n"
+    )
+    GO_LIMITS = (
+        "func DefaultLimits() Limits {\n\treturn Limits{\n"
+        "\t\tMaxInputBytes: 8 << 20,\n\t\tMaxNodes:      250_000,\n\t}\n}\n"
+    )
+
+    def write_limits(self, guide, go=GO_LIMITS):
+        self.write("crates/yamlprims/src/options.rs", self.RUST_LIMITS)
+        if go is not None:
+            self.write("yaml/options.go", go)
+        self.write("docs/migrating-from-libyaml.md", guide)
+
+    def test_guide_limits_match_code_defaults(self):
+        self.write_limits("`max_input_bytes: 8 MiB`, `max_nodes: 250,000`.\n")
+        self.assertEqual(self.run_check()[:3:2], (0, ""))
+
+    def test_guide_limit_value_differs(self):
+        self.write_limits("`max_input_bytes: 2 MiB`.\n")
+        self.rejected("`max_input_bytes` default is 8388608")
+
+    def test_guide_limit_count_differs(self):
+        self.write_limits("`max_nodes: 100,000`.\n")
+        self.rejected("`max_nodes` default is 250000")
+
+    def test_guide_names_an_unknown_limit(self):
+        self.write_limits("`max_widgets: 1`.\n")
+        self.rejected("`max_widgets` is not a load limit")
+
+    def test_go_defaults_differ_from_rust(self):
+        self.write_limits(
+            "No values.\n", go=self.GO_LIMITS.replace("250_000", "100_000")
+        )
+        self.rejected("DefaultLimits differs from")
+
+    def test_guide_limit_with_underscores_is_checked(self):
+        self.write_limits("`max_nodes: 100_000`.\n")
+        self.rejected("`max_nodes` default is 250000")
+
+    def test_guide_limit_with_unsupported_unit_or_decimal(self):
+        for spelling in ("2 MB", "8.0 MiB", "8MiB", "8 mib", "8,,000"):
+            with self.subTest(spelling=spelling):
+                self.write_limits("`max_input_bytes: " + spelling + "`.\n")
+                self.rejected("unsupported limit value")
+
+    def test_guide_names_an_emit_only_limit(self):
+        self.write_limits("`max_tag_bytes: 1_024`.\n")
+        self.rejected("`max_tag_bytes` is not a load limit")
+
+    def test_missing_go_defaults(self):
+        self.write_limits("No values.\n", go=None)
+        self.rejected("yaml/options.go: missing")
+
+    def test_equivalent_default_spellings(self):
+        self.write_limits("`max_input_bytes: 8 MiB`.\n")
+        self.write(
+            "crates/yamlprims/src/options.rs",
+            self.RUST_LIMITS.replace("        Limits {", "        Self {").replace(
+                "8 << 20", "(8 << 20)"
+            ),
+        )
+        self.write("yaml/options.go", self.GO_LIMITS.replace("8 << 20", "(8 << 20)"))
+        self.assertEqual(self.run_check()[:3:2], (0, ""))
+
+    def test_unreadable_rust_defaults(self):
+        self.write_limits("No values.\n")
+        self.write("crates/yamlprims/src/options.rs", "pub struct Limits;\n")
+        self.rejected("cannot read the default Limits")
+
 if __name__ == "__main__":
     unittest.main()
