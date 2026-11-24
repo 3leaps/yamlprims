@@ -181,6 +181,35 @@ class DocumentationChecks(unittest.TestCase):
         )
         self.rejected("DefaultLimits differs from")
 
+    def test_guide_limit_with_underscores_is_checked(self):
+        self.write_limits("`max_nodes: 100_000`.\n")
+        self.rejected("`max_nodes` default is 250000")
+
+    def test_guide_limit_with_unsupported_unit_or_decimal(self):
+        for spelling in ("2 MB", "8.0 MiB", "8MiB", "8 mib", "8,,000"):
+            with self.subTest(spelling=spelling):
+                self.write_limits("`max_input_bytes: " + spelling + "`.\n")
+                self.rejected("unsupported limit value")
+
+    def test_guide_names_an_emit_only_limit(self):
+        self.write_limits("`max_tag_bytes: 1_024`.\n")
+        self.rejected("`max_tag_bytes` is not a load limit")
+
+    def test_missing_go_defaults(self):
+        self.write_limits("No values.\n", go=None)
+        self.rejected("yaml/options.go: missing")
+
+    def test_equivalent_default_spellings(self):
+        self.write_limits("`max_input_bytes: 8 MiB`.\n")
+        self.write(
+            "crates/yamlprims/src/options.rs",
+            self.RUST_LIMITS.replace("        Limits {", "        Self {").replace(
+                "8 << 20", "(8 << 20)"
+            ),
+        )
+        self.write("yaml/options.go", self.GO_LIMITS.replace("8 << 20", "(8 << 20)"))
+        self.assertEqual(self.run_check()[:3:2], (0, ""))
+
     def test_unreadable_rust_defaults(self):
         self.write_limits("No values.\n")
         self.write("crates/yamlprims/src/options.rs", "pub struct Limits;\n")

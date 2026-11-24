@@ -41,16 +41,21 @@ synthetic examples.
 ## Advisories
 
 When a fix is released, we publish a GitHub security advisory for each affected
-package ecosystem. Go advisories reach the Go vulnerability database and
-`govulncheck`. The release notes describe the fix without reproduction inputs.
+package ecosystem. For the Go module we also ask for the advisory to be included
+in the Go vulnerability database, which `govulncheck` reads once the Go security
+team has reviewed it. The release notes describe the fix without reproduction
+inputs.
 
 ## Resource limits
 
-Every load, lint, emit and encode entrypoint enforces finite limits on input
-size, nesting depth, node counts, alias expansion and output size
-([specification §6](docs/spec/yamlprims-spec.md)). These are size and memory
-budgets, not a time limit. When you parse untrusted input, also apply a deadline
-of your own, for example by parsing in a worker process.
+Loading and linting enforce finite `Limits` on input size, nesting depth, node
+counts, alias expansion and the bytes the result owns
+([specification §6](docs/spec/yamlprims-spec.md)). Emitting enforces separate
+`EmitLimits` on depth, node count, scalar, key and tag size, mapping entries,
+documents and output size (§10.2). The owned-byte budget is a logical count,
+not a ceiling on process memory, and none of the limits is a time limit. When
+you parse untrusted input, also apply a deadline of your own, for example by
+parsing in a worker process.
 
 See also [the resource and native-boundary decision](docs/decisions/SecDR-0001-resource-and-native-boundaries.md)
 and [release signing and verification](docs/security/README.md).

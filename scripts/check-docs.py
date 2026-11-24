@@ -35,8 +35,11 @@ UNITS = {"": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30}
 
 
 def _code_value(expr):
-    """Evaluate a default such as `250_000` or `8 << 20`."""
-    match = re.fullmatch(r"([0-9_]+)(?:\s*<<\s*([0-9]+))?", expr.strip())
+    """Evaluate a default such as `250_000`, `8 << 20` or `(8 << 20)`."""
+    expr = expr.strip()
+    while expr.startswith("(") and expr.endswith(")"):
+        expr = expr[1:-1].strip()
+    match = re.fullmatch(r"([0-9][0-9_]*)(?:\s*<<\s*([0-9]+))?", expr)
     if match is None:
         return None
     value = int(match.group(1).replace("_", ""))
@@ -59,18 +62,25 @@ def _snake(name):
 
 
 def check_default_limits(root, texts):
-    """Diagnostics for guide limit values that differ from the code defaults."""
+    """Diagnostics for guide limit values that differ from the code defaults.
+
+    Every backticked `max_<name>: <value>` in a guide is checked. The value must
+    be digits (optionally grouped with `,` or `_`) and an optional KiB, MiB or
+    GiB unit; any other spelling is reported rather than skipped.
+    """
     rust_path, go_path = root / RUST_LIMITS, root / GO_LIMITS
     if not rust_path.is_file():
         return []
     errors = []
     rust = _code_limits(
         rust_path.read_text(encoding="utf-8"),
-        r"impl Default for Limits \{.*?Limits \{(.*?)\n\s*\}",
+        r"impl Default for Limits \{.*?(?:Limits|Self) \{(.*?)\n\s*\}",
     )
     if not rust or None in rust.values():
         return [f"{RUST_LIMITS}: cannot read the default Limits"]
-    if go_path.is_file():
+    if not go_path.is_file():
+        errors.append(f"{GO_LIMITS}: missing; cannot compare DefaultLimits")
+    else:
         go = _code_limits(
             go_path.read_text(encoding="utf-8"),
             r"func DefaultLimits\(\) Limits \{\s*return Limits\{(.*?)\n\s*\}",
@@ -83,17 +93,19 @@ def check_default_limits(root, texts):
         text = texts.get(name)
         if text is None:
             continue
-        for match in re.finditer(
-            r"`(max_\w+): ([0-9][0-9,]*)(?: ([KMG]iB))?`", text
-        ):
-            limit, digits, unit = match.group(1), match.group(2), match.group(3) or ""
-            value = int(digits.replace(",", "")) * UNITS[unit]
+        for match in re.finditer(r"`(max_\w+):\s*([^`]*)`", text):
+            limit, raw = match.group(1), match.group(2)
+            value = re.fullmatch(r"([0-9][0-9,_]*)(?: ([KMG]iB))?", raw)
             if limit not in rust:
                 errors.append(f"{name}: `{limit}` is not a load limit")
-            elif value != rust[limit]:
-                errors.append(
-                    f"{name}: `{limit}` default is {rust[limit]}, not {match.group(0)}"
-                )
+            elif value is None or re.search(r"[,_]{2}|[,_]$", value.group(1)):
+                errors.append(f"{name}: unsupported limit value {match.group(0)}")
+            else:
+                number = int(re.sub(r"[,_]", "", value.group(1)))
+                if number * UNITS[value.group(2) or ""] != rust[limit]:
+                    errors.append(
+                        f"{name}: `{limit}` default is {rust[limit]}, not {match.group(0)}"
+                    )
     return errors
 
 
