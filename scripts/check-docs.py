@@ -26,6 +26,77 @@ REQUIRED = (
 )
 
 
+# Default load limits quoted in user guides as `name: value`, checked against
+# the Rust `impl Default for Limits` and the Go `DefaultLimits`.
+LIMIT_GUIDES = ("docs/migrating-from-libyaml.md",)
+RUST_LIMITS = "crates/yamlprims/src/options.rs"
+GO_LIMITS = "yaml/options.go"
+UNITS = {"": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30}
+
+
+def _code_value(expr):
+    """Evaluate a default such as `250_000` or `8 << 20`."""
+    match = re.fullmatch(r"([0-9_]+)(?:\s*<<\s*([0-9]+))?", expr.strip())
+    if match is None:
+        return None
+    value = int(match.group(1).replace("_", ""))
+    return value << int(match.group(2)) if match.group(2) else value
+
+
+def _code_limits(text, pattern):
+    """Return the name -> value map of the first block matching pattern."""
+    block = re.search(pattern, text, re.S)
+    if block is None:
+        return None
+    limits = {}
+    for name, expr in re.findall(r"^\s*(\w+):\s*([^,\n]+),", block.group(1), re.M):
+        limits[name] = _code_value(expr)
+    return limits
+
+
+def _snake(name):
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def check_default_limits(root, texts):
+    """Diagnostics for guide limit values that differ from the code defaults."""
+    rust_path, go_path = root / RUST_LIMITS, root / GO_LIMITS
+    if not rust_path.is_file():
+        return []
+    errors = []
+    rust = _code_limits(
+        rust_path.read_text(encoding="utf-8"),
+        r"impl Default for Limits \{.*?Limits \{(.*?)\n\s*\}",
+    )
+    if not rust or None in rust.values():
+        return [f"{RUST_LIMITS}: cannot read the default Limits"]
+    if go_path.is_file():
+        go = _code_limits(
+            go_path.read_text(encoding="utf-8"),
+            r"func DefaultLimits\(\) Limits \{\s*return Limits\{(.*?)\n\s*\}",
+        )
+        if not go or None in go.values():
+            errors.append(f"{GO_LIMITS}: cannot read DefaultLimits")
+        elif {_snake(k): v for k, v in go.items()} != rust:
+            errors.append(f"{GO_LIMITS}: DefaultLimits differs from {RUST_LIMITS}")
+    for name in LIMIT_GUIDES:
+        text = texts.get(name)
+        if text is None:
+            continue
+        for match in re.finditer(
+            r"`(max_\w+): ([0-9][0-9,]*)(?: ([KMG]iB))?`", text
+        ):
+            limit, digits, unit = match.group(1), match.group(2), match.group(3) or ""
+            value = int(digits.replace(",", "")) * UNITS[unit]
+            if limit not in rust:
+                errors.append(f"{name}: `{limit}` is not a load limit")
+            elif value != rust[limit]:
+                errors.append(
+                    f"{name}: `{limit}` default is {rust[limit]}, not {match.group(0)}"
+                )
+    return errors
+
+
 def check(root):
     """Return diagnostics and the number of Markdown documents checked."""
     root = root.resolve()
@@ -89,6 +160,7 @@ def check(root):
                     errors.append(
                         "RELEASE_NOTES.md: first heading must match spec-v<SPEC_VERSION>"
                     )
+    errors.extend(check_default_limits(root, texts))
     return errors, len(documents)
 
 
