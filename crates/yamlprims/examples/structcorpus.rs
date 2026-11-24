@@ -1617,6 +1617,29 @@ fn run_crosscheck_jsonl() -> ExitCode {
                 .max(opts.limits.max_output_bytes);
             rt_opts.limits.max_warnings = rt_opts.limits.max_warnings.max(opts.limits.max_warnings);
         }
+        if rec["op"].as_str() == Some("decode_wire") {
+            // The decode decision (documents, a decoded error envelope, or a
+            // refusal) and the encoding of its result are reported separately.
+            let Ok(text) = std::str::from_utf8(&input) else {
+                eprintln!("{id}: decode_wire input must be UTF-8");
+                return ExitCode::from(2);
+            };
+            let (outcome, encoded) = match decode_wire(text, &opts) {
+                Ok(WireEnvelope::Documents(docs)) => ("documents", encode(&docs, &rt_opts)),
+                Ok(WireEnvelope::Error(e)) => ("decoded_error", encode_error(&e, &rt_opts)),
+                Err(e) => ("refused", encode_error(&e, &rt_opts)),
+            };
+            let (encode_ok, out) = match encoded {
+                Ok(out) => (true, out),
+                Err(e) => (false, encode_error(&e, &def_opts).expect("encode_error")),
+            };
+            println!(
+                "{}",
+                json!({"id": id, "decode_outcome": outcome, "encode_ok": encode_ok, "wire": out,
+                       "roundtrip": "", "plain": "", "emit": "", "ijson": "", "lint": ""})
+            );
+            continue;
+        }
         let loaded = if single {
             load_bytes(&input, &opts).map(|d| vec![d])
         } else {

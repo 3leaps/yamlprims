@@ -1,0 +1,54 @@
+{
+  "note": "Caller-built tree constructor refusals (spec §3, §4.4); every binding must produce exactly this kind and message, NotSource(None), empty related/path.",
+  "cases": [
+    {
+      "id": "tag.empty-uri",
+      "kind": "invalid_options",
+      "message": "tag URI must be a non-empty local (!name) or RFC 3986 global non-core URI"
+    },
+    {
+      "id": "tag.core-uri",
+      "kind": "invalid_options",
+      "message": "tag URI must be a non-empty local (!name) or RFC 3986 global non-core URI"
+    },
+    {
+      "id": "tag.inconsistent-spelling",
+      "kind": "invalid_options",
+      "message": "tag handle and suffix are inconsistent with tag URI"
+    },
+    {
+      "id": "tagged.bool-inner",
+      "kind": "tag_kind_mismatch",
+      "message": "tagged value inner kind is not permitted for this tag"
+    },
+    {
+      "id": "tagged.merge-sequence-inner",
+      "kind": "tag_kind_mismatch",
+      "message": "tagged value inner kind is not permitted for this tag"
+    },
+    {
+      "id": "document.version-2-0",
+      "kind": "unsupported_yaml_version",
+      "message": "unsupported YAML version"
+    }
+  ],
+  "encode_error_cases": [
+    {
+      "id": "path-index-2^53",
+      "message": "path index out of wire range"
+    },
+    {
+      "id": "site-offset-2^53",
+      "message": "wire metadata integer exceeds 2^53 - 1"
+    },
+    {
+      "id": "configured-2^53",
+      "message": "invalid limit_exceeded detail"
+    },
+    {
+      "id": "configured-zero",
+      "message": "invalid limit_exceeded detail"
+    }
+  ],
+  "encode_error_note": "encode_error of a caller-built error carrying a metadata integer of 2^53: every binding refuses with kind internal, NotSource(None), and exactly this message."
+}

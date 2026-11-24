@@ -476,7 +476,7 @@ func TryNewTagged(tag Tag, value Node) (*Tagged, *Error) {
 			ErrorKindTagKindMismatch,
 			ErrorDetail{},
 			nil,
-			"Tagged node inner value must be String, Sequence, or Mapping (and String for !!merge)",
+			"tagged value inner kind is not permitted for this tag",
 		)
 	}
 	return &Tagged{tag: tag, value: value}, nil
@@ -1242,7 +1242,7 @@ func TryNewDocumentWithMetadata(root Node, yamlVersion *[2]uint32, explicitStart
 				ErrorKindUnsupportedYamlVersion,
 				ErrorDetail{},
 				nil,
-				"unsupported YAML version in Document metadata",
+				"unsupported YAML version",
 			)
 		}
 	}

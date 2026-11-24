@@ -1380,7 +1380,7 @@ class Document:
                 raise _not_source_error(
                     "unsupported_yaml_version",
                     {},
-                    f"unsupported YAML directive version: {yaml_version!r}",
+                    "unsupported YAML version",
                 )
         return Document(root=root, yaml_version=yaml_version, explicit_start=explicit_start)
 
@@ -1412,8 +1412,12 @@ class YamlprimsError(ValueError):
         site: dict[str, Any] | None = None,
         related: Sequence[Related] = (),
         path: Sequence[PathSegment] = (),
+        engine_detail: str | None = None,
     ) -> None:
         super().__init__(message)
+        self._engine_detail: str | None = (
+            None if engine_detail is None else _bound_utf8(engine_detail, MAX_MESSAGE_BYTES)
+        )
         self.kind: str = kind
         self.message: str = message
         self.detail: dict[str, Any] = dict(detail) if detail is not None else {}
@@ -1432,6 +1436,16 @@ class YamlprimsError(ValueError):
     def location(self) -> Location | None:
         src = self.site.get("source")
         return src if isinstance(src, Location) else None
+
+    @property
+    def engine_detail(self) -> str | None:
+        """Optional bounded diagnostic context (at most 4,096 UTF-8 bytes).
+
+        For a malformed wire payload refused by `decode_wire`, the specific
+        reason; `message` is the common refusal. Not part of the wire format,
+        not a stable parsing API, and not required to match between bindings.
+        """
+        return self._engine_detail
 
 
 @dataclass(frozen=True)
@@ -1454,6 +1468,34 @@ def _not_source_error(
         message=message,
         detail=detail,
         site={"not_source": {"last_known": last_known}},
+    )
+
+
+_WIRE_PAYLOAD_REFUSAL: Final[str] = "invalid yamlprims wire payload"
+_TRUNCATED_MARK: Final[str] = "\u2026"
+
+
+def _bound_utf8(text: str, limit: int) -> str:
+    """`text` cut to at most `limit` UTF-8 bytes on a character boundary, with the marker inside."""
+    raw = text.encode("utf-8", "backslashreplace")
+    if len(raw) <= limit:
+        return raw.decode("utf-8")
+    cut = max(0, limit - len(_TRUNCATED_MARK.encode("utf-8")))
+    return raw[:cut].decode("utf-8", "ignore") + _TRUNCATED_MARK
+
+
+def _clip(value: object) -> str:
+    """Payload text quoted in a diagnostic, limited before interpolation."""
+    return str(value)[:MAX_MESSAGE_BYTES]
+
+
+def _wire_refusal(detail: str) -> YamlprimsError:
+    """Refusal of a malformed wire payload: the common message, the reason in engine_detail."""
+    return YamlprimsError(
+        kind="internal",
+        message=_WIRE_PAYLOAD_REFUSAL,
+        site={"not_source": {"last_known": None}},
+        engine_detail=detail,
     )
 
 
@@ -1730,14 +1772,14 @@ class _WireJsonParser:
         while True:
             self._skip_ws()
             if self.pos >= self.n:
-                raise _not_source_error("internal", {}, "unexpected EOF in wire JSON")
+                raise _wire_refusal("unexpected EOF in wire JSON")
             self._consume_token()
             ch = self.text[self.pos]
             val: _JVal | None = None
 
             if ch == "{":
                 if len(stack) + 1 > self.max_depth:
-                    raise _not_source_error("internal", {}, "wire JSON nesting exceeds max_depth")
+                    raise _wire_refusal("wire JSON nesting exceeds max_depth")
                 self.pos += 1
                 self._skip_ws()
                 if self.pos < self.n and self.text[self.pos] == "}":
@@ -1745,17 +1787,17 @@ class _WireJsonParser:
                     val = _JVal("obj", {})
                 else:
                     if self.pos >= self.n or self.text[self.pos] != '"':
-                        raise _not_source_error("internal", {}, "expected string key in wire JSON object")
+                        raise _wire_refusal("expected string key in wire JSON object")
                     first_key = self._parse_string()
                     self._skip_ws()
                     if self.pos >= self.n or self.text[self.pos] != ":":
-                        raise _not_source_error("internal", {}, "expected ':' after key in wire JSON object")
+                        raise _wire_refusal("expected ':' after key in wire JSON object")
                     self.pos += 1
                     stack.append(("obj", {}, first_key))
                     continue
             elif ch == "[":
                 if len(stack) + 1 > self.max_depth:
-                    raise _not_source_error("internal", {}, "wire JSON nesting exceeds max_depth")
+                    raise _wire_refusal("wire JSON nesting exceeds max_depth")
                 self.pos += 1
                 self._skip_ws()
                 if self.pos < self.n and self.text[self.pos] == "]":
@@ -1771,30 +1813,30 @@ class _WireJsonParser:
                     self.pos += 4
                     val = _JVal("bool", True)
                 else:
-                    raise _not_source_error("internal", {}, "invalid literal in wire JSON")
+                    raise _wire_refusal("invalid literal in wire JSON")
             elif ch == "f":
                 if self.text.startswith("false", self.pos):
                     self.pos += 5
                     val = _JVal("bool", False)
                 else:
-                    raise _not_source_error("internal", {}, "invalid literal in wire JSON")
+                    raise _wire_refusal("invalid literal in wire JSON")
             elif ch == "n":
                 if self.text.startswith("null", self.pos):
                     self.pos += 4
                     val = _JVal("null", None)
                 else:
-                    raise _not_source_error("internal", {}, "invalid literal in wire JSON")
+                    raise _wire_refusal("invalid literal in wire JSON")
             elif ch == "-" or ("0" <= ch <= "9"):
                 val = self._parse_number()
             else:
-                raise _not_source_error("internal", {}, f"unexpected character {ch!r} in wire JSON")
+                raise _wire_refusal(f"unexpected character {ch!r} in wire JSON")
 
             while True:
                 assert val is not None
                 if not stack:
                     self._skip_ws()
                     if self.pos != self.n:
-                        raise _not_source_error("internal", {}, "trailing characters after wire JSON value")
+                        raise _wire_refusal("trailing characters after wire JSON value")
                     return val
                 frame_kind, container, pending_key = stack[-1]
                 if frame_kind == "arr":
@@ -1808,7 +1850,7 @@ class _WireJsonParser:
                         stack.pop()
                         val = _JVal("arr", container)
                         continue
-                    raise _not_source_error("internal", {}, "expected ',' or ']' in wire JSON array")
+                    raise _wire_refusal("expected ',' or ']' in wire JSON array")
                 else:
                     assert pending_key is not None
                     container[pending_key] = val
@@ -1817,13 +1859,13 @@ class _WireJsonParser:
                         self.pos += 1
                         self._skip_ws()
                         if self.pos >= self.n or self.text[self.pos] != '"':
-                            raise _not_source_error("internal", {}, "expected string key in wire JSON object")
+                            raise _wire_refusal("expected string key in wire JSON object")
                         next_key = self._parse_string()
                         if next_key in container:
-                            raise _not_source_error("internal", {}, f"duplicate JSON object key: {next_key}")
+                            raise _wire_refusal(f"duplicate JSON object key: {_clip(next_key)}")
                         self._skip_ws()
                         if self.pos >= self.n or self.text[self.pos] != ":":
-                            raise _not_source_error("internal", {}, "expected ':' after key in wire JSON object")
+                            raise _wire_refusal("expected ':' after key in wire JSON object")
                         self.pos += 1
                         stack[-1] = ("obj", container, next_key)
                         break
@@ -1832,11 +1874,11 @@ class _WireJsonParser:
                         stack.pop()
                         val = _JVal("obj", container)
                         continue
-                    raise _not_source_error("internal", {}, "expected ',' or '}' in wire JSON object")
+                    raise _wire_refusal("expected ',' or '}' in wire JSON object")
 
     def _consume_token(self) -> None:
         if self.tokens_left <= 0:
-            raise _not_source_error("internal", {}, "wire JSON exceeds token budget")
+            raise _wire_refusal("wire JSON exceeds token budget")
         self.tokens_left -= 1
 
     def _skip_ws(self) -> None:
@@ -1849,7 +1891,7 @@ class _WireJsonParser:
 
     def _parse_string(self) -> str:
         if self.pos >= self.n or self.text[self.pos] != '"':
-            raise _not_source_error("internal", {}, "expected '\"' in wire JSON")
+            raise _wire_refusal("expected '\"' in wire JSON")
         self.pos += 1
         out: list[str] = []
         run_start = self.pos
@@ -1857,9 +1899,9 @@ class _WireJsonParser:
             c = self.text[self.pos]
             o = ord(c)
             if o < 0x20:
-                raise _not_source_error("internal", {}, "unescaped control character in wire JSON string")
+                raise _wire_refusal("unescaped control character in wire JSON string")
             if 0xD800 <= o <= 0xDFFF:
-                raise _not_source_error("internal", {}, "unpaired surrogate in wire JSON string")
+                raise _wire_refusal("unpaired surrogate in wire JSON string")
             if c == '"':
                 if self.pos > run_start:
                     out.append(self.text[run_start : self.pos])
@@ -1870,7 +1912,7 @@ class _WireJsonParser:
                     out.append(self.text[run_start : self.pos])
                 self.pos += 1
                 if self.pos >= self.n:
-                    raise _not_source_error("internal", {}, "unterminated escape in wire JSON string")
+                    raise _wire_refusal("unterminated escape in wire JSON string")
                 esc = self.text[self.pos]
                 self.pos += 1
                 if esc == '"':
@@ -1893,34 +1935,34 @@ class _WireJsonParser:
                     u1 = self._read_hex4()
                     if 0xD800 <= u1 <= 0xDBFF:
                         if not self.text.startswith("\\u", self.pos):
-                            raise _not_source_error("internal", {}, "unpaired high surrogate in wire JSON")
+                            raise _wire_refusal("unpaired high surrogate in wire JSON")
                         self.pos += 2
                         u2 = self._read_hex4()
                         if not (0xDC00 <= u2 <= 0xDFFF):
-                            raise _not_source_error("internal", {}, "invalid low surrogate in wire JSON")
+                            raise _wire_refusal("invalid low surrogate in wire JSON")
                         cp = 0x10000 + ((u1 - 0xD800) << 10) + (u2 - 0xDC00)
                         out.append(chr(cp))
                     elif 0xDC00 <= u1 <= 0xDFFF:
-                        raise _not_source_error("internal", {}, "unpaired low surrogate in wire JSON")
+                        raise _wire_refusal("unpaired low surrogate in wire JSON")
                     else:
                         out.append(chr(u1))
                 else:
-                    raise _not_source_error("internal", {}, f"invalid escape \\{esc} in wire JSON")
+                    raise _wire_refusal(f"invalid escape \\{esc} in wire JSON")
                 run_start = self.pos
                 continue
             self.pos += 1
-        raise _not_source_error("internal", {}, "unterminated string in wire JSON")
+        raise _wire_refusal("unterminated string in wire JSON")
 
     def _read_hex4(self) -> int:
         if self.pos + 4 > self.n:
-            raise _not_source_error("internal", {}, "truncated \\u escape in wire JSON")
+            raise _wire_refusal("truncated \\u escape in wire JSON")
         sub = self.text[self.pos : self.pos + 4]
         try:
             val = int(sub, 16)
         except ValueError:
-            raise _not_source_error("internal", {}, "invalid hex in \\u escape in wire JSON") from None
+            raise _wire_refusal("invalid hex in \\u escape in wire JSON") from None
         if any(c not in "0123456789abcdefABCDEF" for c in sub):
-            raise _not_source_error("internal", {}, "invalid hex in \\u escape in wire JSON")
+            raise _wire_refusal("invalid hex in \\u escape in wire JSON")
         self.pos += 4
         return val
 
@@ -1929,11 +1971,11 @@ class _WireJsonParser:
         if self.text[self.pos] == "-":
             self.pos += 1
         if self.pos >= self.n or not ("0" <= self.text[self.pos] <= "9"):
-            raise _not_source_error("internal", {}, "invalid number in wire JSON")
+            raise _wire_refusal("invalid number in wire JSON")
         if self.text[self.pos] == "0":
             self.pos += 1
             if self.pos < self.n and ("0" <= self.text[self.pos] <= "9"):
-                raise _not_source_error("internal", {}, "leading zero in wire JSON number")
+                raise _wire_refusal("leading zero in wire JSON number")
         else:
             while self.pos < self.n and ("0" <= self.text[self.pos] <= "9"):
                 self.pos += 1
@@ -1942,7 +1984,7 @@ class _WireJsonParser:
             is_float = True
             self.pos += 1
             if self.pos >= self.n or not ("0" <= self.text[self.pos] <= "9"):
-                raise _not_source_error("internal", {}, "invalid fraction in wire JSON number")
+                raise _wire_refusal("invalid fraction in wire JSON number")
             while self.pos < self.n and ("0" <= self.text[self.pos] <= "9"):
                 self.pos += 1
         if self.pos < self.n and self.text[self.pos] in ("e", "E"):
@@ -1951,7 +1993,7 @@ class _WireJsonParser:
             if self.pos < self.n and self.text[self.pos] in ("+", "-"):
                 self.pos += 1
             if self.pos >= self.n or not ("0" <= self.text[self.pos] <= "9"):
-                raise _not_source_error("internal", {}, "invalid exponent in wire JSON number")
+                raise _wire_refusal("invalid exponent in wire JSON number")
             while self.pos < self.n and ("0" <= self.text[self.pos] <= "9"):
                 self.pos += 1
         raw = self.text[start : self.pos]
@@ -1961,7 +2003,7 @@ class _WireJsonParser:
                 return _JVal("int", ival, raw)
         fval = float(raw)
         if not math.isfinite(fval):
-            raise _not_source_error("internal", {}, "non-finite number literal in wire JSON")
+            raise _wire_refusal("non-finite number literal in wire JSON")
         return _JVal("float", fval, raw)
 
 
@@ -1969,44 +2011,44 @@ def _expect_exact_keys(obj: dict[str, _JVal], required: Sequence[str], optional:
     allowed = set(required) | set(optional)
     for k in obj:
         if k not in allowed:
-            raise _not_source_error("internal", {}, f"unknown wire field: {k}")
+            raise _wire_refusal(f"unknown wire field: {_clip(k)}")
     for r in required:
         if r not in obj:
-            raise _not_source_error("internal", {}, f"missing required wire field: {r}")
+            raise _wire_refusal(f"missing required wire field: {r}")
 
 
 def _expect_str(val: _JVal | None, label: str) -> str:
     if val is None or val.t != "str":
-        raise _not_source_error("internal", {}, f"expected string for {label}")
+        raise _wire_refusal(f"expected string for {label}")
     return val.v
 
 
 def _expect_bool(val: _JVal | None, label: str) -> bool:
     if val is None or val.t != "bool":
-        raise _not_source_error("internal", {}, f"expected boolean for {label}")
+        raise _wire_refusal(f"expected boolean for {label}")
     return val.v
 
 
 def _expect_nonneg_int(val: _JVal | None, label: str) -> int:
     if val is None or val.t != "int" or val.v < 0:
-        raise _not_source_error("internal", {}, f"expected non-negative integer for {label}")
+        raise _wire_refusal(f"expected non-negative integer for {label}")
     return val.v
 
 
 def _decode_loc(val: _JVal) -> Location:
     if val.t != "arr" or len(val.v) != 3:
-        raise _not_source_error("internal", {}, "wire Location must be a 3-element array")
+        raise _wire_refusal("wire Location must be a 3-element array")
     b = _expect_nonneg_int(val.v[0], "Location.byte_offset")
     line = _expect_nonneg_int(val.v[1], "Location.line")
     col = _expect_nonneg_int(val.v[2], "Location.column")
     if line < 1 or col < 1:
-        raise _not_source_error("internal", {}, "wire Location line and column must be >= 1")
+        raise _wire_refusal("wire Location line and column must be >= 1")
     return Location(byte_offset=b, line=line, column=col)
 
 
 def _decode_span(val: _JVal) -> Span:
     if val.t != "arr" or len(val.v) != 6:
-        raise _not_source_error("internal", {}, "wire Span must be a 6-element array")
+        raise _wire_refusal("wire Span must be a 6-element array")
     sb = _expect_nonneg_int(val.v[0], "Span.start.byte_offset")
     sl = _expect_nonneg_int(val.v[1], "Span.start.line")
     sc = _expect_nonneg_int(val.v[2], "Span.start.column")
@@ -2014,7 +2056,7 @@ def _decode_span(val: _JVal) -> Span:
     el = _expect_nonneg_int(val.v[4], "Span.end.line")
     ec = _expect_nonneg_int(val.v[5], "Span.end.column")
     if sl < 1 or sc < 1 or el < 1 or ec < 1 or eb < sb:
-        raise _not_source_error("internal", {}, "invalid wire Span coordinates")
+        raise _wire_refusal("invalid wire Span coordinates")
     return Span(
         start=Location(byte_offset=sb, line=sl, column=sc),
         end=Location(byte_offset=eb, line=el, column=ec),
@@ -2025,20 +2067,20 @@ def _decode_via(val: _JVal) -> Via | None:
     if val.t == "null":
         return None
     if val.t != "obj" or len(val.v) != 1:
-        raise _not_source_error("internal", {}, "wire Via must be a single-key object")
+        raise _wire_refusal("wire Via must be a single-key object")
     if "alias" in val.v:
         return Via(kind="alias", span=_decode_span(val.v["alias"]))
     if "merge" in val.v:
         return Via(kind="merge", span=_decode_span(val.v["merge"]))
-    raise _not_source_error("internal", {}, "unknown wire Via variant")
+    raise _wire_refusal("unknown wire Via variant")
 
 
 def _parse_canonical_128_int(text: str) -> int:
     if not _INT_CANONICAL_RE.match(text):
-        raise _not_source_error("internal", {}, f"non-canonical wire integer: {text}")
+        raise _wire_refusal(f"non-canonical wire integer: {_clip(text)}")
     val = int(text, 10)
     if val < I128_MIN or val > U128_MAX:
-        raise _not_source_error("internal", {}, "wire integer outside 128-bit range")
+        raise _wire_refusal("wire integer outside 128-bit range")
     return val
 
 
@@ -2157,7 +2199,7 @@ def _decode_node(
                     raise _wire_limit_error("max_depth", ctx.opts.limits.max_depth)
                 pair = raw_entries[idx]
                 if pair.t != "obj":
-                    raise _not_source_error("internal", {}, "wire mapping entry must be an object")
+                    raise _wire_refusal("wire mapping entry must be an object")
                 _expect_exact_keys(pair.v, ("key", "value"))
                 work.append(
                     (
@@ -2186,9 +2228,9 @@ def _decode_node(
             if len(pairs) >= ctx.opts.limits.max_mapping_entries:
                 raise _wire_limit_error("max_mapping_entries", ctx.opts.limits.max_mapping_entries)
             if _contains_nan(k_node):
-                raise _not_source_error("internal", {}, "wire mapping key contains NaN")
+                raise _wire_refusal("wire mapping key contains NaN")
             if not key_index.check_and_insert(k_node):
-                raise _not_source_error("internal", {}, "wire mapping contains duplicate key")
+                raise _wire_refusal("wire mapping contains duplicate key")
             pairs.append((k_node, v_node))
             work.append(
                 (
@@ -2214,8 +2256,7 @@ def _decode_node(
                 else inner.kind in ("string", "sequence", "mapping")
             )
             if not valid_inner:
-                raise _not_source_error(
-                    "internal", {}, "invalid inner value kind for wire tagged node"
+                raise _wire_refusal("invalid inner value kind for wire tagged node"
                 )
             results.append(
                 Node(
@@ -2232,18 +2273,17 @@ def _decode_node(
         _, val, depth, in_tagged = frame
         _charge_node(ctx, 0)
         if val.t != "obj":
-            raise _not_source_error("internal", {}, "wire Node must be a JSON object")
+            raise _wire_refusal("wire Node must be a JSON object")
         m: dict[str, _JVal] = val.v
         kind = _expect_str(m.get("kind"), "Node.kind")
         span_raw = m.get("span")
         via_raw = m.get("via")
         tag_start_raw = m.get("tag_start")
         if span_raw is None or via_raw is None or tag_start_raw is None:
-            raise _not_source_error("internal", {}, "wire Node missing location fields")
+            raise _wire_refusal("wire Node missing location fields")
         if ctx.forbid_locations:
             if span_raw.t != "null" or via_raw.t != "null" or tag_start_raw.t != "null":
-                raise _not_source_error(
-                    "internal", {}, "error PathSegment.key nodes must have null locations"
+                raise _wire_refusal("error PathSegment.key nodes must have null locations"
                 )
         span = None if span_raw.t == "null" else _decode_span(span_raw)
         via = _decode_via(via_raw)
@@ -2270,7 +2310,7 @@ def _decode_node(
             _expect_exact_keys(m, ("kind", "bits", "span", "via", "tag_start"))
             bits_hex = _expect_str(m.get("bits"), "float.bits")
             if not _HEX16_LOWER_RE.match(bits_hex):
-                raise _not_source_error("internal", {}, f"invalid float bits: {bits_hex}")
+                raise _wire_refusal(f"invalid float bits: {_clip(bits_hex)}")
             fval = _bits_hex_to_float(bits_hex)
             canonical_bits = CANONICAL_NAN_BITS if math.isnan(fval) else bits_hex
             results.append(
@@ -2301,7 +2341,7 @@ def _decode_node(
             _expect_exact_keys(m, ("kind", "items", "span", "via", "tag_start"))
             items_raw = m["items"]
             if items_raw.t != "arr":
-                raise _not_source_error("internal", {}, "wire sequence.items must be an array")
+                raise _wire_refusal("wire sequence.items must be an array")
             if not ctx.is_path_key and depth + 1 > ctx.opts.limits.max_depth:
                 raise _wire_limit_error("max_depth", ctx.opts.limits.max_depth)
             work.append(("seq_step", items_raw.v, 0, depth + 1, [], span, via, tag_start))
@@ -2311,7 +2351,7 @@ def _decode_node(
             _expect_exact_keys(m, ("kind", "entries", "span", "via", "tag_start"))
             entries_raw = m["entries"]
             if entries_raw.t != "arr":
-                raise _not_source_error("internal", {}, "wire mapping.entries must be an array")
+                raise _wire_refusal("wire mapping.entries must be an array")
             if not ctx.is_path_key and depth + 1 > ctx.opts.limits.max_depth:
                 raise _wire_limit_error("max_depth", ctx.opts.limits.max_depth)
             work.append(
@@ -2331,13 +2371,12 @@ def _decode_node(
 
         if kind == "tagged":
             if in_tagged:
-                raise _not_source_error(
-                    "internal", {}, "nested Tagged-in-Tagged is invalid in yamlprims-value/1"
+                raise _wire_refusal("nested Tagged-in-Tagged is invalid in yamlprims-value/1"
                 )
             _expect_exact_keys(m, ("kind", "tag", "value", "span", "via", "tag_start"))
             tag_raw = m["tag"]
             if tag_raw.t != "obj":
-                raise _not_source_error("internal", {}, "wire tagged.tag must be an object")
+                raise _wire_refusal("wire tagged.tag must be an object")
             _expect_exact_keys(tag_raw.v, ("uri", "handle", "suffix"))
             uri = _expect_str(tag_raw.v.get("uri"), "tag.uri")
             handle = _expect_str(tag_raw.v.get("handle"), "tag.handle")
@@ -2345,8 +2384,7 @@ def _decode_node(
             if not _is_valid_non_core_tag_uri(uri) or not _is_valid_tag_spelling(
                 uri, handle, suffix
             ):
-                raise _not_source_error(
-                    "internal", {}, "wire tag object is invalid or uses a Core tag URI"
+                raise _wire_refusal("wire tag object is invalid or uses a Core tag URI"
                 )
             tag_bytes = (
                 len(uri.encode("utf-8"))
@@ -2362,7 +2400,7 @@ def _decode_node(
             work.append(("eval", m["value"], depth, True))
             continue
 
-        raise _not_source_error("internal", {}, f"unknown wire Node kind: {kind}")
+        raise _wire_refusal(f"unknown wire Node kind: {_clip(kind)}")
 
     return results.pop()
 
@@ -2372,7 +2410,7 @@ def _decode_error_envelope(err_obj: dict[str, _JVal], opts: Options) -> Yamlprim
     kind_str = _expect_str(err_obj.get("kind"), "error.kind")
     detail_val = err_obj["detail"]
     if detail_val.t != "obj":
-        raise _not_source_error("internal", {}, "error.detail must be an object")
+        raise _wire_refusal("error.detail must be an object")
     dm: dict[str, _JVal] = detail_val.v
 
     detail: dict[str, Any]
@@ -2384,21 +2422,21 @@ def _decode_error_envelope(err_obj: dict[str, _JVal], opts: Options) -> Yamlprim
         elif il.t == "int" and il.v >= 0:
             detail = {"invalid_len": il.v}
         else:
-            raise _not_source_error("internal", {}, "invalid invalid_utf8.invalid_len")
+            raise _wire_refusal("invalid invalid_utf8.invalid_len")
     elif kind_str == "syntax":
         _expect_exact_keys(dm, ("syntax_kind",))
         sk = _expect_str(dm.get("syntax_kind"), "detail.syntax_kind")
         if sk not in SYNTAX_KINDS:
-            raise _not_source_error("internal", {}, f"unknown syntax_kind: {sk}")
+            raise _wire_refusal(f"unknown syntax_kind: {_clip(sk)}")
         detail = {"syntax_kind": sk}
     elif kind_str == "limit_exceeded":
         _expect_exact_keys(dm, ("limit", "configured"))
         lim = _expect_str(dm.get("limit"), "detail.limit")
         if lim not in LIMIT_KINDS:
-            raise _not_source_error("internal", {}, f"unknown limit kind: {lim}")
+            raise _wire_refusal(f"unknown limit kind: {_clip(lim)}")
         conf = _expect_nonneg_int(dm.get("configured"), "detail.configured")
         if conf < 1:
-            raise _not_source_error("internal", {}, "configured limit must be >= 1")
+            raise _wire_refusal("configured limit must be >= 1")
         detail = {"limit": lim, "configured": conf}
     elif kind_str == "type":
         _expect_exact_keys(dm, ("expected", "found"))
@@ -2413,45 +2451,45 @@ def _decode_error_envelope(err_obj: dict[str, _JVal], opts: Options) -> Yamlprim
         _expect_exact_keys(dm, ("configured",))
         conf = _expect_nonneg_int(dm.get("configured"), "detail.configured")
         if conf < 1:
-            raise _not_source_error("internal", {}, "configured output limit must be >= 1")
+            raise _wire_refusal("configured output limit must be >= 1")
         detail = {"configured": conf}
     elif kind_str in _EMPTY_DETAIL_ERROR_KINDS:
         _expect_exact_keys(dm, ())
         detail = {}
     else:
-        raise _not_source_error("internal", {}, f"unknown error kind: {kind_str}")
+        raise _wire_refusal(f"unknown error kind: {_clip(kind_str)}")
 
     site_val = err_obj["site"]
     if site_val.t != "obj" or len(site_val.v) != 1:
-        raise _not_source_error("internal", {}, "invalid error.site")
+        raise _wire_refusal("invalid error.site")
     if "source" in site_val.v:
         site: dict[str, Any] = {"source": _decode_loc(site_val.v["source"])}
     elif "not_source" in site_val.v:
         ns = site_val.v["not_source"]
         if ns.t != "obj":
-            raise _not_source_error("internal", {}, "invalid error.site.not_source")
+            raise _wire_refusal("invalid error.site.not_source")
         _expect_exact_keys(ns.v, ("last_known",))
         lk = ns.v["last_known"]
         site = {"not_source": {"last_known": None if lk.t == "null" else _decode_loc(lk)}}
     else:
-        raise _not_source_error("internal", {}, "unknown error.site variant")
+        raise _wire_refusal("unknown error.site variant")
 
     rel_val = err_obj["related"]
     if rel_val.t != "arr":
-        raise _not_source_error("internal", {}, "error.related must be an array")
+        raise _wire_refusal("error.related must be an array")
     related: list[Related] = []
     for r in rel_val.v:
         if r.t != "obj":
-            raise _not_source_error("internal", {}, "related entry must be an object")
+            raise _wire_refusal("related entry must be an object")
         _expect_exact_keys(r.v, ("role", "span"))
         role = _expect_str(r.v.get("role"), "related.role")
         if role not in ("first_definition", "alias_use", "merge_directive", "anchor_definition"):
-            raise _not_source_error("internal", {}, f"unknown related.role: {role}")
+            raise _wire_refusal(f"unknown related.role: {_clip(role)}")
         related.append(Related(role=role, span=_decode_span(r.v["span"])))
 
     path_val = err_obj["path"]
     if path_val.t != "arr":
-        raise _not_source_error("internal", {}, "error.path must be an array")
+        raise _wire_refusal("error.path must be an array")
     if len(path_val.v) > opts.limits.max_depth:
         raise _wire_limit_error("max_depth", opts.limits.max_depth)
     path: list[PathSegment] = []
@@ -2463,7 +2501,7 @@ def _decode_error_envelope(err_obj: dict[str, _JVal], opts: Options) -> Yamlprim
     )
     for seg in path_val.v:
         if seg.t != "obj" or len(seg.v) != 1:
-            raise _not_source_error("internal", {}, "invalid error.path segment")
+            raise _wire_refusal("invalid error.path segment")
         if "index" in seg.v:
             path.append(PathSegment.from_index(_expect_nonneg_int(seg.v["index"], "path.index")))
         elif "key" in seg.v:
@@ -2472,7 +2510,7 @@ def _decode_error_envelope(err_obj: dict[str, _JVal], opts: Options) -> Yamlprim
                 raise _wire_limit_error("max_key_bytes", opts.limits.max_key_bytes)
             path.append(PathSegment.from_key(k_node))
         else:
-            raise _not_source_error("internal", {}, "unknown error.path segment key")
+            raise _wire_refusal("unknown error.path segment key")
 
     msg = _expect_str(err_obj.get("message"), "error.message")
     return YamlprimsError(
@@ -2493,35 +2531,35 @@ def decode_wire(wire_json: str, options: Options | TypingMapping[str, Any] | Non
     try:
         wire_utf8_len = len(wire_json.encode("utf-8", errors="strict"))
     except UnicodeEncodeError:
-        raise _not_source_error("internal", {}, "wire JSON contains unpaired surrogate") from None
+        raise _wire_refusal("wire JSON contains unpaired surrogate") from None
     if wire_utf8_len > opts.limits.max_input_bytes:
         raise _wire_limit_error("max_input_bytes", opts.limits.max_input_bytes)
     max_json_depth = min(2048, opts.limits.max_depth * 4 + 32)
     max_tokens = min(50_000_000, max(4096, opts.limits.max_nodes * 24 + 4096))
     root = _WireJsonParser(wire_json, max_json_depth, max_tokens).parse_root()
     if root.t != "obj":
-        raise _not_source_error("internal", {}, "wire envelope must be a JSON object")
+        raise _wire_refusal("wire envelope must be a JSON object")
     rm: dict[str, _JVal] = root.v
     _expect_exact_keys(rm, ("format", "version"), ("documents", "error"))
     if _expect_str(rm.get("format"), "format") != "yamlprims-value":
-        raise _not_source_error("internal", {}, "unsupported wire format")
+        raise _wire_refusal("unsupported wire format")
     if _expect_nonneg_int(rm.get("version"), "version") != 1:
-        raise _not_source_error("internal", {}, "unsupported wire version")
+        raise _wire_refusal("unsupported wire version")
 
     has_docs = "documents" in rm
     has_err = "error" in rm
     if has_docs == has_err:
-        raise _not_source_error("internal", {}, "wire envelope must have either documents or error")
+        raise _wire_refusal("wire envelope must have either documents or error")
 
     if has_err:
         err_val = rm["error"]
         if err_val.t != "obj":
-            raise _not_source_error("internal", {}, "wire error must be a JSON object")
+            raise _wire_refusal("wire error must be a JSON object")
         return WireEnvelope(kind="error", error=_decode_error_envelope(err_val.v, opts))
 
     docs_val = rm["documents"]
     if docs_val.t != "arr":
-        raise _not_source_error("internal", {}, "wire documents must be an array")
+        raise _wire_refusal("wire documents must be an array")
 
     ctx = _DecodeCtx(opts=opts, nodes_remaining=opts.limits.max_nodes)
     docs: list[Document] = []
@@ -2529,7 +2567,7 @@ def decode_wire(wire_json: str, options: Options | TypingMapping[str, Any] | Non
         if len(docs) + 1 > opts.limits.max_documents:
             raise _wire_limit_error("max_documents", opts.limits.max_documents)
         if dval.t != "obj":
-            raise _not_source_error("internal", {}, "wire document must be an object")
+            raise _wire_refusal("wire document must be an object")
         dm: dict[str, _JVal] = dval.v
         _expect_exact_keys(dm, ("yaml_version", "explicit_start", "root"))
         yv_raw = dm["yaml_version"]
@@ -2539,10 +2577,10 @@ def decode_wire(wire_json: str, options: Options | TypingMapping[str, Any] | Non
             maj = _expect_nonneg_int(yv_raw.v[0], "yaml_version[0]")
             minor = _expect_nonneg_int(yv_raw.v[1], "yaml_version[1]")
             if maj > 0xFFFFFFFF or minor > 0xFFFFFFFF:
-                raise _not_source_error("internal", {}, "yaml_version component exceeds u32::MAX")
+                raise _wire_refusal("yaml_version component exceeds u32::MAX")
             yaml_version = (maj, minor)
         else:
-            raise _not_source_error("internal", {}, "invalid wire yaml_version")
+            raise _wire_refusal("invalid wire yaml_version")
         explicit_start = _expect_bool(dm.get("explicit_start"), "explicit_start")
         root_node = _decode_node(dm["root"], ctx, 0, False)
         docs.append(Document(root=root_node, yaml_version=yaml_version, explicit_start=explicit_start))
@@ -2574,7 +2612,9 @@ class _BoundedWriter:
         self.chunks.append(ascii_str)
 
     def push_meta_int(self, n: int, label: str) -> None:
-        if type(n) is not int or n < 0 or n > MAX_SAFE_METADATA_INT:
+        if type(n) is int and n > MAX_SAFE_METADATA_INT:
+            raise _not_source_error("internal", {}, "wire metadata integer exceeds 2^53 - 1")
+        if type(n) is not int or n < 0:
             raise _not_source_error("internal", {}, f"metadata integer out of range for {label}")
         self.push_raw(str(n))
 
@@ -3035,6 +3075,16 @@ def encode_error(
 ) -> str:
     """Serialize a `YamlprimsError` to the `yamlprims-value/1` wire error envelope."""
     opts = validate_options(options)
+    # Pair ranges checked before any path preflight or JSON, as in the core (§11.1).
+    d0 = err.detail if isinstance(err.detail, dict) else {}
+    il0 = d0.get("invalid_len")
+    if err.kind == "invalid_utf8" and type(il0) is int and il0 > MAX_SAFE_METADATA_INT:
+        raise _not_source_error("internal", {}, "invalid_len out of wire range")
+    cfg0 = d0.get("configured")
+    if err.kind in ("limit_exceeded", "output_limit_exceeded") and type(cfg0) is int and (
+        cfg0 == 0 or cfg0 > MAX_SAFE_METADATA_INT
+    ):
+        raise _not_source_error("internal", {}, f"invalid {err.kind} detail")
     if len(err.path) > opts.limits.max_depth:
         raise _not_source_error(
             "limit_exceeded",
@@ -3042,6 +3092,8 @@ def encode_error(
             f"error path has {len(err.path)} segments, more than max_depth",
         )
     for seg in err.path:
+        if seg.kind == "index" and type(seg.index) is int and seg.index > MAX_SAFE_METADATA_INT:
+            raise _not_source_error("internal", {}, "path index out of wire range")
         if seg.kind == "key" and seg.key is not None:
             _preflight_key_node(seg.key, opts.limits)
 
@@ -4465,10 +4517,19 @@ def dump_all(
                     or item.yaml_version[1] < 0
                     or item.yaml_version[1] > 999_999_999
                 ):
+                    well_formed = (
+                        isinstance(item.yaml_version, tuple)
+                        and len(item.yaml_version) == 2
+                        and all(type(v) is int and v >= 0 for v in item.yaml_version)
+                    )
                     raise _not_source_error(
                         "unsupported_yaml_version",
                         {},
-                        f"unsupported YAML directive version: {item.yaml_version!r}",
+                        (
+                            f"unsupported YAML directive version {item.yaml_version[0]}.{item.yaml_version[1]}"
+                            if well_formed
+                            else f"unsupported YAML directive version: {item.yaml_version!r}"
+                        ),
                     )
             if type(item.explicit_start) is not bool:
                 raise _invalid_options_error("Document.explicit_start must be a bool")

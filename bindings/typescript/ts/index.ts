@@ -414,6 +414,7 @@ export class YamlprimsError extends Error {
   readonly related: Related[];
   readonly path: PathSegment[];
   readonly rawMessage: string;
+  declare readonly engineDetail: string | undefined;
 
   constructor(init: {
     kind: ErrorKind;
@@ -422,10 +423,21 @@ export class YamlprimsError extends Error {
     related?: Related[];
     path?: PathSegment[];
     message: string;
+    engineDetail?: string;
   }) {
     const src = init.site.source ?? null;
     super(init.message);
     this.name = "YamlprimsError";
+    // Optional bounded diagnostic context (at most 4,096 UTF-8 bytes): for a
+    // malformed wire payload refused by decodeWire, the specific reason. Not
+    // part of the wire format, not a stable parsing API, not required to match
+    // between bindings. Read-only and non-enumerable.
+    Object.defineProperty(this, "engineDetail", {
+      value: init.engineDetail === undefined ? undefined : boundUtf8(init.engineDetail, 4096),
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
     this.kind = init.kind;
     const rawDetail = init.detail as Record<string, unknown>;
     if (init.kind === "syntax" && typeof rawDetail["syntaxKind"] === "string" && !("syntax_kind" in rawDetail)) {
@@ -514,6 +526,49 @@ function notSourceError(
 
 function invalidOptionsError(message: string): YamlprimsError {
   return notSourceError("invalid_options", {}, message);
+}
+
+const WIRE_PAYLOAD_REFUSAL = "invalid yamlprims wire payload";
+const MAX_ENGINE_DETAIL_BYTES = 4096;
+
+/** `text` cut to at most `limit` UTF-8 bytes on a code point boundary, with `…` inside the bound. */
+function boundUtf8(text: string, limit: number): string {
+  if (encoder.encode(text).byteLength <= limit) return text;
+  const room = limit - 3;
+  let used = 0;
+  let out = "";
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) as number;
+    const n = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    if (used + n > room) break;
+    used += n;
+    out += ch;
+  }
+  return out + "\u2026";
+}
+
+/** Payload text quoted in a diagnostic, limited before interpolation. */
+function clip(value: unknown): string {
+  return String(value).slice(0, MAX_ENGINE_DETAIL_BYTES);
+}
+
+/** Refusal of a malformed wire payload: the common message, the reason in engineDetail. */
+function wireRefusal(detail: string): YamlprimsError {
+  return new YamlprimsError({
+    kind: "internal",
+    detail: {},
+    site: { notSource: { lastKnown: null } },
+    message: WIRE_PAYLOAD_REFUSAL,
+    engineDetail: detail,
+  });
+}
+
+function wireLimitError(limit: string, configured: number): YamlprimsError {
+  return notSourceError(
+    "limit_exceeded",
+    { limit, configured } as ErrorDetail,
+    `wire payload exceeds ${limit} (${configured})`,
+  );
 }
 
 function pickLimit(
@@ -1498,8 +1553,11 @@ export function createTag(uri: string, handle = "", suffix?: string): Tag {
   assertWellFormedUnicode(uri, "Tag.uri");
   assertWellFormedUnicode(handle, "Tag.handle");
   assertWellFormedUnicode(actualSuffix, "Tag.suffix");
-  if (!isValidNonCoreTagUri(uri) || !isConsistentTagSpelling(uri, handle, actualSuffix)) {
-    throw invalidOptionsError(`invalid Tag (${uri}, handle=${handle}, suffix=${actualSuffix})`);
+  if (!isValidNonCoreTagUri(uri)) {
+    throw invalidOptionsError("tag URI must be a non-empty local (!name) or RFC 3986 global non-core URI");
+  }
+  if (!isConsistentTagSpelling(uri, handle, actualSuffix)) {
+    throw invalidOptionsError("tag handle and suffix are inconsistent with tag URI");
   }
   return { uri, handle, suffix: actualSuffix };
 }
@@ -1519,14 +1577,14 @@ export function createTaggedNode(
       throw notSourceError(
         "tag_kind_mismatch",
         {},
-        "tag:yaml.org,2002:merge may only wrap a String node",
+        "tagged value inner kind is not permitted for this tag",
       );
     }
   } else if (value.kind !== "string" && value.kind !== "sequence" && value.kind !== "mapping") {
     throw notSourceError(
       "tag_kind_mismatch",
       {},
-      `Tagged node must wrap string, sequence, or mapping (found ${value.kind})`,
+      "tagged value inner kind is not permitted for this tag",
     );
   }
   return {
@@ -1565,7 +1623,7 @@ export function createDocument(
       throw notSourceError(
         "unsupported_yaml_version",
         {},
-        `unsupported YAML directive version: ${JSON.stringify(yamlVersion)}`,
+        "unsupported YAML version",
       );
     }
     return { yamlVersion: [yamlVersion[0], yamlVersion[1]], explicitStart, root };
@@ -2153,7 +2211,7 @@ class WireJsonParser {
     const val = this.parseValue(0);
     this.skipWs();
     if (this.pos !== this.s.length) {
-      throw notSourceError("internal", {}, "trailing characters after wire JSON");
+      throw wireRefusal("trailing characters after wire JSON");
     }
     return val;
   }
@@ -2172,18 +2230,18 @@ class WireJsonParser {
   private expectChar(code: number): void {
     this.skipWs();
     if (this.pos >= this.s.length || this.s.charCodeAt(this.pos) !== code) {
-      throw notSourceError("internal", {}, "malformed wire JSON");
+      throw wireRefusal("malformed wire JSON");
     }
     this.pos++;
   }
 
   private parseValue(depth: number): JsonVal {
     if (depth > this.maxDepth) {
-      throw notSourceError("internal", {}, "wire JSON nesting exceeds maximum depth");
+      throw wireRefusal("wire JSON nesting exceeds maximum depth");
     }
     this.skipWs();
     if (this.pos >= this.s.length) {
-      throw notSourceError("internal", {}, "unexpected end of wire JSON");
+      throw wireRefusal("unexpected end of wire JSON");
     }
     const c = this.s.charCodeAt(this.pos);
     if (c === 0x7b /* { */) return this.parseObject(depth + 1);
@@ -2194,26 +2252,26 @@ class WireJsonParser {
         this.pos += 4;
         return { t: "bool", v: true };
       }
-      throw notSourceError("internal", {}, "invalid literal in wire JSON");
+      throw wireRefusal("invalid literal in wire JSON");
     }
     if (c === 0x66 /* f */) {
       if (this.s.startsWith("false", this.pos)) {
         this.pos += 5;
         return { t: "bool", v: false };
       }
-      throw notSourceError("internal", {}, "invalid literal in wire JSON");
+      throw wireRefusal("invalid literal in wire JSON");
     }
     if (c === 0x6e /* n */) {
       if (this.s.startsWith("null", this.pos)) {
         this.pos += 4;
         return { t: "null" };
       }
-      throw notSourceError("internal", {}, "invalid literal in wire JSON");
+      throw wireRefusal("invalid literal in wire JSON");
     }
     if (c >= 0x30 && c <= 0x39) {
       return this.parseUnsignedInt();
     }
-    throw notSourceError("internal", {}, "unexpected token in wire JSON");
+    throw wireRefusal("unexpected token in wire JSON");
   }
 
   private parseUnsignedInt(): JsonVal {
@@ -2223,18 +2281,18 @@ class WireJsonParser {
       if (c >= 0x30 && c <= 0x39) {
         this.pos++;
       } else if (c === 0x2e || c === 0x65 || c === 0x45 || c === 0x2b || c === 0x2d) {
-        throw notSourceError("internal", {}, "non-canonical number in wire JSON");
+        throw wireRefusal("non-canonical number in wire JSON");
       } else {
         break;
       }
     }
     const raw = this.s.slice(start, this.pos);
     if (raw.length > 1 && raw.charCodeAt(0) === 0x30) {
-      throw notSourceError("internal", {}, "leading zero in wire metadata integer");
+      throw wireRefusal("leading zero in wire metadata integer");
     }
     const big = BigInt(raw);
     if (big > BigInt(MAX_SAFE_METADATA_INT)) {
-      throw notSourceError("internal", {}, "wire metadata integer exceeds 2^53-1");
+      throw wireRefusal("wire metadata integer exceeds 2^53-1");
     }
     return { t: "int", raw, v: Number(big) };
   }
@@ -2252,24 +2310,24 @@ class WireJsonParser {
         return out;
       }
       if (c < 0x20) {
-        throw notSourceError("internal", {}, "unescaped control character in wire JSON string");
+        throw wireRefusal("unescaped control character in wire JSON string");
       }
       if (c >= 0xd800 && c <= 0xdbff) {
         const next = this.pos + 1 < this.s.length ? this.s.charCodeAt(this.pos + 1) : 0;
         if (next < 0xdc00 || next > 0xdfff) {
-          throw notSourceError("internal", {}, "unpaired high surrogate in wire JSON string");
+          throw wireRefusal("unpaired high surrogate in wire JSON string");
         }
         this.pos += 2;
         continue;
       }
       if (c >= 0xdc00 && c <= 0xdfff) {
-        throw notSourceError("internal", {}, "unpaired low surrogate in wire JSON string");
+        throw wireRefusal("unpaired low surrogate in wire JSON string");
       }
       if (c === 0x5c /* \ */) {
         out += this.s.slice(chunkStart, this.pos);
         this.pos++;
         if (this.pos >= this.s.length) {
-          throw notSourceError("internal", {}, "unterminated escape in wire JSON string");
+          throw wireRefusal("unterminated escape in wire JSON string");
         }
         const esc = this.s.charCodeAt(this.pos++);
         switch (esc) {
@@ -2300,7 +2358,7 @@ class WireJsonParser {
           case 0x75: {
             const hex = this.s.slice(this.pos, this.pos + 4);
             if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
-              throw notSourceError("internal", {}, "invalid \\uXXXX escape in wire JSON");
+              throw wireRefusal("invalid \\uXXXX escape in wire JSON");
             }
             this.pos += 4;
             const code = parseInt(hex, 16);
@@ -2309,34 +2367,34 @@ class WireJsonParser {
                 this.s.charCodeAt(this.pos) !== 0x5c ||
                 this.s.charCodeAt(this.pos + 1) !== 0x75
               ) {
-                throw notSourceError("internal", {}, "unpaired high surrogate in wire JSON");
+                throw wireRefusal("unpaired high surrogate in wire JSON");
               }
               const lowHex = this.s.slice(this.pos + 2, this.pos + 6);
               if (!/^[0-9a-fA-F]{4}$/.test(lowHex)) {
-                throw notSourceError("internal", {}, "invalid low surrogate escape in wire JSON");
+                throw wireRefusal("invalid low surrogate escape in wire JSON");
               }
               const low = parseInt(lowHex, 16);
               if (low < 0xdc00 || low > 0xdfff) {
-                throw notSourceError("internal", {}, "invalid surrogate pair in wire JSON");
+                throw wireRefusal("invalid surrogate pair in wire JSON");
               }
               this.pos += 6;
               out += String.fromCharCode(code, low);
             } else if (code >= 0xdc00 && code <= 0xdfff) {
-              throw notSourceError("internal", {}, "unpaired low surrogate in wire JSON");
+              throw wireRefusal("unpaired low surrogate in wire JSON");
             } else {
               out += String.fromCharCode(code);
             }
             break;
           }
           default:
-            throw notSourceError("internal", {}, "unknown escape in wire JSON string");
+            throw wireRefusal("unknown escape in wire JSON string");
         }
         chunkStart = this.pos;
         continue;
       }
       this.pos++;
     }
-    throw notSourceError("internal", {}, "unterminated string in wire JSON");
+    throw wireRefusal("unterminated string in wire JSON");
   }
 
   private parseArray(depth: number): JsonVal {
@@ -2370,7 +2428,7 @@ class WireJsonParser {
     while (true) {
       const key = this.parseString();
       if (map.has(key)) {
-        throw notSourceError("internal", {}, `duplicate JSON object key: ${key}`);
+        throw wireRefusal(`duplicate JSON object key: ${clip(key)}`);
       }
       this.expectChar(0x3a);
       const val = this.parseValue(depth);
@@ -2391,45 +2449,45 @@ function expectExactKeys(
   required: readonly string[],
 ): void {
   if (obj.size !== required.length) {
-    throw notSourceError("internal", {}, "unexpected or missing fields in wire object");
+    throw wireRefusal("unexpected or missing fields in wire object");
   }
   for (const k of required) {
     if (!obj.has(k)) {
-      throw notSourceError("internal", {}, `missing required wire field: ${k}`);
+      throw wireRefusal(`missing required wire field: ${clip(k)}`);
     }
   }
 }
 
 function expectStr(val: JsonVal | undefined, field: string): string {
   if (!val || val.t !== "str") {
-    throw notSourceError("internal", {}, `expected string for ${field}`);
+    throw wireRefusal(`expected string for ${field}`);
   }
   return val.v;
 }
 
 function expectBool(val: JsonVal | undefined, field: string): boolean {
   if (!val || val.t !== "bool") {
-    throw notSourceError("internal", {}, `expected boolean for ${field}`);
+    throw wireRefusal(`expected boolean for ${field}`);
   }
   return val.v;
 }
 
 function expectInt(val: JsonVal | undefined, field: string): number {
   if (!val || val.t !== "int") {
-    throw notSourceError("internal", {}, `expected unsigned integer for ${field}`);
+    throw wireRefusal(`expected unsigned integer for ${field}`);
   }
   return val.v;
 }
 
 function decodeLoc(val: JsonVal, idx: Utf16Index | null): Location {
   if (val.t !== "arr" || val.items.length !== 3) {
-    throw notSourceError("internal", {}, "Loc must be [byte, line, col]");
+    throw wireRefusal("Loc must be [byte, line, col]");
   }
   const byteOffset = expectInt(val.items[0], "Loc.byte");
   const line = expectInt(val.items[1], "Loc.line");
   const column = expectInt(val.items[2], "Loc.col");
   if (line < 1 || column < 1) {
-    throw notSourceError("internal", {}, "Loc line and column must be >= 1");
+    throw wireRefusal("Loc line and column must be >= 1");
   }
   const utf16Offset = idx !== null ? idx.utf16At(byteOffset) : byteOffset;
   return { byteOffset, utf16Offset, line, column };
@@ -2437,7 +2495,7 @@ function decodeLoc(val: JsonVal, idx: Utf16Index | null): Location {
 
 function decodeSpan(val: JsonVal, idx: Utf16Index | null): Span {
   if (val.t !== "arr" || val.items.length !== 6) {
-    throw notSourceError("internal", {}, "Span must be 6-element array");
+    throw wireRefusal("Span must be 6-element array");
   }
   const sb = expectInt(val.items[0], "Span.start_byte");
   const sl = expectInt(val.items[1], "Span.start_line");
@@ -2446,7 +2504,7 @@ function decodeSpan(val: JsonVal, idx: Utf16Index | null): Span {
   const el = expectInt(val.items[4], "Span.end_line");
   const ec = expectInt(val.items[5], "Span.end_col");
   if (sl < 1 || sc < 1 || el < 1 || ec < 1 || eb < sb) {
-    throw notSourceError("internal", {}, "invalid Span coordinates");
+    throw wireRefusal("invalid Span coordinates");
   }
   return {
     start: {
@@ -2475,11 +2533,7 @@ interface DecodeContext {
 function chargeOwnedBytes(ctx: DecodeContext, delta: bigint): void {
   ctx.ownedBytes += delta;
   if (ctx.ownedBytes > BigInt(ctx.opts.limits.maxOwnedBytes)) {
-    throw notSourceError(
-      "limit_exceeded",
-      { limit: "max_owned_bytes", configured: ctx.opts.limits.maxOwnedBytes },
-      `decoded tree exceeds max_owned_bytes (${ctx.opts.limits.maxOwnedBytes})`,
-    );
+    throw wireLimitError("max_owned_bytes", ctx.opts.limits.maxOwnedBytes);
   }
 }
 
@@ -2491,29 +2545,17 @@ function preflightDocKeyWeight(keyRoot: Node, maxKeyBytes: number): void {
     const cur = stack.pop()!;
     total += NODE_OVERHEAD;
     if (total > maxKey) {
-      throw notSourceError(
-        "limit_exceeded",
-        { limit: "max_key_bytes", configured: maxKeyBytes },
-        `decoded mapping key exceeds max_key_bytes (${maxKeyBytes})`,
-      );
+      throw wireLimitError("max_key_bytes", maxKeyBytes);
     }
     if (cur.kind === "string") {
       total += BigInt(encoder.encode(cur.value).byteLength);
       if (total > maxKey) {
-        throw notSourceError(
-          "limit_exceeded",
-          { limit: "max_key_bytes", configured: maxKeyBytes },
-          `decoded mapping key exceeds max_key_bytes (${maxKeyBytes})`,
-        );
+        throw wireLimitError("max_key_bytes", maxKeyBytes);
       }
     } else if (cur.kind === "tagged") {
       total += tagWeightBytes(cur.tag);
       if (total > maxKey) {
-        throw notSourceError(
-          "limit_exceeded",
-          { limit: "max_key_bytes", configured: maxKeyBytes },
-          `decoded mapping key exceeds max_key_bytes (${maxKeyBytes})`,
-        );
+        throw wireLimitError("max_key_bytes", maxKeyBytes);
       }
       stack.push(cur.value);
     } else if (cur.kind === "sequence") {
@@ -2521,11 +2563,7 @@ function preflightDocKeyWeight(keyRoot: Node, maxKeyBytes: number): void {
     } else if (cur.kind === "mapping") {
       total += BigInt(cur.entries.length) * ENTRY_OVERHEAD;
       if (total > maxKey) {
-        throw notSourceError(
-          "limit_exceeded",
-          { limit: "max_key_bytes", configured: maxKeyBytes },
-          `decoded mapping key exceeds max_key_bytes (${maxKeyBytes})`,
-        );
+        throw wireLimitError("max_key_bytes", maxKeyBytes);
       }
       for (const [k, v] of cur.entries) {
         stack.push(v, k);
@@ -2632,7 +2670,7 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
       } else {
         const item = frame.rawEntries[frame.idx]!;
         if (item.t !== "obj") {
-          throw notSourceError("internal", {}, "mapping entry must be an object");
+          throw wireRefusal("mapping entry must be an object");
         }
         expectExactKeys(item.map, ["key", "value"]);
         work.push({
@@ -2670,10 +2708,10 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         preflightDocKeyWeight(k, ctx.opts.limits.maxKeyBytes);
       }
       if (containsNan(k)) {
-        throw notSourceError("internal", {}, "wire mapping key contains NaN");
+        throw wireRefusal("wire mapping key contains NaN");
       }
       if (!frame.keyIndex.checkAndInsert(k)) {
-        throw notSourceError("internal", {}, "wire mapping contains duplicate key");
+        throw wireRefusal("wire mapping contains duplicate key");
       }
       frame.entries.push([k, v]);
       work.push({
@@ -2695,17 +2733,11 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
       const inner = results.pop()!;
       if (frame.tag.uri === "tag:yaml.org,2002:merge") {
         if (frame.inKey || inner.kind !== "string") {
-          throw notSourceError(
-            "internal",
-            {},
-            "tag:yaml.org,2002:merge may only wrap a non-key String node in yamlprims-value/1",
+          throw wireRefusal("tag:yaml.org,2002:merge may only wrap a non-key String node in yamlprims-value/1",
           );
         }
       } else if (inner.kind !== "string" && inner.kind !== "sequence" && inner.kind !== "mapping") {
-        throw notSourceError(
-          "internal",
-          {},
-          "Tagged node in yamlprims-value/1 must wrap string, sequence, or mapping",
+        throw wireRefusal("Tagged node in yamlprims-value/1 must wrap string, sequence, or mapping",
         );
       }
       results.push({
@@ -2721,14 +2753,10 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
 
     const { val, depth, inKey } = frame;
     if (val.t !== "obj") {
-      throw notSourceError("internal", {}, "Node must be a JSON object");
+      throw wireRefusal("Node must be a JSON object");
     }
     if (ctx.nodesRemaining <= 0) {
-      throw notSourceError(
-        "limit_exceeded",
-        { limit: "max_nodes", configured: ctx.opts.limits.maxNodes },
-        `wire Node count exceeds max_nodes (${ctx.opts.limits.maxNodes})`,
-      );
+      throw wireLimitError("max_nodes", ctx.opts.limits.maxNodes);
     }
     ctx.nodesRemaining -= 1;
     chargeOwnedBytes(ctx, NODE_OVERHEAD);
@@ -2740,18 +2768,18 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
     const viaVal = map.get("via");
     const tagStartVal = map.get("tag_start");
     if (!spanVal || !viaVal || !tagStartVal) {
-      throw notSourceError("internal", {}, "Node missing location fields");
+      throw wireRefusal("Node missing location fields");
     }
     if (ctx.forbidLocations) {
       if (spanVal.t !== "null" || viaVal.t !== "null" || tagStartVal.t !== "null") {
-        throw notSourceError("internal", {}, "PathKey must have null span, via and tag_start");
+        throw wireRefusal("PathKey must have null span, via and tag_start");
       }
     }
     const span = spanVal.t === "null" ? null : decodeSpan(spanVal, ctx.idx);
     let via: Via | null = null;
     if (viaVal.t !== "null") {
       if (viaVal.t !== "obj" || viaVal.map.size !== 1) {
-        throw notSourceError("internal", {}, "invalid Node.via");
+        throw wireRefusal("invalid Node.via");
       }
       const aliasSpan = viaVal.map.get("alias");
       const mergeSpan = viaVal.map.get("merge");
@@ -2762,7 +2790,7 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         const s = decodeSpan(mergeSpan, ctx.idx);
         via = { kind: "merge", merge: s, directive: s };
       } else {
-        throw notSourceError("internal", {}, "unknown Via variant");
+        throw wireRefusal("unknown Via variant");
       }
     }
     const tagStart = tagStartVal.t === "null" ? null : decodeLoc(tagStartVal, ctx.idx);
@@ -2788,11 +2816,11 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         expectExactKeys(map, ["kind", "value", "span", "via", "tag_start"]);
         const raw = expectStr(map.get("value"), "int.value");
         if (!/^(0|-?[1-9][0-9]*)$/.test(raw)) {
-          throw notSourceError("internal", {}, `non-canonical wire int: ${raw}`);
+          throw wireRefusal(`non-canonical wire int: ${clip(raw)}`);
         }
         const big = BigInt(raw);
         if (big < I128_MIN || big > U128_MAX) {
-          throw notSourceError("internal", {}, `wire int out of 128-bit range: ${raw}`);
+          throw wireRefusal(`wire int out of 128-bit range: ${clip(raw)}`);
         }
         results.push({ kind: "int", value: big, span, via, tagStart });
         break;
@@ -2801,7 +2829,7 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         expectExactKeys(map, ["kind", "bits", "span", "via", "tag_start"]);
         const rawBits = expectStr(map.get("bits"), "float.bits");
         if (!/^[0-9a-f]{16}$/.test(rawBits)) {
-          throw notSourceError("internal", {}, `invalid wire float bits: ${rawBits}`);
+          throw wireRefusal(`invalid wire float bits: ${clip(rawBits)}`);
         }
         const { value, canonicalBits } = bitsToFloat(rawBits);
         results.push({ kind: "float", value, bits: canonicalBits, span, via, tagStart });
@@ -2812,11 +2840,7 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         const strVal = expectStr(map.get("value"), "string.value");
         const strBytes = encoder.encode(strVal).byteLength;
         if (strBytes > ctx.opts.limits.maxScalarBytes) {
-          throw notSourceError(
-            "limit_exceeded",
-            { limit: "max_scalar_bytes", configured: ctx.opts.limits.maxScalarBytes },
-            `wire string exceeds max_scalar_bytes (${ctx.opts.limits.maxScalarBytes})`,
-          );
+          throw wireLimitError("max_scalar_bytes", ctx.opts.limits.maxScalarBytes);
         }
         chargeOwnedBytes(ctx, BigInt(strBytes));
         results.push({ kind: "string", value: strVal, span, via, tagStart });
@@ -2826,15 +2850,11 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         expectExactKeys(map, ["kind", "items", "span", "via", "tag_start"]);
         const itemsVal = map.get("items")!;
         if (itemsVal.t !== "arr") {
-          throw notSourceError("internal", {}, "sequence.items must be an array");
+          throw wireRefusal("sequence.items must be an array");
         }
         if (!ctx.forbidLocations || itemsVal.items.length > 0) {
           if (depth + 1 > ctx.opts.limits.maxDepth) {
-            throw notSourceError(
-              "limit_exceeded",
-              { limit: "max_depth", configured: ctx.opts.limits.maxDepth },
-              `wire sequence depth exceeds max_depth (${ctx.opts.limits.maxDepth})`,
-            );
+            throw wireLimitError("max_depth", ctx.opts.limits.maxDepth);
           }
         }
         work.push({
@@ -2854,23 +2874,15 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         expectExactKeys(map, ["kind", "entries", "span", "via", "tag_start"]);
         const entriesVal = map.get("entries")!;
         if (entriesVal.t !== "arr") {
-          throw notSourceError("internal", {}, "mapping.entries must be an array");
+          throw wireRefusal("mapping.entries must be an array");
         }
         if (!ctx.forbidLocations || entriesVal.items.length > 0) {
           if (depth + 1 > ctx.opts.limits.maxDepth) {
-            throw notSourceError(
-              "limit_exceeded",
-              { limit: "max_depth", configured: ctx.opts.limits.maxDepth },
-              `wire mapping depth exceeds max_depth (${ctx.opts.limits.maxDepth})`,
-            );
+            throw wireLimitError("max_depth", ctx.opts.limits.maxDepth);
           }
         }
         if (entriesVal.items.length > ctx.opts.limits.maxMappingEntries) {
-          throw notSourceError(
-            "limit_exceeded",
-            { limit: "max_mapping_entries", configured: ctx.opts.limits.maxMappingEntries },
-            `wire mapping entries exceed max_mapping_entries (${ctx.opts.limits.maxMappingEntries})`,
-          );
+          throw wireLimitError("max_mapping_entries", ctx.opts.limits.maxMappingEntries);
         }
         chargeOwnedBytes(ctx, BigInt(entriesVal.items.length) * ENTRY_OVERHEAD);
         work.push({
@@ -2891,14 +2903,14 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         expectExactKeys(map, ["kind", "tag", "value", "span", "via", "tag_start"]);
         const tagVal = map.get("tag")!;
         if (tagVal.t !== "obj") {
-          throw notSourceError("internal", {}, "tagged.tag must be an object");
+          throw wireRefusal("tagged.tag must be an object");
         }
         expectExactKeys(tagVal.map, ["uri", "handle", "suffix"]);
         const uri = expectStr(tagVal.map.get("uri"), "tag.uri");
         const handle = expectStr(tagVal.map.get("handle"), "tag.handle");
         const suffix = expectStr(tagVal.map.get("suffix"), "tag.suffix");
         if (!isValidNonCoreTagUri(uri) || !isConsistentTagSpelling(uri, handle, suffix)) {
-          throw notSourceError("internal", {}, "invalid wire Tag on tagged node");
+          throw wireRefusal("invalid wire Tag on tagged node");
         }
         chargeOwnedBytes(ctx, tagWeightBytes({ uri, handle, suffix }));
         work.push({
@@ -2913,7 +2925,7 @@ function decodeNode(rootVal: JsonVal, ctx: DecodeContext, rootDepth: number, roo
         break;
       }
       default:
-        throw notSourceError("internal", {}, `unknown wire Node kind: ${kind}`);
+        throw wireRefusal(`unknown wire Node kind: ${clip(kind)}`);
     }
   }
   return results.pop()!;
@@ -2928,7 +2940,7 @@ function decodeErrorEnvelope(
   const kindStr = expectStr(errObj.get("kind"), "error.kind");
   const detailVal = errObj.get("detail")!;
   if (detailVal.t !== "obj") {
-    throw notSourceError("internal", {}, "error.detail must be an object");
+    throw wireRefusal("error.detail must be an object");
   }
 
   let detail: ErrorDetail;
@@ -2940,20 +2952,20 @@ function decodeErrorEnvelope(
     } else if (il.t === "int") {
       detail = { invalid_len: il.v };
     } else {
-      throw notSourceError("internal", {}, "invalid invalid_utf8.invalid_len");
+      throw wireRefusal("invalid invalid_utf8.invalid_len");
     }
   } else if (kindStr === "syntax") {
     expectExactKeys(detailVal.map, ["syntax_kind"]);
     const sk = expectStr(detailVal.map.get("syntax_kind"), "detail.syntax_kind");
     if (!SYNTAX_KINDS.has(sk)) {
-      throw notSourceError("internal", {}, `unknown syntax_kind: ${sk}`);
+      throw wireRefusal(`unknown syntax_kind: ${clip(sk)}`);
     }
     detail = { syntax_kind: sk };
   } else if (kindStr === "limit_exceeded") {
     expectExactKeys(detailVal.map, ["limit", "configured"]);
     const lim = expectStr(detailVal.map.get("limit"), "detail.limit");
     if (!LIMIT_KINDS.has(lim)) {
-      throw notSourceError("internal", {}, `unknown limit kind: ${lim}`);
+      throw wireRefusal(`unknown limit kind: ${clip(lim)}`);
     }
     const configured = expectInt(detailVal.map.get("configured"), "detail.configured");
     detail = { limit: lim as LimitKind, configured };
@@ -2974,12 +2986,12 @@ function decodeErrorEnvelope(
     expectExactKeys(detailVal.map, []);
     detail = {};
   } else {
-    throw notSourceError("internal", {}, `unknown error kind: ${kindStr}`);
+    throw wireRefusal(`unknown error kind: ${clip(kindStr)}`);
   }
 
   const siteVal = errObj.get("site")!;
   if (siteVal.t !== "obj" || siteVal.map.size !== 1) {
-    throw notSourceError("internal", {}, "invalid error.site");
+    throw wireRefusal("invalid error.site");
   }
 
   // For invalid_utf8, only the prefix up to the site's byte_offset is guaranteed valid UTF-8.
@@ -3002,7 +3014,7 @@ function decodeErrorEnvelope(
   } else {
     const ns = siteVal.map.get("not_source");
     if (!ns || ns.t !== "obj") {
-      throw notSourceError("internal", {}, "invalid error.site.not_source");
+      throw wireRefusal("invalid error.site.not_source");
     }
     expectExactKeys(ns.map, ["last_known"]);
     const lk = ns.map.get("last_known")!;
@@ -3015,12 +3027,12 @@ function decodeErrorEnvelope(
 
   const relVal = errObj.get("related")!;
   if (relVal.t !== "arr") {
-    throw notSourceError("internal", {}, "error.related must be an array");
+    throw wireRefusal("error.related must be an array");
   }
   const related: Related[] = [];
   for (const r of relVal.items) {
     if (r.t !== "obj") {
-      throw notSourceError("internal", {}, "related entry must be an object");
+      throw wireRefusal("related entry must be an object");
     }
     expectExactKeys(r.map, ["role", "span"]);
     const role = expectStr(r.map.get("role"), "related.role");
@@ -3030,7 +3042,7 @@ function decodeErrorEnvelope(
       role !== "merge_directive" &&
       role !== "anchor_definition"
     ) {
-      throw notSourceError("internal", {}, `unknown related.role: ${role}`);
+      throw wireRefusal(`unknown related.role: ${clip(role)}`);
     }
     const span = decodeSpan(r.map.get("span")!, idx);
     related.push({ role, span });
@@ -3038,14 +3050,10 @@ function decodeErrorEnvelope(
 
   const pathVal = errObj.get("path")!;
   if (pathVal.t !== "arr") {
-    throw notSourceError("internal", {}, "error.path must be an array");
+    throw wireRefusal("error.path must be an array");
   }
   if (pathVal.items.length > opts.limits.maxDepth) {
-    throw notSourceError(
-      "limit_exceeded",
-      { limit: "max_depth", configured: opts.limits.maxDepth },
-      `error.path length exceeds max_depth (${opts.limits.maxDepth})`,
-    );
+    throw wireLimitError("max_depth", opts.limits.maxDepth);
   }
   const pathCtx: DecodeContext = {
     opts,
@@ -3057,7 +3065,7 @@ function decodeErrorEnvelope(
   const path: PathSegment[] = [];
   for (const seg of pathVal.items) {
     if (seg.t !== "obj" || seg.map.size !== 1) {
-      throw notSourceError("internal", {}, "invalid path segment");
+      throw wireRefusal("invalid path segment");
     }
     const idxSeg = seg.map.get("index");
     const keySeg = seg.map.get("key");
@@ -3068,7 +3076,7 @@ function decodeErrorEnvelope(
       preflightKeyNode(keyNode, opts.limits);
       path.push({ key: keyNode });
     } else {
-      throw notSourceError("internal", {}, "unknown path segment variant");
+      throw wireRefusal("unknown path segment variant");
     }
   }
 
@@ -3092,39 +3100,31 @@ export function decodeWire(
   assertWellFormedUnicode(wireJson, "wireJson");
   const wireByteLen = encoder.encode(wireJson).byteLength;
   if (wireByteLen > opts.limits.maxInputBytes) {
-    throw notSourceError(
-      "limit_exceeded",
-      { limit: "max_input_bytes", configured: opts.limits.maxInputBytes },
-      `wire input exceeds max_input_bytes (${opts.limits.maxInputBytes})`,
-    );
+    throw wireLimitError("max_input_bytes", opts.limits.maxInputBytes);
   }
   const sourceBytes = sourceInput !== undefined ? toInputBytes(sourceInput) : undefined;
   const maxJsonDepth = opts.limits.maxDepth * 4 + 32;
   const root = new WireJsonParser(wireJson, maxJsonDepth).parseRoot();
   if (root.t !== "obj") {
-    throw notSourceError("internal", {}, "wire root must be a JSON object");
+    throw wireRefusal("wire root must be a JSON object");
   }
   const fmt = expectStr(root.map.get("format"), "format");
   if (fmt !== "yamlprims-value") {
-    throw notSourceError("internal", {}, `unsupported wire format: ${fmt}`);
+    throw wireRefusal(`unsupported wire format: ${clip(fmt)}`);
   }
   const ver = expectInt(root.map.get("version"), "version");
   if (ver !== 1) {
-    throw notSourceError("internal", {}, `unsupported wire version: ${ver}`);
+    throw wireRefusal(`unsupported wire version: ${ver}`);
   }
 
   if (root.map.has("documents")) {
     expectExactKeys(root.map, ["format", "version", "documents"]);
     const docsVal = root.map.get("documents")!;
     if (docsVal.t !== "arr") {
-      throw notSourceError("internal", {}, "documents must be an array");
+      throw wireRefusal("documents must be an array");
     }
     if (docsVal.items.length > opts.limits.maxDocuments) {
-      throw notSourceError(
-        "limit_exceeded",
-        { limit: "max_documents", configured: opts.limits.maxDocuments },
-        `wire document count exceeds max_documents (${opts.limits.maxDocuments})`,
-      );
+      throw wireLimitError("max_documents", opts.limits.maxDocuments);
     }
     const idx = sourceBytes !== undefined ? new Utf16Index(sourceBytes) : null;
     const ctx: DecodeContext = {
@@ -3137,19 +3137,21 @@ export function decodeWire(
     const documents: Document[] = [];
     for (const d of docsVal.items) {
       if (d.t !== "obj") {
-        throw notSourceError("internal", {}, "Document must be an object");
+        throw wireRefusal("Document must be an object");
       }
       expectExactKeys(d.map, ["yaml_version", "explicit_start", "root"]);
       const yvVal = d.map.get("yaml_version")!;
       let yamlVersion: [number, number] | null = null;
       if (yvVal.t !== "null") {
         if (yvVal.t !== "arr" || yvVal.items.length !== 2) {
-          throw notSourceError("internal", {}, "yaml_version must be null or [major, minor]");
+          throw wireRefusal("yaml_version must be null or [major, minor]");
         }
         const major = expectInt(yvVal.items[0], "yaml_version.major");
         const minor = expectInt(yvVal.items[1], "yaml_version.minor");
-        if (major !== 1 || minor > 999_999_999) {
-          throw notSourceError("internal", {}, "unsupported yaml_version in wire Document");
+        // The wire carries u32 metadata (§11.1); Document constructor and emit
+        // rules (major 1, minor <= 999,999,999) are not decoding rules.
+        if (major > 0xffffffff || minor > 0xffffffff) {
+          throw wireRefusal("yaml_version component out of u32 range");
         }
         yamlVersion = [major, minor];
       }
@@ -3164,7 +3166,7 @@ export function decodeWire(
     expectExactKeys(root.map, ["format", "version", "error"]);
     const errVal = root.map.get("error")!;
     if (errVal.t !== "obj") {
-      throw notSourceError("internal", {}, "error must be an object");
+      throw wireRefusal("error must be an object");
     }
     return {
       kind: "error",
@@ -3172,7 +3174,7 @@ export function decodeWire(
     };
   }
 
-  throw notSourceError("internal", {}, "wire envelope must contain documents or error");
+  throw wireRefusal("wire envelope must contain documents or error");
 }
 
 // ---- Canonical wire encoder & plain projection ---------------------------
@@ -3196,12 +3198,10 @@ class BoundedWriter {
   }
 
   pushMetaInt(n: number, label: string): void {
-    if (
-      typeof n !== "number" ||
-      !Number.isInteger(n) ||
-      n < 0 ||
-      n > MAX_SAFE_METADATA_INT
-    ) {
+    if (typeof n === "number" && Number.isInteger(n) && n > MAX_SAFE_METADATA_INT) {
+      throw notSourceError("internal", {}, "wire metadata integer exceeds 2^53 - 1");
+    }
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) {
       throw notSourceError("internal", {}, `metadata integer out of range for ${label}`);
     }
     this.pushRaw(String(n));
@@ -3707,6 +3707,20 @@ function preflightKeyNode(rootKey: Node, limits: Limits): void {
 
 export function encodeError(err: YamlprimsError, options?: OptionsInput): string {
   const opts = validateOptions(options);
+  // Pair ranges checked before any path preflight or JSON, as in the core (§11.1).
+  const d0 = (err.detail ?? {}) as Record<string, unknown>;
+  const il0 = d0["invalid_len"];
+  if (err.kind === "invalid_utf8" && Number.isInteger(il0) && (il0 as number) > MAX_SAFE_METADATA_INT) {
+    throw notSourceError("internal", {}, "invalid_len out of wire range");
+  }
+  const cfg0 = d0["configured"];
+  if (
+    (err.kind === "limit_exceeded" || err.kind === "output_limit_exceeded") &&
+    Number.isInteger(cfg0) &&
+    ((cfg0 as number) === 0 || (cfg0 as number) > MAX_SAFE_METADATA_INT)
+  ) {
+    throw notSourceError("internal", {}, `invalid ${err.kind} detail`);
+  }
   if (err.path.length > opts.limits.maxDepth) {
     throw notSourceError(
       "limit_exceeded",
@@ -3715,6 +3729,9 @@ export function encodeError(err: YamlprimsError, options?: OptionsInput): string
     );
   }
   for (const seg of err.path) {
+    if ("index" in seg && Number.isInteger(seg.index) && seg.index > MAX_SAFE_METADATA_INT) {
+      throw notSourceError("internal", {}, "path index out of wire range");
+    }
     if ("key" in seg) {
       preflightKeyNode(seg.key, opts.limits);
     }
