@@ -30,6 +30,10 @@ and package releases adhere to [Semantic Versioning](https://semver.org/spec/v2.
 - A `%TAG` directive whose named handle uses a character outside `[0-9A-Za-z-]` (such as `_`) is refused as `Syntax(ExpectedTagDirectiveBang)` at the directive, used or not, and a tag using such a handle as `Syntax(InvalidTagTerminator)` at the tag. Underscores in primary local tags, suffixes and URIs are unchanged (`spec-v1.7 §4.4`, `§7.1`).
 - A `%TAG` directive whose prefix immediately follows its handle is refused as `Syntax(ExpectedWhitespace)` at the first prefix character, whether or not the handle is used; a space or tab separator is required (`spec-v1.7 §7.1`).
 
+### Security
+
+- [GHSA-5v8m-gxw9-c82j](https://github.com/3leaps/yamlprims/security/advisories/GHSA-5v8m-gxw9-c82j) covers the Go block scalar indentation fix released in 0.3.1 (Go module `github.com/3leaps/yamlprims`, versions 0.1.0 through 0.3.0). It names the affected functions, which include the `Unmarshal` and `LintYAML11` families as well as the `Load` functions.
+
 ## [0.3.1] - 2026-11-22
 
 The library contract is still `spec-v1.6`; the in-tree specification text is the unreleased revision 1.7 draft, which this release does not implement.
