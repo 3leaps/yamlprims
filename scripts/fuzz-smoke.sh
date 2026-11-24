@@ -160,7 +160,7 @@ pin_hash=$(awk '$1 == "commit-hash" {print $2}' fuzz/toolchain.txt)
 toolchain=${YAMLPRIMS_FUZZ_TOOLCHAIN:-$pin_channel}
 # Never let rustup download a missing toolchain as a side effect.
 export RUSTUP_AUTO_INSTALL=0
-have_hash=$(rustc "+$toolchain" -vV 2>/dev/null | awk '$1 == "commit-hash:" {print $2}')
+have_hash=$(rustc "+$toolchain" -vV 2>/dev/null | awk '$1 == "commit-hash:" {print $2}' || true)
 if [ "$have_hash" != "$pin_hash" ]; then
   echo "fuzz-smoke: toolchain $toolchain is not the pinned nightly ($pin_channel, $pin_hash)" >&2
   exit 2
