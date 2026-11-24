@@ -222,7 +222,9 @@ def private_copy(src, dst, meta):
 
 
 def write_inside(root, rel, data):
-    """Replace the bytes of root/rel, refusing a symlink in any component of rel."""
+    """Replace the bytes of root/rel: a relative path without `..`, no symlink in any component."""
+    if Path(rel).is_absolute() or ".." in Path(rel).parts:
+        sys.exit(f"gate probes: {rel} is not a plain relative path")
     p = Path(root)
     for part in Path(rel).parts:
         p = p / part
@@ -268,7 +270,7 @@ with tempfile.TemporaryDirectory() as t:
         git_s = ["git", "--git-dir", str((s / ".git").resolve()), "--work-tree", str(s)]
         subprocess.run([*git_s, "update-ref", ref, f"{tag['object']}^{{commit}}"], check=True, env=GIT_ENV)
         try:
-            gate("moved-tag", hyd, s, "corpus_tag")
+            gate("moved-tag", hyd, s, "is not an annotated tag")
         finally:
             subprocess.run([*git_s, "update-ref", ref, tag["object"]], check=True, env=GIT_ENV)
     rel = "fixtures/yaml/indent-flow-indented.yaml"

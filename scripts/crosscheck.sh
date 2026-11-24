@@ -97,7 +97,17 @@ vector_count = len(records)
 
 corpus_count = 0
 # Any directory entry counts, a dangling link included, so the layout check fails closed.
-present = lambda q: q.exists() or q.is_symlink()
+# Only a missing entry is absent; any other error (an unreadable manifests/) stops the run.
+def present(q):
+    try:
+        q.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        sys.exit(f"crosscheck error: structcorpus layout: {q}: {e}")
+    return True
+
+
 has_manifest = present(corpus_root / "manifests" / "formats.json") or present(corpus_root / "manifests" / "cases.jsonl")
 if has_manifest and (corpus_root / "tools" / "corpus.py").is_file():
     try:

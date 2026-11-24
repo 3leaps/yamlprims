@@ -534,6 +534,25 @@ class LayoutTests(unittest.TestCase):
             self.assertEqual(run(main, "cat-file", "-t", "v1"), "tag")
             self.assertEqual((wt / "f.txt").read_text(), "x\n")
 
+    def test_crosscheck_presence_fails_closed(self):
+        block = next(b for b in _embedded_python("scripts/crosscheck.sh") if "def present(" in b)
+        ns = {"sys": sys}
+        exec(_function_sources(block)["present"], ns)
+        present = ns["present"]
+        with tempfile.TemporaryDirectory() as tmp:
+            m = Path(tmp) / "manifests"
+            m.mkdir()
+            self.assertFalse(present(m / "formats.json"))
+            (m / "formats.json").symlink_to(m / "missing.json")
+            self.assertTrue(present(m / "formats.json"))
+            if os.name == "posix" and os.geteuid() != 0:
+                m.chmod(0)
+                try:
+                    with self.assertRaises(SystemExit):
+                        present(m / "formats.json")
+                finally:
+                    m.chmod(0o700)
+
     def test_probe_writes_refuse_symlinks(self):
         write_inside = _script_names(SOURCE_READERS[1], "write_inside")["write_inside"]
         with tempfile.TemporaryDirectory() as tmp:
@@ -547,7 +566,7 @@ class LayoutTests(unittest.TestCase):
             self.assertEqual((root / "d/real").read_text(), "b\n")
             (root / "d/link").symlink_to(outside / "f")
             (root / "dirlink").symlink_to(outside)
-            for rel in ("d/link", "dirlink/f"):
+            for rel in ("d/link", "dirlink/f", "../outside/f", str(outside / "f")):
                 with self.subTest(rel), self.assertRaises(SystemExit):
                     write_inside(root, rel, b"Z\n")
             self.assertEqual((outside / "f").read_text(), "x\n")
