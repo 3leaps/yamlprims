@@ -6,21 +6,82 @@ LIMITS_SOURCE is a structcorpus checkout that has `yamlprims-core-limits.r1.json
 after 0.1 at 444bc12); the limits-profile probes take that one profile file from it.
 
 Driver probes use a one-case corpus built in a temporary directory from SOURCE_DIR's
-profiles and fixtures. Gate probes use the real pin with a copied, altered inventory or
+profiles and fixtures (read through the format registry when SOURCE_DIR has one; the
+temporary corpus uses the legacy single-format layout). Gate probes use the real pin with a copied, altered inventory or
 source. Neither SOURCE_DIR nor HYDRATED_DIR is modified. Prints one row per probe and
 exits 1 if any control does not behave as expected.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+def structcorpus_layout(src):
+    """YAML inventory paths of a structcorpus source: (cases, profiles, span_conventions, registry).
+
+    With manifests/formats.json the registry must be formats/v1 with a yaml entry, and its
+    cases, profiles and span_conventions paths are used (relative, no empty, . or ..
+    segments, resolving inside src); any problem raises ValueError. Without the registry, the
+    legacy single-format paths. The same function is in every conformance script that reads
+    a source checkout; keep the copies identical.
+    """
+    reg = src / "manifests/formats.json"
+    try:
+        reg.lstat()
+    except FileNotFoundError:
+        return src / "manifests/cases.jsonl", src / "manifests/profiles", src / "manifests/span-conventions", False
+    except OSError as e:
+        raise ValueError(f"{reg}: {e}") from None
+    try:
+        doc = json.loads(reg.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ValueError(f"{reg}: {e}") from None
+    version = doc.get("schema_version") if isinstance(doc, dict) else None
+    if version != "formats/v1":
+        raise ValueError(f"{reg}: unsupported schema_version {json.dumps(version)}")
+    formats = doc.get("formats")
+    entry = formats.get("yaml") if isinstance(formats, dict) else None
+    if not isinstance(entry, dict):
+        raise ValueError(f"{reg}: no yaml format entry")
+    root = src.resolve()
+    out = []
+    for key in ("cases", "profiles", "span_conventions"):
+        rel = entry.get(key)
+        if not isinstance(rel, str):
+            raise ValueError(f"{reg}: yaml.{key} is missing or not a string")
+        if not rel or rel.startswith("/") or "\\" in rel or ":" in rel or any(p in ("", ".", "..") for p in rel.split("/")):
+            raise ValueError(f"{reg}: yaml.{key}: {rel!r} is not a normalized repository-relative path")
+        p = src / rel
+        if p.exists() and root not in p.resolve().parents:
+            raise ValueError(f"{reg}: yaml.{key}: {rel} resolves outside the source directory")
+        out.append(p)
+    return out[0], out[1], out[2], True
+
+
+def yaml_record(c, registry):
+    """True for a `"format": "yaml"` case record, False for another format. A record without
+    format is run from a legacy source and raises ValueError from a registry source."""
+    if "format" not in c:
+        if registry:
+            raise ValueError("no format")
+        return True
+    if not isinstance(c["format"], str):
+        raise ValueError(f"format {json.dumps(c['format'])} is not a string")
+    return c["format"] == "yaml"
+
+
 ROOT = Path(__file__).resolve().parent.parent
 pin, hyd, src, driver = map(Path, sys.argv[1:5])
 limits_src = Path(sys.argv[5]) if len(sys.argv) > 5 else src
-cases = {json.loads(l)["id"]: json.loads(l) for l in open(src / "manifests/cases.jsonl") if l.strip()}
+try:
+    CASES_FILE, PROFILES, _, REGISTRY = structcorpus_layout(src)
+    LIMITS_PROFILES = structcorpus_layout(limits_src)[1]
+    cases = {c["id"]: c for c in (json.loads(l) for l in open(CASES_FILE) if l.strip()) if yaml_record(c, REGISTRY)}
+except ValueError as e:
+    sys.exit(f"structcorpus layout: {e}")
 results = []
 EXTRA = {}
 
@@ -33,10 +94,10 @@ def tiny(tmp, records, profile_edit=None, profile="yamlprims-core.r2"):
     shutil.rmtree(h, ignore_errors=True)
     (s / "manifests").mkdir(parents=True)
     h.mkdir()
-    shutil.copytree(src / "manifests/profiles", s / "manifests/profiles")
+    shutil.copytree(PROFILES, s / "manifests/profiles")
     lp = "manifests/profiles/yamlprims-core-limits.r1.json"
     if not (s / lp).exists():
-        shutil.copy(limits_src / lp, s / lp)
+        shutil.copy(LIMITS_PROFILES / "yamlprims-core-limits.r1.json", s / lp)
     shutil.copytree(src / "fixtures", s / "fixtures")
     (h / "cases.jsonl").write_text("")
     (s / "manifests/cases.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
@@ -108,7 +169,7 @@ drive("limits-removed", [limits_case(deep)], False, lambda d: d.pop("limits"), L
 
 # max_input_bytes (65,536 in the limits profile) is phase `input`. The expectation cannot
 # name the limit: the case schema allows `limit` only with phase `limit`.
-lim = json.loads((limits_src / "manifests/profiles/yamlprims-core-limits.r1.json").read_text())["limits"]["max_input_bytes"]
+lim = json.loads((LIMITS_PROFILES / "yamlprims-core-limits.r1.json").read_text())["limits"]["max_input_bytes"]
 head = b"a: 1\n#"
 EXTRA["fixtures/probe/input-at.yaml"] = head + b"x" * (lim - len(head) - 1) + b"\n"
 EXTRA["fixtures/probe/input-over.yaml"] = head + b"x" * (lim - len(head)) + b"\n"
@@ -128,10 +189,61 @@ drive("input-over-not-phase-limit", [input_case("input-over", {"error": {"phase"
 drive("input-at-not-error", [input_case("input-at", {"error": {"phase": "input"}})], False)
 
 
-def gate(label, h, s):
-    r = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/structcorpus_gate.py"), str(pin), str(h), str(s), str(driver)], capture_output=True, text=True)
+# Git runs without inherited GIT_* variables, so GIT_DIR, GIT_INDEX_FILE and the like
+# can never point a probe at SOURCE_DIR's repository.
+GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {"GIT_OPTIONAL_LOCKS": "0"}
+
+
+def private_copy(src, dst, meta):
+    """A copy of the SOURCE_DIR checkout with git metadata of its own.
+
+    The worktree files are copied without `.git` (a linked worktree's `.git` is a gitfile
+    pointing at the shared repository). The copy gets the refs of a
+    `git clone --shared --no-checkout` of SOURCE_DIR, which borrows objects read-only, and
+    an index built from HEAD. Every command names the copy's git directory, which is
+    confirmed private before anything is written, so probes that edit refs or files never
+    touch SOURCE_DIR's repository or index.
+    """
+    shutil.copytree(src, dst, symlinks=True, ignore=lambda d, names: [".git"] if Path(d) == Path(src) else [])
+    run = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, check=True, env=GIT_ENV).stdout.strip()
+    head = run("-C", str(src), "rev-parse", "HEAD")
+    run("clone", "--quiet", "--shared", "--no-checkout", str(src), str(meta))
+    shutil.move(str(meta / ".git"), str(dst / ".git"))
+    gd = (dst / ".git").resolve()
+    if not (dst / ".git").is_dir() or (dst / ".git").is_symlink():
+        sys.exit("gate probes: private copy does not have its own git directory")
+    own = ["--git-dir", str(gd), "--work-tree", str(dst)]
+    if run(*own, "rev-parse", "--absolute-git-dir") != str(gd):
+        sys.exit("gate probes: private copy does not have its own git directory")
+    run(*own, "update-ref", "--no-deref", "HEAD", head)
+    run(*own, "read-tree", "HEAD")
+    run(*own, "update-index", "-q", "--refresh")
+    return dst
+
+
+def write_inside(root, rel, data):
+    """Replace the bytes of root/rel: a relative path without `..`, no symlink in any component."""
+    if Path(rel).is_absolute() or ".." in Path(rel).parts:
+        sys.exit(f"gate probes: {rel} is not a plain relative path")
+    p = Path(root)
+    for part in Path(rel).parts:
+        p = p / part
+        if p.is_symlink():
+            sys.exit(f"gate probes: {rel} passes through a symlink in the copy")
+    fd = os.open(p, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+
+
+def gate(label, h, s, expect=None):
+    """A control (expect None) must pass; a corruption must fail with a FAIL line containing `expect`."""
+    r = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/structcorpus_gate.py"), str(pin), str(h), str(s), str(driver)],
+                       capture_output=True, text=True, env=GIT_ENV)
     fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
-    ok = (r.returncode == 0) == (label == "control")
+    if expect is None:
+        ok = r.returncode == 0
+    else:
+        ok = r.returncode != 0 and any(expect in l for l in fails)
     results.append((f"gate:{label}", r.returncode, ok, " | ".join(fails)[:160] or r.stdout.strip()[-120:]))
 
 
@@ -145,13 +257,30 @@ with tempfile.TemporaryDirectory() as t:
     shutil.copy(hyd / ".structcorpus-hydrated.json", h)
     lines = (hyd / "cases.jsonl").read_text().splitlines(keepends=True)
     (h / "cases.jsonl").write_text("".join(lines[:-1]))
-    gate("missing-case", h, src)
+    gate("missing-case", h, src, "hydrated differs from the pin")
     # Altered source: a fixture byte changed in a copied checkout.
-    s = t / "src"
-    shutil.copytree(src, s, symlinks=True)
-    f = s / "fixtures/yaml/indent-flow-indented.yaml"
-    f.write_bytes(f.read_bytes().replace(b"a", b"x", 1))
-    gate("altered-fixture", hyd, s)
+    s = private_copy(src, t / "src", t / "meta")
+    # The unaltered copy must pass, so each corruption below fails for its own reason.
+    gate("control-copy", hyd, s)
+    tag = json.loads(pin.read_text()).get("corpus_tag")
+    if tag:
+        # Moved tag: the pinned tag name re-pointed at the same commit without the tag
+        # object. Only the private copy's refs change.
+        ref = f"refs/tags/{tag['name']}"
+        git_s = ["git", "--git-dir", str((s / ".git").resolve()), "--work-tree", str(s)]
+        subprocess.run([*git_s, "update-ref", ref, f"{tag['object']}^{{commit}}"], check=True, env=GIT_ENV)
+        try:
+            gate("moved-tag", hyd, s, "is not an annotated tag")
+        finally:
+            subprocess.run([*git_s, "update-ref", ref, tag["object"]], check=True, env=GIT_ENV)
+    rel = "fixtures/yaml/indent-flow-indented.yaml"
+    write_inside(s, rel, (s / rel).read_bytes().replace(b"a", b"x", 1))
+    gate("altered-fixture", hyd, s, "does not match its record")
+    if REGISTRY:
+        # Altered registry: an unsupported schema_version fails before anything is read.
+        rel = "manifests/formats.json"
+        write_inside(s, rel, (s / rel).read_bytes().replace(b'"formats/v1"', b'"formats/v0"', 1))
+        gate("altered-registry", hyd, s, "unsupported schema_version")
 
 bad = 0
 print("probe\texit\tas_expected\tdetail")

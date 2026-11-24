@@ -15,6 +15,10 @@ categories = ["parser-implementations", "encoding"]
 build = false
 publish = true
 
+[[example]]
+name = "structcorpus"
+test = true
+
 [dependencies]
 granit-parser.workspace = true
 serde.workspace = true

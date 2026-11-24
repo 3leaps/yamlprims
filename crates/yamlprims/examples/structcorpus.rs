@@ -5,12 +5,21 @@
 //! Usage: `cargo run --release --example structcorpus -- HYDRATED_DIR SOURCE_DIR [--details N] [--case-file F]`
 //!
 //! `HYDRATED_DIR` is the output of `tools/corpus.py hydrate` (recipe cases), and `SOURCE_DIR`
-//! is the structcorpus checkout it came from (hand-written cases in `manifests/cases.jsonl`).
-//! Pins, digests and expected counts are checked by `conformance/scripts/structcorpus_gate.py`, which
-//! runs this driver.
+//! is the structcorpus checkout it came from (hand-written cases). Pins, digests and expected
+//! counts are checked by `conformance/scripts/structcorpus_gate.py`, which runs this driver.
+//!
+//! Source layout: when `SOURCE_DIR/manifests/formats.json` exists it must be a `formats/v1`
+//! registry with a `yaml` entry, and the YAML case shard, profile directory and span-convention
+//! directory are the entry's `cases`, `profiles` and `span_conventions` (repository-relative
+//! paths; absolute paths, `.`/`..` segments and paths resolving outside `SOURCE_DIR` are
+//! refused). Without the registry the legacy paths `manifests/cases.jsonl`,
+//! `manifests/profiles/` and `manifests/span-conventions/` are read. Only case records with
+//! `"format": "yaml"` are run, from the hydrated manifest and the source shard alike; records of
+//! other formats are skipped and counted. A record without `format` is accepted from a legacy
+//! source and is a problem with a registry source.
 //!
 //! Expectations are dispatched on the exact `(profile, revision)` (see `profiles()`). Each
-//! profile file used is read from `SOURCE_DIR/manifests/profiles/` and its `policy` must
+//! profile file used is read from the YAML profile directory and its `policy` must
 //! equal the policy this driver implements for it, so a changed or unknown profile fails
 //! rather than running under the wrong options. A profile with explicit `limits`
 //! (`yamlprims-core-limits`, `yamlprims-core-stress`, `yamlprims-core-depth128`,
@@ -327,6 +336,105 @@ const LIMITS_PROFILES: &[&str] = &[
 ];
 
 /// The only profiles the driver may skip, and why (the reason is for readers of this table).
+/// Where a structcorpus source keeps the YAML cases, profiles and span conventions.
+#[derive(Debug, PartialEq)]
+struct Layout {
+    cases: PathBuf,
+    profiles: PathBuf,
+    span_conventions: PathBuf,
+    /// The paths came from `manifests/formats.json`.
+    registry: bool,
+}
+
+const FORMATS_REL: &str = "manifests/formats.json";
+
+/// Resolve the YAML inventory paths of `src`: from the `formats/v1` registry when
+/// `manifests/formats.json` exists (failing closed on any problem), else the legacy paths.
+fn layout(src: &Path) -> Result<Layout, String> {
+    let reg = src.join(FORMATS_REL);
+    // Only a missing entry selects the legacy layout; a dangling or unreadable
+    // registry fails closed (as in the Go driver).
+    match fs::symlink_metadata(&reg) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Layout {
+                cases: src.join("manifests/cases.jsonl"),
+                profiles: src.join("manifests/profiles"),
+                span_conventions: src.join("manifests/span-conventions"),
+                registry: false,
+            });
+        }
+        Err(e) => return Err(format!("{}: {e}", reg.display())),
+        Ok(_) => {}
+    }
+    let doc: J = fs::read_to_string(&reg)
+        .map_err(|e| e.to_string())
+        .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+        .map_err(|e| format!("{}: {e}", reg.display()))?;
+    if doc["schema_version"] != json!("formats/v1") {
+        return Err(format!(
+            "{}: unsupported schema_version {}",
+            reg.display(),
+            doc["schema_version"]
+        ));
+    }
+    let entry = &doc["formats"]["yaml"];
+    if !entry.is_object() {
+        return Err(format!("{}: no yaml format entry", reg.display()));
+    }
+    let path = |key: &str| -> Result<PathBuf, String> {
+        let rel = entry[key]
+            .as_str()
+            .ok_or_else(|| format!("{}: yaml.{key} is missing or not a string", reg.display()))?;
+        registry_path(src, rel).map_err(|e| format!("{}: yaml.{key}: {e}", reg.display()))
+    };
+    Ok(Layout {
+        cases: path("cases")?,
+        profiles: path("profiles")?,
+        span_conventions: path("span_conventions")?,
+        registry: true,
+    })
+}
+
+/// A registry path: relative, `/`-separated, no empty, `.` or `..` segment, and (when it
+/// exists) resolving inside `src`.
+fn registry_path(src: &Path, rel: &str) -> Result<PathBuf, String> {
+    if rel.is_empty()
+        || rel.starts_with('/')
+        || rel.contains('\\')
+        || rel.contains(':')
+        || rel
+            .split('/')
+            .any(|p| p.is_empty() || p == "." || p == "..")
+    {
+        return Err(format!(
+            "{rel:?} is not a normalized repository-relative path"
+        ));
+    }
+    let full = src.join(rel);
+    if full.exists() {
+        let (root, real) = (
+            src.canonicalize().map_err(|e| e.to_string())?,
+            full.canonicalize().map_err(|e| e.to_string())?,
+        );
+        if !real.starts_with(&root) {
+            return Err(format!("{rel} resolves outside the source directory"));
+        }
+    }
+    Ok(full)
+}
+
+/// Whether a case record is run: `Ok(true)` for `"format": "yaml"`, `Ok(false)` for another
+/// format, and for a record without `format` `Ok(true)` from a legacy source, `Err` from a
+/// registry source.
+fn yaml_record(case: &J, registry: bool) -> Result<bool, String> {
+    match case.get("format") {
+        Some(J::String(f)) => Ok(f == "yaml"),
+        None if !registry => Ok(true),
+        None => Err("no format".into()),
+        Some(other) => Err(format!("format {other} is not a string")),
+    }
+}
+
 const EXCLUDED: &[(&str, u64, &str)] = &[(
     "yaml-core",
     1,
@@ -369,12 +477,21 @@ fn main() -> ExitCode {
     let mut convention: Option<Result<(), String>> = None;
     let (mut with_events, mut events_only, mut event_locations) = (0usize, 0usize, 0usize);
 
+    let lay = match layout(&src) {
+        Ok(l) => l,
+        Err(e) => {
+            println!("problem\t{e}");
+            println!("result\tFAIL\t1 problems");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut other_formats = 0usize;
     // Recipe cases are in the hydrated directory; hand-written cases in the source manifest.
     // `--case-file` reads only that file (scripts/structcorpus_stress.py runs one case per
     // bounded process this way).
     let manifests = match &case_file {
         Some(f) => vec![f.clone()],
-        None => vec![hyd.join("cases.jsonl"), src.join("manifests/cases.jsonl")],
+        None => vec![hyd.join("cases.jsonl"), lay.cases.clone()],
     };
     let mut text = String::new();
     for f in manifests {
@@ -399,6 +516,17 @@ fn main() -> ExitCode {
             problems.push(format!("case line {}: no id", n + 1));
             continue;
         };
+        match yaml_record(&case, lay.registry) {
+            Ok(true) => {}
+            Ok(false) => {
+                other_formats += 1;
+                continue;
+            }
+            Err(e) => {
+                problems.push(format!("{id}: {e}"));
+                continue;
+            }
+        }
         cases += 1;
         if !ids.insert(id.to_string()) {
             problems.push(format!("{id}: duplicate case id"));
@@ -441,7 +569,7 @@ fn main() -> ExitCode {
                 let limits = checked_profiles
                     .entry((profile.into(), rev))
                     .or_insert_with(|| {
-                        check_profile_file(&src, p)
+                        check_profile_file(&lay.profiles, p)
                             .map_err(|e| problems.push(e))
                             .ok()
                     });
@@ -500,7 +628,7 @@ fn main() -> ExitCode {
                 .find(|p| p.id == "yamlprims-core" && p.revision == 3)
                 .expect("listed");
             let limits = checked_profiles.entry((p.id.into(), 3)).or_insert_with(|| {
-                check_profile_file(&src, p)
+                check_profile_file(&lay.profiles, p)
                     .map_err(|e| problems.push(e))
                     .ok()
             });
@@ -551,14 +679,16 @@ fn main() -> ExitCode {
                 ));
                 continue;
             }
-            if let Err(e) = convention.get_or_insert_with(|| check_node_convention(&src)) {
+            if let Err(e) =
+                convention.get_or_insert_with(|| check_node_convention(&lay.span_conventions))
+            {
                 problems.push(format!("{id}: {e}"));
                 continue;
             }
             let limits = checked_profiles
                 .entry((profile.into(), rev))
                 .or_insert_with(|| {
-                    check_profile_file(&src, p)
+                    check_profile_file(&lay.profiles, p)
                         .map_err(|e| problems.push(e))
                         .ok()
                 });
@@ -599,6 +729,9 @@ fn main() -> ExitCode {
     // Format-level events (and event-keyed locations) are bound to no profile; this driver
     // does not compare them. Counted so that event-only cases are visible, not silent.
     println!("not-compared\tevents\t{with_events} cases\t{events_only} with no other expectation\t{event_locations} with event locations");
+    if other_formats > 0 {
+        println!("not-compared\tformats\t{other_formats} records of other formats");
+    }
     for f in failures.iter().take(details) {
         println!("{f}");
     }
@@ -752,8 +885,8 @@ fn parse_json_str(s: &mut &str) -> Result<String, String> {
 
 /// The profile file must exist and its `policy` must be exactly what the driver implements.
 /// Returns the limits to run with: exactly the profile's twelve, or the defaults.
-fn check_profile_file(src: &Path, p: &Profile) -> Result<Limits, String> {
-    let f = src.join(format!("manifests/profiles/{}.r{}.json", p.id, p.revision));
+fn check_profile_file(dir: &Path, p: &Profile) -> Result<Limits, String> {
+    let f = dir.join(format!("{}.r{}.json", p.id, p.revision));
     let text = fs::read_to_string(&f).map_err(|e| format!("{}: {e}", f.display()))?;
     let doc: J = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))?;
     let want: J = serde_json::from_str(p.policy).expect("driver policy is JSON");
@@ -778,8 +911,8 @@ fn check_profile_file(src: &Path, p: &Profile) -> Result<Limits, String> {
 }
 
 /// The node convention file must define exactly what the driver compares.
-fn check_node_convention(src: &Path) -> Result<(), String> {
-    let f = src.join("manifests/span-conventions/yamlprims-node.r1.json");
+fn check_node_convention(dir: &Path) -> Result<(), String> {
+    let f = dir.join("yamlprims-node.r1.json");
     let doc: J = fs::read_to_string(&f)
         .map_err(|e| e.to_string())
         .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
@@ -1549,4 +1682,128 @@ fn run_crosscheck_jsonl() -> ExitCode {
         );
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    struct Tmp(PathBuf);
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn tmp(name: &str) -> Tmp {
+        let d =
+            std::env::temp_dir().join(format!("yamlprims-layout-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("manifests/yaml/profiles")).unwrap();
+        fs::create_dir_all(d.join("manifests/yaml/span-conventions")).unwrap();
+        Tmp(d)
+    }
+
+    fn registry(yaml: J) -> String {
+        json!({"schema_version": "formats/v1", "formats": {"yaml": yaml}}).to_string()
+    }
+
+    fn yaml_entry() -> J {
+        json!({
+            "cases": "manifests/yaml/cases.jsonl",
+            "profiles": "manifests/yaml/profiles",
+            "span_conventions": "manifests/yaml/span-conventions",
+        })
+    }
+
+    #[test]
+    fn legacy_paths_without_registry() {
+        let t = tmp("legacy");
+        let l = layout(&t.0).unwrap();
+        assert!(!l.registry);
+        assert_eq!(l.cases, t.0.join("manifests/cases.jsonl"));
+        assert_eq!(l.profiles, t.0.join("manifests/profiles"));
+        assert_eq!(l.span_conventions, t.0.join("manifests/span-conventions"));
+    }
+
+    #[test]
+    fn registry_paths() {
+        let t = tmp("registry");
+        fs::write(t.0.join(FORMATS_REL), registry(yaml_entry())).unwrap();
+        let l = layout(&t.0).unwrap();
+        assert!(l.registry);
+        assert_eq!(l.cases, t.0.join("manifests/yaml/cases.jsonl"));
+        assert_eq!(l.profiles, t.0.join("manifests/yaml/profiles"));
+        assert_eq!(
+            l.span_conventions,
+            t.0.join("manifests/yaml/span-conventions")
+        );
+    }
+
+    #[test]
+    fn registry_fails_closed() {
+        let t = tmp("closed");
+        let f = t.0.join(FORMATS_REL);
+        let bad_version =
+            json!({"schema_version": "formats/v2", "formats": {"yaml": yaml_entry()}});
+        let no_yaml = json!({"schema_version": "formats/v1", "formats": {"json": yaml_entry()}});
+        for doc in [bad_version.to_string(), no_yaml.to_string(), "{".into()] {
+            fs::write(&f, doc).unwrap();
+            assert!(layout(&t.0).is_err());
+        }
+        for bad in [
+            "../x",
+            "/abs",
+            "manifests/./yaml",
+            "manifests//yaml",
+            "",
+            "a\\b",
+            "c:x",
+        ] {
+            let mut e = yaml_entry();
+            e["profiles"] = json!(bad);
+            fs::write(&f, registry(e)).unwrap();
+            let err = layout(&t.0).unwrap_err();
+            assert!(err.contains("yaml.profiles"), "{bad}: {err}");
+        }
+        let mut e = yaml_entry();
+        e["span_conventions"] = json!(1);
+        fs::write(&f, registry(e)).unwrap();
+        assert!(layout(&t.0).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registry_path_through_link_outside_fails() {
+        let t = tmp("link");
+        let outside = tmp("link-outside");
+        std::os::unix::fs::symlink(&outside.0, t.0.join("manifests/out")).unwrap();
+        let mut e = yaml_entry();
+        e["profiles"] = json!("manifests/out");
+        fs::write(t.0.join(FORMATS_REL), registry(e)).unwrap();
+        assert!(layout(&t.0).unwrap_err().contains("outside"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_registry_link_fails_closed() {
+        let t = tmp("dangling");
+        fs::write(t.0.join("manifests/cases.jsonl"), "").unwrap();
+        std::os::unix::fs::symlink(
+            t.0.join("manifests/no-such-registry.json"),
+            t.0.join(FORMATS_REL),
+        )
+        .unwrap();
+        assert!(layout(&t.0).unwrap_err().contains("formats.json"));
+    }
+
+    #[test]
+    fn record_format_filter() {
+        assert_eq!(yaml_record(&json!({"format": "yaml"}), true), Ok(true));
+        assert_eq!(yaml_record(&json!({"format": "json"}), true), Ok(false));
+        assert_eq!(yaml_record(&json!({"format": "json"}), false), Ok(false));
+        assert_eq!(yaml_record(&json!({}), false), Ok(true));
+        assert!(yaml_record(&json!({}), true).is_err());
+        assert!(yaml_record(&json!({"format": 1}), false).is_err());
+    }
 }
