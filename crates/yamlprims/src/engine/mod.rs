@@ -341,7 +341,13 @@ impl<'a> Engine<'a> {
                         return Ok(None);
                     }
                 }
-                b'.' if src[c..].starts_with(b"...") => {}
+                // A document end marker is `...` followed by a blank, a break,
+                // NUL or the end of input; `....` or `...a` is content.
+                b'.' if src[c..].starts_with(b"...")
+                    && matches!(
+                        src.get(c + 3),
+                        None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'\0')
+                    ) => {}
                 _ => return Ok(None),
             }
             i = next_line(src, i);

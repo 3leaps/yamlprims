@@ -230,6 +230,8 @@
 {"id": "tags.directive.handle-error-wins", "input": "%TAG !e0 a:\n%TAG !f!b:\n--- x\n", "single": true, "check_plain": true}
 {"id": "tags.directive.empty-prefix-unchanged", "input": "%TAG !e!\n--- x\n", "single": true, "check_plain": true}
 {"id": "tags.directive.second-document-without-separator", "input": "a\n...\n%TAG !e!tag:a,1:\n--- b\n", "single": false, "check_plain": false}
+{"id": "tags.directive.dots-then-letter-is-content", "input": "...a\n%TAG !.\u0000", "single": true, "check_plain": true}
+{"id": "tags.directive.four-dots-is-content", "input": "....\n%TAG !.\u0000", "single": true, "check_plain": true}
 {"id": "tags.directive.scanner-error-at-end-of-input", "input": "%TAG !e! tag:a,1:\n--- 'x\n", "single": true, "check_plain": true}
 {"id": "tags.directive.scanner-error-at-end-after-break", "input": "%TAG !e! tag:a,1:\n--- {a: 1\n", "single": true, "check_plain": true}
 {"id": "tags.directive.scanner-error-at-end-in-quoted", "input": "a: '%TAG\n", "single": true, "check_plain": true}

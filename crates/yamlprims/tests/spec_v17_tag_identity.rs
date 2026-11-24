@@ -278,6 +278,33 @@ fn refused_identities_and_separation_select_kind_and_site() {
             GAP,
             at(8, 1, 9),
         ),
+        (
+            "gap after a commented document end marker",
+            "a\n... # c\n%TAG !e!tag:a,1:\n--- b\n",
+            opts(false, None),
+            GAP,
+            at(18, 3, 9),
+        ),
+        // `...a` and `....` are plain scalar content, not document end markers
+        // (spec §9.1.2: the marker is followed by a separator or line end), so
+        // the next line continues the scalar and is not a directive. The first
+        // error is the NUL (not a printable character, spec §5.1): `...a\n` is
+        // bytes 0-4 and `%TAG !.` bytes 5-11, so the NUL is byte 12, line 2,
+        // column 8.
+        (
+            "dots then letter is content, not a document end",
+            "...a\n%TAG !.\0",
+            opts(false, None),
+            ErrorKind::Syntax(SyntaxKind::UnexpectedCharacter),
+            at(12, 2, 8),
+        ),
+        (
+            "four dots are content, not a document end",
+            "....\n%TAG !.\0",
+            opts(false, None),
+            ErrorKind::Syntax(SyntaxKind::UnexpectedCharacter),
+            at(12, 2, 8),
+        ),
         // Pinned engine/profile compatibility expectation, not a YAML 1.2.2
         // diagnostic or independent format evidence. The syntax code is the one
         // the pinned engine reports, granit-parser 2.0.0 (crates.io, Cargo.lock
