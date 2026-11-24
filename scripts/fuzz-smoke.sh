@@ -120,7 +120,7 @@ classify() { # log
 artifact_kinds() { # dir
   local d=$1 k n out=""
   for k in crash timeout oom leak slow-unit; do
-    n=$(find "$d" -maxdepth 1 -type f -name "$k-*" | wc -l | tr -d ' ')
+    n=$(find "$d" -maxdepth 1 -type f -name "$k-*" -print0 | tr -dc '\0' | wc -c | tr -d ' ')
     [ "$n" -gt 0 ] && out="$out${out:+ }$k=$n"
   done
   echo "$out"
