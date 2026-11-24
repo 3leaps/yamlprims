@@ -10,3 +10,7 @@
 /.env
 /.limensafe/
 /.DS_Store
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/

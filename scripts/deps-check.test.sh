@@ -6,8 +6,9 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-git -C "$root" archive HEAD Cargo.toml Cargo.lock crates | tar -x -C "$scratch"
+git -C "$root" archive HEAD Cargo.toml Cargo.lock crates fuzz | tar -x -C "$scratch"
 cp "$root/Cargo.toml" "$scratch/Cargo.toml"
+cp "$root/fuzz/Cargo.toml" "$root/fuzz/Cargo.lock" "$scratch/fuzz/"
 cp "$root/crates/yamlprims/Cargo.toml" "$scratch/crates/yamlprims/Cargo.toml"
 cp "$root/crates/yamlprims-cli/Cargo.toml" "$scratch/crates/yamlprims-cli/Cargo.toml"
 mkdir -p "$scratch/scripts"
@@ -50,7 +51,7 @@ mkdir -p "$scratch/bin"
 real_cargo="$(command -v cargo)"
 # shellcheck disable=SC2016 # expands in the stub
 printf '#!/bin/bash\nif [[ "$1" == metadata ]]; then echo %q; exit 0; fi\nexec %q "$@"\n' \
-	'{"packages":[{"name":"yamlprims"},{"name":"other-prims"}]}' "$real_cargo" >"$scratch/bin/cargo"
+	'{"packages":[{"name":"yamlprims","id":"yamlprims"},{"name":"other-prims","id":"other-prims"}],"workspace_members":["yamlprims"]}' "$real_cargo" >"$scratch/bin/cargo"
 chmod +x "$scratch/bin/cargo"
 if (cd "$scratch" && PATH="$scratch/bin:$PATH" scripts/deps-check.sh) >"$scratch/out" 2>&1; then
 	echo 'error: accepted a forbidden package in the resolved graph' >&2
@@ -59,8 +60,17 @@ fi
 grep -q 'appears in the resolved dependency graph' "$scratch/out" || { echo 'error: graph refusal not reported' >&2; cat "$scratch/out" >&2; exit 1; }
 # shellcheck disable=SC2016 # expands in the stub
 printf '#!/bin/bash\nif [[ "$1" == metadata ]]; then echo %q; exit 0; fi\nexec %q "$@"\n' \
-	'{"packages":[{"name":"yamlprims"},{"name":"serde"}]}' "$real_cargo" >"$scratch/bin/cargo"
+	'{"packages":[{"name":"yamlprims","id":"yamlprims"},{"name":"serde","id":"serde"}],"workspace_members":["yamlprims"]}' "$real_cargo" >"$scratch/bin/cargo"
 (cd "$scratch" && PATH="$scratch/bin:$PATH" scripts/deps-check.sh) >"$scratch/out" 2>&1 || { echo 'error: refused a clean graph' >&2; cat "$scratch/out" >&2; exit 1; }
+# The libFuzzer runtime in the published workspace graph is refused.
+# shellcheck disable=SC2016 # expands in the stub
+printf '#!/bin/bash\nif [[ "$1" == metadata ]]; then echo %q; exit 0; fi\nexec %q "$@"\n' \
+	'{"packages":[{"name":"yamlprims","id":"yamlprims"},{"name":"libfuzzer-sys","id":"libfuzzer-sys"}],"workspace_members":["yamlprims"]}' "$real_cargo" >"$scratch/bin/cargo"
+if (cd "$scratch" && PATH="$scratch/bin:$PATH" scripts/deps-check.sh) >"$scratch/out" 2>&1; then
+	echo 'error: accepted the libFuzzer runtime in the published graph' >&2
+	exit 1
+fi
+grep -q 'fuzzing dependencies appear in the published workspace graph' "$scratch/out" || { echo 'error: fuzzing-dependency refusal not reported' >&2; cat "$scratch/out" >&2; exit 1; }
 
 # Go module checks: a clean zero-dependency module passes, while require/replace
 # directives, go.sum, go.work, or vendor/ are refused.

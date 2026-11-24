@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/yamlprims", "crates/yamlprims-cli"]
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]

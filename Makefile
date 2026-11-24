@@ -20,7 +20,7 @@ SHELL_SOURCES := $(wildcard scripts/*.sh tests/release/*.sh conformance/*.sh)
 
 .PHONY: all help prepush precommit pr-final check-tooling lint-workflows
 .PHONY: check test-docs lint lint-shell lint-yaml fmt-yaml fmt fmt-check
-.PHONY: test-rust check-rust msrv-check check-go test-go test-go-race crosscheck python-check ts-check test-conformance-tools build clean
+.PHONY: test-rust check-rust msrv-check check-go test-go test-go-race crosscheck fuzz-replay fuzz-smoke fuzz-differential test-fuzz-tooling python-check ts-check test-conformance-tools build clean
 .PHONY: version spec-version version-check check-packages deps-check deny
 .PHONY: workflow-pin jq-portability content-check host-path-check surface-scan doctor
 .PHONY: test-release-tag-controls release-tooling-test release-check release-github-preflight
@@ -59,7 +59,9 @@ check-rust:
 	$(CARGO) fmt --all --check
 	$(CARGO) fmt --manifest-path $(PY_BINDING)/Cargo.toml --check
 	$(CARGO) fmt --manifest-path $(TS_BINDING)/Cargo.toml --check
+	$(CARGO) fmt --manifest-path fuzz/Cargo.toml --check
 	$(CARGO) check --locked --workspace --all-targets
+	CARGO_TARGET_DIR=$(CURDIR)/target/fuzz-check $(CARGO) check --manifest-path fuzz/Cargo.toml --locked --all-features --all-targets
 	CARGO_TARGET_DIR=$(CURDIR)/target/python $(CARGO) check --manifest-path $(PY_BINDING)/Cargo.toml --locked --all-targets
 	CARGO_TARGET_DIR=$(CURDIR)/target/wasm RUSTFLAGS="-Clink-arg=--max-memory=134217728" $(CARGO) check --manifest-path $(TS_BINDING)/Cargo.toml --target wasm32-unknown-unknown --locked
 
@@ -72,13 +74,26 @@ check-go:
 	$(GOENV) $(GO) build ./yaml/... ./cmd/...
 
 test-go:
-	$(GOENV) $(GO) test -count=1 ./yaml/... ./cmd/...
+	$(GOENV) $(GO) test -count=1 -skip '^Fuzz' ./yaml/... ./cmd/...
 
 test-go-race:
-	$(GOENV_RACE) $(GO) test -race -count=1 ./yaml/... ./cmd/...
+	$(GOENV_RACE) $(GO) test -race -count=1 -skip '^Fuzz' ./yaml/... ./cmd/...
 
 crosscheck:
 	bash scripts/crosscheck.sh
+
+fuzz-replay:
+	bash scripts/fuzz-replay.sh
+
+# Mutating Rust run: local or private hosts only, never public CI (see fuzz/README.md).
+fuzz-smoke:
+	bash scripts/fuzz-smoke.sh
+
+fuzz-differential:
+	bash scripts/fuzz-differential.sh --seeds
+
+test-fuzz-tooling:
+	bash scripts/fuzz-differential.test.sh
 
 python-check:
 	@scripts/python-check.sh
@@ -100,6 +115,7 @@ prepush:
 	$(MAKE) lint test-docs lint-workflows
 	$(MAKE) deps-check content-check jq-portability version-check workflow-pin
 	$(MAKE) check-rust test-rust check-go test-go test-go-race crosscheck ts-check python-check test-conformance-tools
+	$(MAKE) fuzz-replay test-fuzz-tooling
 	$(MAKE) surface-scan
 
 pr-final: prepush
@@ -126,6 +142,7 @@ deny:
 	$(CARGO) deny --locked check
 	$(CARGO) deny --manifest-path $(PY_BINDING)/Cargo.toml --locked check
 	$(CARGO) deny --manifest-path $(TS_BINDING)/Cargo.toml --locked check
+	$(CARGO) deny --manifest-path fuzz/Cargo.toml --all-features --locked check
 
 workflow-pin:
 	$(PYTHON) -B -E scripts/release-workflow-pin.py check

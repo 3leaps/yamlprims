@@ -11,7 +11,7 @@ fail=0
 # No dependency of any kind (normal, dev, build, target-specific) on another
 # *prims crate or on rsfulmen, by package name, in any workspace manifest.
 shopt -s nullglob
-manifests=(Cargo.toml crates/*/Cargo.toml bindings/*/Cargo.toml)
+manifests=(Cargo.toml crates/*/Cargo.toml bindings/*/Cargo.toml fuzz/Cargo.toml)
 shopt -u nullglob
 if ! python3 -I - ${manifests[@]+"${manifests[@]}"} <<'PY'
 import re, sys, tomllib
@@ -43,10 +43,13 @@ then
 fi
 # The resolved graph (every edge kind). Failing to read it fails the check.
 shopt -s nullglob
-meta_manifests=(Cargo.toml bindings/*/Cargo.toml)
+meta_manifests=(Cargo.toml bindings/*/Cargo.toml fuzz/Cargo.toml)
 shopt -u nullglob
 for manifest in ${meta_manifests[@]+"${meta_manifests[@]}"}; do
-  if ! metadata="$(cargo metadata --manifest-path "${manifest}" --locked --format-version 1 2>/dev/null)"; then
+  # The fuzz crate's libFuzzer runtime is behind a feature: check every feature.
+  features=()
+  [[ "${manifest}" == fuzz/Cargo.toml ]] && features=(--all-features)
+  if ! metadata="$(cargo metadata --manifest-path "${manifest}" --locked --format-version 1 ${features[@]+"${features[@]}"} 2>/dev/null)"; then
     echo "deps-check: cargo metadata failed; the dependency graph was not checked" >&2
     fail=1
   elif ! printf '%s' "$metadata" | python3 -I -c '
@@ -60,6 +63,23 @@ sys.exit(1 if bad else 0)'; then
     fail=1
   fi
 done
+
+# The fuzz crate is outside the workspace: the libFuzzer runtime must never
+# enter the resolved graph of the published crates.
+if ! root_meta="$(cargo metadata --manifest-path Cargo.toml --locked --format-version 1 2>/dev/null)"; then
+  echo "deps-check: cargo metadata failed for the workspace" >&2
+  fail=1
+elif ! printf '%s' "$root_meta" | python3 -I -c '
+import json, sys
+meta = json.load(sys.stdin)
+names = {p["name"] for p in meta["packages"]}
+members = {p["name"] for p in meta["packages"] if p["id"] in meta["workspace_members"]}
+bad = sorted(names & {"libfuzzer-sys", "arbitrary", "yamlprims-fuzz"}) + sorted(members & {"yamlprims-fuzz"})
+print("\n".join(bad))
+sys.exit(1 if bad else 0)'; then
+  echo "deps-check: fuzzing dependencies appear in the published workspace graph" >&2
+  fail=1
+fi
 
 if [[ -f go.mod ]]; then
   if grep -nE '^[[:space:]]*(require|replace)\b' go.mod; then
