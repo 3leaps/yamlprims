@@ -109,7 +109,7 @@ def present(q):
 
 
 has_manifest = present(corpus_root / "manifests" / "formats.json") or present(corpus_root / "manifests" / "cases.jsonl")
-if has_manifest and (corpus_root / "tools" / "corpus.py").is_file():
+if has_manifest and present(corpus_root / "tools" / "corpus.py"):
     try:
         cases_file, profiles_dir, _, registry = structcorpus_layout(corpus_root)
     except ValueError as e:
