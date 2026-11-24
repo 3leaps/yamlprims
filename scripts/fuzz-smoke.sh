@@ -133,12 +133,19 @@ artifact_kinds() { # dir
 # fails is "unreproduced", one past the cap "unclassified". The other artifacts
 # are classified by name. Logs are removed; nothing is echoed.
 replay_cap=64
-artifact_classes() { # binary dir
-  local bin=$1 d=$2 tmp a n=0 classes=""
+# Runs in its own subshell, so its traps remove the replay directory on exit
+# or interruption without touching the caller's traps. Names are read
+# NUL-delimited, and only regular files (not links) are replayed.
+artifact_classes() ( # binary dir
+  bin=$1 d=$2 n=0 classes=""
   tmp=$(mktemp -d "$tmp_base/yamlprims-fuzz-replay.XXXXXX")
-  while IFS= read -r a; do
+  trap 'rm -rf "$tmp"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  while IFS= read -r -d '' a; do
     n=$((n + 1))
-    if [ "$n" -gt "$replay_cap" ]; then
+    if [ "$n" -gt "$replay_cap" ] || [ ! -f "$a" ] || [ -L "$a" ]; then
       classes="$classes unclassified"
     elif (cd "$tmp" && "$bin" -timeout="$per_input_timeout" -rss_limit_mb="$rss_mb" \
       -malloc_limit_mb="$rss_mb" -artifact_prefix="$tmp/" "$a" >"$tmp/replay.log" 2>&1); then
@@ -146,14 +153,13 @@ artifact_classes() { # binary dir
     else
       classes="$classes $(classify "$tmp/replay.log")"
     fi
-  done < <(find "$d" -maxdepth 1 -type f -name 'crash-*' | sort)
-  rm -rf "$tmp"
+  done < <(find "$d" -maxdepth 1 -type f -name 'crash-*' -print0 | sort -z)
   [ -n "$(find "$d" -maxdepth 1 -type f -name 'timeout-*' | head -1)" ] && classes="$classes timeout"
   [ -n "$(find "$d" -maxdepth 1 -type f -name 'oom-*' | head -1)" ] && classes="$classes memory-limit"
   [ -n "$(find "$d" -maxdepth 1 -type f -name 'leak-*' | head -1)" ] && classes="$classes leak"
   [ -n "$(find "$d" -maxdepth 1 -type f -name 'slow-unit-*' | head -1)" ] && classes="$classes slow-unit"
   tr ' ' '\n' <<<"$classes" | awk 'NF' | sort -u | paste -sd, -
-}
+)
 
 pin_channel=$(awk '$1 == "channel" {print $2}' fuzz/toolchain.txt)
 pin_hash=$(awk '$1 == "commit-hash" {print $2}' fuzz/toolchain.txt)

@@ -62,7 +62,8 @@ log: `unreproduced` if it no longer fails, `unclassified` past the cap. Timeout,
 out-of-memory, leak and slow-unit artifacts are classified by name. Fork mode keeps its working copies in a
 `libFuzzerTemp.FuzzWithFork*` directory under `TMPDIR` and removes it when the
 target exits; after an interrupted run, remove it by hand, because it can hold
-failing inputs.
+failing inputs. The same applies to a `yamlprims-fuzz-replay.*` directory left
+under `TMPDIR` by a run killed during replay (its log can describe the input).
 
 Go mutation (`go test -fuzz`) is not run locally until an enforced memory
 ceiling is available. The Go `Fuzz*` targets run their seed corpora under
