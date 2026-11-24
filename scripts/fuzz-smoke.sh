@@ -32,6 +32,9 @@ tmp_base=$(python3 -I "$root/scripts/fuzz_differential.py" resolve-out "$root" "
   echo "fuzz-smoke: TMPDIR must be outside the working tree" >&2
   exit 2
 }
+# Children (libFuzzer's fork-mode temp directories included) use the checked
+# absolute path, not a relative TMPDIR read from another working directory.
+export TMPDIR="$tmp_base"
 
 rust_seconds=${YAMLPRIMS_FUZZ_RUST_SECONDS:-60}
 per_input_timeout=${YAMLPRIMS_FUZZ_TIMEOUT:-10}
@@ -122,6 +125,35 @@ artifact_kinds() { # dir
   done
   echo "$out"
 }
+# Keep-going runs: the failure classes of the saved artifacts, e.g. "panic,quality".
+# Fork mode copies only some child log lines to the parent log, so the parent
+# log cannot tell an implementation-quality failure from a panic. Each crash
+# artifact (up to replay_cap) is replayed once without fork mode, in a
+# temporary directory, and classified from its own log; a crash that no longer
+# fails is "unreproduced", one past the cap "unclassified". The other artifacts
+# are classified by name. Logs are removed; nothing is echoed.
+replay_cap=64
+artifact_classes() { # binary dir
+  local bin=$1 d=$2 tmp a n=0 classes=""
+  tmp=$(mktemp -d "$tmp_base/yamlprims-fuzz-replay.XXXXXX")
+  while IFS= read -r a; do
+    n=$((n + 1))
+    if [ "$n" -gt "$replay_cap" ]; then
+      classes="$classes unclassified"
+    elif (cd "$tmp" && "$bin" -timeout="$per_input_timeout" -rss_limit_mb="$rss_mb" \
+      -malloc_limit_mb="$rss_mb" -artifact_prefix="$tmp/" "$a" >"$tmp/replay.log" 2>&1); then
+      classes="$classes unreproduced"
+    else
+      classes="$classes $(classify "$tmp/replay.log")"
+    fi
+  done < <(find "$d" -maxdepth 1 -type f -name 'crash-*' | sort)
+  rm -rf "$tmp"
+  [ -n "$(find "$d" -maxdepth 1 -type f -name 'timeout-*' | head -1)" ] && classes="$classes timeout"
+  [ -n "$(find "$d" -maxdepth 1 -type f -name 'oom-*' | head -1)" ] && classes="$classes memory-limit"
+  [ -n "$(find "$d" -maxdepth 1 -type f -name 'leak-*' | head -1)" ] && classes="$classes leak"
+  [ -n "$(find "$d" -maxdepth 1 -type f -name 'slow-unit-*' | head -1)" ] && classes="$classes slow-unit"
+  tr ' ' '\n' <<<"$classes" | awk 'NF' | sort -u | paste -sd, -
+}
 
 pin_channel=$(awk '$1 == "channel" {print $2}' fuzz/toolchain.txt)
 pin_hash=$(awk '$1 == "commit-hash" {print $2}' fuzz/toolchain.txt)
@@ -188,7 +220,7 @@ for t in load decode_wire emit_round_trip lint_yaml11 encode; do
   if [ "$keep_going" = 1 ]; then
     found=$(artifact_kinds "$run/crashers/$t")
     if [ -n "$found" ]; then
-      outcome=fail kind="$(classify "$log") ($found)"
+      outcome=fail kind="$(artifact_classes "$CARGO_TARGET_DIR/$host/release/$t" "$run/crashers/$t") ($found)"
     fi
   fi
   [ "$outcome" = fail ] && fail "$t" "$kind"

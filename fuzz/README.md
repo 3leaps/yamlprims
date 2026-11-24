@@ -54,8 +54,12 @@ By default a target stops at its first failing input. Campaigns set
 `YAMLPRIMS_FUZZ_KEEP_GOING=1`: libFuzzer runs in fork mode (`-fork=1`) and
 ignores crashes, timeouts and out-of-memory, so a target uses its whole budget
 after a failure. Every failing input is still saved under the run's `crashers/`
-and fails the run; the record gives the kind and the count per artifact type
-(for example `panic (crash=4)`). Fork mode keeps its working copies in a
+and fails the run; the record gives the failure classes and the count per
+artifact type (for example `panic,quality (crash=4)`). The fork-mode log does
+not carry every child diagnostic, so each crash artifact (up to 64) is replayed
+once without fork mode, in a temporary directory, and classified from its own
+log: `unreproduced` if it no longer fails, `unclassified` past the cap. Timeout,
+out-of-memory, leak and slow-unit artifacts are classified by name. Fork mode keeps its working copies in a
 `libFuzzerTemp.FuzzWithFork*` directory under `TMPDIR` and removes it when the
 target exits; after an interrupted run, remove it by hand, because it can hold
 failing inputs.
