@@ -4161,7 +4161,7 @@ def _convert_and_preflight_node(
                 _validate_utf8_str(val.tag.handle)
                 _validate_utf8_str(val.tag.suffix)
                 if len(uri_bytes) > limits.max_tag_bytes or not _is_valid_non_core_tag_uri(val.tag.uri):
-                    raise _invalid_options_error("Tagged node contains invalid or oversized Tag.uri")
+                    raise _invalid_options_error("Tagged node contains invalid or oversized tag URI")
                 inner_raw = val.value
                 inner_kind = inner_raw.kind if isinstance(inner_raw, Node) else None
                 if val.tag.uri == "tag:yaml.org,2002:merge":

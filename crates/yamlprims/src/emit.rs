@@ -393,7 +393,7 @@ fn preflight_node<'a>(
                 {
                     return Err(emit_err(
                         ErrorKind::InvalidOptions,
-                        "Tagged node contains invalid or oversized Tag::uri",
+                        "Tagged node contains invalid or oversized tag URI",
                     ));
                 }
                 if t.tag.uri == "tag:yaml.org,2002:merge" {

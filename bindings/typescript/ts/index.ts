@@ -5290,7 +5290,7 @@ function convertAndPreflightNode(
               validateUtf8Str(raw.tag.handle ?? "");
               validateUtf8Str(raw.tag.suffix ?? raw.tag.uri);
               if (uriBytes.byteLength > limits.maxTagBytes || !isValidNonCoreTagUri(raw.tag.uri)) {
-                throw invalidOptionsError("Tagged node contains invalid or oversized Tag.uri");
+                throw invalidOptionsError("Tagged node contains invalid or oversized tag URI");
               }
               const innerRaw = raw.value;
               const innerKind = isNodeObject(innerRaw) ? innerRaw.kind : null;

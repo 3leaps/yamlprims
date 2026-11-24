@@ -546,6 +546,50 @@ enum PlainWriteFrame<'a> {
     },
 }
 
+/// Plain JSON text for a finite float (spec §11.3): shortest round-trip digits,
+/// nearest candidate, even final digit on an exact tie; fixed point when
+/// `-4 <= sci_exp < 16` (`.0` on integral values), otherwise `d[.ddd]e<exp>`.
+pub(crate) fn format_plain_float(f: f64) -> String {
+    debug_assert!(f.is_finite());
+    if f == 0.0 {
+        return if f.is_sign_negative() { "-0.0" } else { "0.0" }.to_owned();
+    }
+    let (digits, k) = crate::ijson::decompose_shortest_float(f.abs());
+    let sci_exp = k - 1;
+    let n = digits.len();
+    let mut out = String::with_capacity(n + 24);
+    if f.is_sign_negative() {
+        out.push('-');
+    }
+    if (-4..16).contains(&sci_exp) {
+        if sci_exp >= 0 {
+            let int_digits = k as usize;
+            if n <= int_digits {
+                out.push_str(&digits);
+                out.extend(std::iter::repeat_n('0', int_digits - n));
+                out.push_str(".0");
+            } else {
+                out.push_str(&digits[..int_digits]);
+                out.push('.');
+                out.push_str(&digits[int_digits..]);
+            }
+        } else {
+            out.push_str("0.");
+            out.extend(std::iter::repeat_n('0', (-sci_exp - 1) as usize));
+            out.push_str(&digits);
+        }
+    } else {
+        out.push_str(&digits[..1]);
+        if n > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        out.push('e');
+        out.push_str(&sci_exp.to_string());
+    }
+    out
+}
+
 fn plain<'a>(o: &mut Out, root: &'a Node) -> Result<(), Error> {
     let mut stack = vec![PlainWriteFrame::Node(root)];
     while let Some(frame) = stack.pop() {
@@ -558,11 +602,7 @@ fn plain<'a>(o: &mut Out, root: &'a Node) -> Result<(), Error> {
                     if !f.is_finite() {
                         return Err(loss(n, "non-finite float"));
                     }
-                    let mut s = format!("{f:?}");
-                    if !s.contains(['.', 'e', 'E']) {
-                        s.push_str(".0");
-                    }
-                    o.push(&s)?;
+                    o.push(&format_plain_float(*f))?;
                 }
                 Value::String(s) => o.string(s)?,
                 Value::Sequence(items) => {
